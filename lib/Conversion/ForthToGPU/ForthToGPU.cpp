@@ -43,7 +43,12 @@ struct ForthConstantToArithConstant : public OpRewritePattern<ConstantOp> {
 
   LogicalResult matchAndRewrite(ConstantOp op,
                                  PatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<arith::ConstantOp>(op, op.getValue());
+    // Cast AnyAttr to TypedAttr for arith.constant
+    auto typedAttr = mlir::dyn_cast<mlir::TypedAttr>(op.getValue());
+    if (!typedAttr) {
+      return failure();
+    }
+    rewriter.replaceOpWithNewOp<arith::ConstantOp>(op, typedAttr);
     return success();
   }
 };

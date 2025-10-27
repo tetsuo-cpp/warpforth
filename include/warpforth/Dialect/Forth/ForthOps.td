@@ -52,7 +52,7 @@ def Forth_ConstantOp : Forth_Op<"constant", [Pure]> {
   let arguments = (ins AnyAttr:$value);
   let results = (outs AnyType:$result);
 
-  let assemblyFormat = "$value attr-dict `:` type($result)";
+  let assemblyFormat = "`(` $value `)` attr-dict `:` type($result)";
 }
 
 def Forth_AddOp : Forth_Op<"add", [Pure]> {
@@ -70,7 +70,7 @@ def Forth_AddOp : Forth_Op<"add", [Pure]> {
   let arguments = (ins AnyType:$lhs, AnyType:$rhs);
   let results = (outs AnyType:$result);
 
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` `(` type($lhs) `,` type($rhs) `)` `->` type($result)";
 }
 
 def Forth_SubOp : Forth_Op<"sub", [Pure]> {
@@ -88,7 +88,7 @@ def Forth_SubOp : Forth_Op<"sub", [Pure]> {
   let arguments = (ins AnyType:$lhs, AnyType:$rhs);
   let results = (outs AnyType:$result);
 
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` `(` type($lhs) `,` type($rhs) `)` `->` type($result)";
 }
 
 def Forth_MulOp : Forth_Op<"mul", [Pure]> {
@@ -106,7 +106,7 @@ def Forth_MulOp : Forth_Op<"mul", [Pure]> {
   let arguments = (ins AnyType:$lhs, AnyType:$rhs);
   let results = (outs AnyType:$result);
 
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` `(` type($lhs) `,` type($rhs) `)` `->` type($result)";
 }
 
 def Forth_DivOp : Forth_Op<"div", [Pure]> {
@@ -124,10 +124,10 @@ def Forth_DivOp : Forth_Op<"div", [Pure]> {
   let arguments = (ins AnyType:$lhs, AnyType:$rhs);
   let results = (outs AnyType:$result);
 
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` `(` type($lhs) `,` type($rhs) `)` `->` type($result)";
 }
 
-def Forth_DupOp : Forth_Op<"dup", [Pure]> {
+def Forth_DupOp : Forth_Op<"dup", [Pure, SameOperandsAndResultType]> {
   let summary = "Duplicate the top stack value";
   let description = [{
     The `forth.dup` operation duplicates the value on top of the stack.
@@ -141,7 +141,7 @@ def Forth_DupOp : Forth_Op<"dup", [Pure]> {
   let arguments = (ins AnyType:$input);
   let results = (outs AnyType:$result);
 
-  let assemblyFormat = "$input attr-dict `:` type($result)";
+  let assemblyFormat = "$input attr-dict `:` type($input)";
 }
 
 def Forth_DropOp : Forth_Op<"drop"> {
@@ -174,7 +174,7 @@ def Forth_SwapOp : Forth_Op<"swap", [Pure]> {
   let arguments = (ins AnyType:$first, AnyType:$second);
   let results = (outs AnyType:$result_first, AnyType:$result_second);
 
-  let assemblyFormat = "$first `,` $second attr-dict `:` type($first) `,` type($second)";
+  let assemblyFormat = "$first `,` $second attr-dict `:` `(` type($first) `,` type($second) `)` `->` `(` type($result_first) `,` type($result_second) `)`";
 }
 
 #endif // FORTH_OPS

@@ -38,7 +38,9 @@ int main(int argc, char **argv) {
   mlir::registerAllDialects(registry);
 
   // Register Forth-specific passes
-  mlir::PassRegistration<mlir::forth::createLowerForthToGPUPass>();
+  mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+    return mlir::forth::createLowerForthToGPUPass();
+  });
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "WarpForth optimizer driver\n", registry));

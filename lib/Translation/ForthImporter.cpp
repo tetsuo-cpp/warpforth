@@ -37,7 +37,7 @@ enum class TokenKind {
 
 struct Token {
   TokenKind kind;
-  std::string value;
+  llvm::StringRef value;
   unsigned line;
   unsigned column;
 };
@@ -114,33 +114,34 @@ private:
   }
 
   Token lexNumber(unsigned startLine, unsigned startColumn) {
-    std::string value;
+    size_t start = pos;
 
     // Handle negative sign
     if (input[pos] == '-') {
-      value += input[pos++];
+      pos++;
       column++;
     }
 
     // Read digits
     while (pos < input.size() && std::isdigit(input[pos])) {
-      value += input[pos++];
+      pos++;
       column++;
     }
 
-    return {TokenKind::Number, value, startLine, startColumn};
+    return {TokenKind::Number, input.slice(start, pos), startLine, startColumn};
   }
 
   Token lexWord(unsigned startLine, unsigned startColumn) {
-    std::string value;
+    size_t start = pos;
 
     // Read word characters (non-whitespace, non-comment)
     while (pos < input.size() && !std::isspace(input[pos]) &&
            input[pos] != '(' && input[pos] != '\\') {
-      value += input[pos++];
+      pos++;
       column++;
     }
 
+    auto value = input.slice(start, pos);
     if (value.empty())
       return {TokenKind::Error, "Empty word", startLine, startColumn};
 
@@ -190,7 +191,7 @@ public:
     // Add return at end
     builder.create<mlir::func::ReturnOp>(loc);
 
-    module->push_back(func);
+    module.push_back(func);
     return module;
   }
 
@@ -200,7 +201,7 @@ private:
 
     while (currentToken.kind != TokenKind::Eof) {
       if (currentToken.kind == TokenKind::Error) {
-        emitError("Lexical error: " + currentToken.value);
+        emitError(("Lexical error: " + currentToken.value).str());
         return false;
       }
 
@@ -227,7 +228,7 @@ private:
     int64_t value;
 
     if (currentToken.value.getAsInteger(10, value)) {
-      emitError("Invalid number: " + currentToken.value);
+      emitError("Invalid number: " + currentToken.value.str());
       return false;
     }
 
@@ -239,10 +240,7 @@ private:
   }
 
   bool parseWord(std::stack<mlir::Value> &stack) {
-    std::string word = currentToken.value;
-
-    // Convert to uppercase for case-insensitive matching
-    std::transform(word.begin(), word.end(), word.begin(), ::toupper);
+    llvm::StringRef word = currentToken.value;
 
     auto loc = getLocation();
 
@@ -256,16 +254,16 @@ private:
     } else if (word == "/") {
       return parseBinaryOp<DivOp>(stack, loc);
     }
-    // Stack operations
-    else if (word == "DUP") {
+    // Stack operations (case-insensitive)
+    else if (word.equals_insensitive("DUP")) {
       return parseDup(stack, loc);
-    } else if (word == "DROP") {
+    } else if (word.equals_insensitive("DROP")) {
       return parseDrop(stack, loc);
-    } else if (word == "SWAP") {
+    } else if (word.equals_insensitive("SWAP")) {
       return parseSwap(stack, loc);
     }
     else {
-      emitError("Unknown Forth word: " + currentToken.value);
+      emitError(("Unknown Forth word: " + currentToken.value).str());
       return false;
     }
   }
@@ -282,7 +280,8 @@ private:
     mlir::Value lhs = stack.top();
     stack.pop();
 
-    auto result = builder.create<OpType>(loc, lhs, rhs);
+    // Binary operations require explicit result type
+    auto result = builder.create<OpType>(loc, lhs.getType(), lhs, rhs);
     stack.push(result.getResult());
     return true;
   }
@@ -294,7 +293,7 @@ private:
     }
 
     mlir::Value top = stack.top();
-    auto result = builder.create<DupOp>(loc, top);
+    auto result = builder.create<DupOp>(loc, top.getType(), top);
     stack.push(result.getResult());
     return true;
   }
@@ -322,7 +321,9 @@ private:
     mlir::Value first = stack.top();
     stack.pop();
 
-    auto result = builder.create<SwapOp>(loc, first, second);
+    // Swap operation requires explicit result types
+    llvm::SmallVector<mlir::Type, 2> resultTypes = {second.getType(), first.getType()};
+    auto result = builder.create<SwapOp>(loc, resultTypes, first, second);
     stack.push(result.getResult(0)); // second becomes first
     stack.push(result.getResult(1)); // first becomes second
     return true;
