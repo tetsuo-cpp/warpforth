@@ -34,3 +34,21 @@ add_definitions(${LLVM_DEFINITIONS})
 add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
+
+# Clang-format target
+file(GLOB_RECURSE ALL_SOURCE_FILES
+  ${CMAKE_SOURCE_DIR}/include/**/*.h
+  ${CMAKE_SOURCE_DIR}/lib/**/*.cpp
+  ${CMAKE_SOURCE_DIR}/tools/**/*.cpp
+)
+
+find_program(CLANG_FORMAT "clang-format")
+if(CLANG_FORMAT)
+  add_custom_target(
+    format
+    COMMAND ${CLANG_FORMAT}
+    -i
+    ${ALL_SOURCE_FILES}
+    COMMENT "Running clang-format on source files"
+  )
+endif()
