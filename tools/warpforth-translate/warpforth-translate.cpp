@@ -26,10 +26,9 @@ static cl::opt<std::string> inputFilename(cl::Positional,
                                           cl::init("-"),
                                           cl::value_desc("filename"));
 
-static cl::opt<std::string> outputFilename("o",
-                                            cl::desc("Output filename"),
-                                            cl::value_desc("filename"),
-                                            cl::init("-"));
+static cl::opt<std::string> outputFilename("o", cl::desc("Output filename"),
+                                           cl::value_desc("filename"),
+                                           cl::init("-"));
 
 int main(int argc, char **argv) {
   InitLLVM y(argc, argv);

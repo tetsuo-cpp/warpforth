@@ -9,8 +9,8 @@
 #include "warpforth/Dialect/Forth/ForthOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -31,7 +31,7 @@ struct ForthArithToArithPattern : public OpRewritePattern<ForthOp> {
   using OpRewritePattern<ForthOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ForthOp op,
-                                 PatternRewriter &rewriter) const override {
+                                PatternRewriter &rewriter) const override {
     rewriter.replaceOpWithNewOp<ArithOp>(op, op.getLhs(), op.getRhs());
     return success();
   }
@@ -42,7 +42,7 @@ struct ForthConstantToArithConstant : public OpRewritePattern<ConstantOp> {
   using OpRewritePattern<ConstantOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ConstantOp op,
-                                 PatternRewriter &rewriter) const override {
+                                PatternRewriter &rewriter) const override {
     // Cast AnyAttr to TypedAttr for arith.constant
     auto typedAttr = mlir::dyn_cast<mlir::TypedAttr>(op.getValue());
     if (!typedAttr) {
@@ -74,14 +74,15 @@ struct LowerForthToGPUPass
 
   void runOnOperation() override {
     ConversionTarget target(getContext());
-    target.addLegalDialect<arith::ArithDialect, gpu::GPUDialect, func::FuncDialect>();
+    target.addLegalDialect<arith::ArithDialect, gpu::GPUDialect,
+                           func::FuncDialect>();
     target.addIllegalDialect<ForthDialect>();
 
     RewritePatternSet patterns(&getContext());
     populateForthToGPUConversionPatterns(patterns);
 
     if (failed(applyPartialConversion(getOperation(), target,
-                                       std::move(patterns))))
+                                      std::move(patterns))))
       signalPassFailure();
   }
 };

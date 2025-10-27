@@ -29,10 +29,8 @@ int main(int argc, char **argv) {
   mlir::registerAllPasses();
 
   mlir::DialectRegistry registry;
-  registry.insert<mlir::forth::ForthDialect,
-                  mlir::arith::ArithDialect,
-                  mlir::func::FuncDialect,
-                  mlir::gpu::GPUDialect>();
+  registry.insert<mlir::forth::ForthDialect, mlir::arith::ArithDialect,
+                  mlir::func::FuncDialect, mlir::gpu::GPUDialect>();
 
   // Register standard MLIR dialects
   mlir::registerAllDialects(registry);

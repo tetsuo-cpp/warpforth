@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "warpforth/Dialect/Forth/ForthOps.h"
-#include "warpforth/Dialect/Forth/ForthDialect.h"
 #include "mlir/IR/OpImplementation.h"
+#include "warpforth/Dialect/Forth/ForthDialect.h"
 
 using namespace mlir;
 using namespace mlir::forth;

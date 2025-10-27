@@ -29,10 +29,10 @@ namespace forth {
 //===----------------------------------------------------------------------===//
 
 enum class TokenKind {
-  Number,      // Integer literal
-  Word,        // Forth word (identifier)
-  Eof,         // End of file
-  Error        // Lexical error
+  Number, // Integer literal
+  Word,   // Forth word (identifier)
+  Eof,    // End of file
+  Error   // Lexical error
 };
 
 struct Token {
@@ -44,7 +44,8 @@ struct Token {
 
 class ForthLexer {
 public:
-  ForthLexer(llvm::StringRef input) : input(input), pos(0), line(1), column(1) {}
+  ForthLexer(llvm::StringRef input)
+      : input(input), pos(0), line(1), column(1) {}
 
   Token getNextToken() {
     skipWhitespaceAndComments();
@@ -57,7 +58,8 @@ public:
 
     // Check for number
     if (std::isdigit(input[pos]) ||
-        (input[pos] == '-' && pos + 1 < input.size() && std::isdigit(input[pos + 1]))) {
+        (input[pos] == '-' && pos + 1 < input.size() &&
+         std::isdigit(input[pos + 1]))) {
       return lexNumber(startLine, startColumn);
     }
 
@@ -161,8 +163,9 @@ private:
 class ForthParser {
 public:
   ForthParser(llvm::SourceMgr &sourceMgr, mlir::MLIRContext *context)
-      : sourceMgr(sourceMgr), context(context),
-        builder(context), lexer(sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID())->getBuffer()) {
+      : sourceMgr(sourceMgr), context(context), builder(context),
+        lexer(
+            sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID())->getBuffer()) {
 
     // Load the Forth dialect
     context->getOrLoadDialect<ForthDialect>();
@@ -261,8 +264,7 @@ private:
       return parseDrop(stack, loc);
     } else if (word.equals_insensitive("SWAP")) {
       return parseSwap(stack, loc);
-    }
-    else {
+    } else {
       emitError(("Unknown Forth word: " + currentToken.value).str());
       return false;
     }
@@ -322,7 +324,8 @@ private:
     stack.pop();
 
     // Swap operation requires explicit result types
-    llvm::SmallVector<mlir::Type, 2> resultTypes = {second.getType(), first.getType()};
+    llvm::SmallVector<mlir::Type, 2> resultTypes = {second.getType(),
+                                                    first.getType()};
     auto result = builder.create<SwapOp>(loc, resultTypes, first, second);
     stack.push(result.getResult(0)); // second becomes first
     stack.push(result.getResult(1)); // first becomes second
@@ -331,14 +334,15 @@ private:
 
   mlir::Location getLocation() {
     return mlir::FileLineColLoc::get(
-        builder.getStringAttr(sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID())->getBufferIdentifier()),
+        builder.getStringAttr(
+            sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID())
+                ->getBufferIdentifier()),
         currentToken.line, currentToken.column);
   }
 
   void emitError(const std::string &message) {
-    llvm::errs() << "Error at line " << currentToken.line
-                 << ", column " << currentToken.column
-                 << ": " << message << "\n";
+    llvm::errs() << "Error at line " << currentToken.line << ", column "
+                 << currentToken.column << ": " << message << "\n";
   }
 
   llvm::SourceMgr &sourceMgr;
@@ -352,8 +356,8 @@ private:
 // Public API
 //===----------------------------------------------------------------------===//
 
-mlir::OwningOpRef<mlir::ModuleOp>
-importForth(llvm::SourceMgr &sourceMgr, mlir::MLIRContext *context) {
+mlir::OwningOpRef<mlir::ModuleOp> importForth(llvm::SourceMgr &sourceMgr,
+                                              mlir::MLIRContext *context) {
   ForthParser parser(sourceMgr, context);
   return parser.parseModule();
 }

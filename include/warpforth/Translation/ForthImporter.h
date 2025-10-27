@@ -23,8 +23,8 @@ namespace forth {
 /// \param sourceMgr - Source manager containing the Forth source code
 /// \param context - MLIR context to create operations in
 /// \return The parsed MLIR module, or nullptr on error
-mlir::OwningOpRef<mlir::ModuleOp>
-importForth(llvm::SourceMgr &sourceMgr, mlir::MLIRContext *context);
+mlir::OwningOpRef<mlir::ModuleOp> importForth(llvm::SourceMgr &sourceMgr,
+                                              mlir::MLIRContext *context);
 
 } // namespace forth
 } // namespace mlir
