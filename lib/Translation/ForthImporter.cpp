@@ -194,7 +194,6 @@ public:
     // Add return at end
     builder.create<mlir::func::ReturnOp>(loc);
 
-    module.push_back(func);
     return module;
   }
 
