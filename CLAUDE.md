@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-WarpForth is a FORTH dialect for GPU kernel programming built on MLIR (Multi-Level Intermediate Representation). It's a stack-based programming language that lowers to MLIR's GPU dialect for cross-platform GPU execution (CUDA, ROCm, Vulkan, etc.).
+WarpForth is a FORTH dialect for GPU kernel programming built on MLIR. This file provides development context for making code changes. See README.md for user-facing documentation and examples.
 
 ## Build System
 
@@ -56,19 +56,14 @@ echo 'func.func @test() { ... }' | ./bin/warpforth-opt --lower-forth-to-gpu
 
 ## Architecture
 
-### Compilation Pipeline
+### Compilation Pipeline (Implementation Details)
 
+Current implementation:
 ```
-FORTH Source Code (future)
-       ↓
-  FORTH Dialect (warpforth) - Stack-based operations
-       ↓
-  Arith Dialect (MLIR) - Standard arithmetic operations
-       ↓
-  GPU Dialect (MLIR) - Platform-agnostic GPU operations
-       ↓
-  Target Backend (CUDA/ROCm/Vulkan/etc.)
+FORTH Source → FORTH Dialect → Arith Dialect → GPU Dialect → Target Backend
 ```
+
+Note: Currently only lowers to Arith dialect (GPU dialect lowering is future work).
 
 ### Key Components
 
@@ -135,20 +130,19 @@ All operations except `forth.drop` are marked as `Pure` (no side effects).
 
 ## Development Notes
 
-- **No tests currently**: The project has no test directory or test infrastructure yet
-- **MLIR syntax only**: No FORTH source parser exists; operations written directly in MLIR syntax
+- **No tests currently**: The project has no test directory or test infrastructure yet - this should be added
 - **Current lowering target**: Operations lower to Arith dialect, not GPU dialect (future work)
 - **Stack semantics**: Operations use SSA form (not runtime stack); stack concepts are in operation semantics only
+- **FORTH parser**: Basic parser exists but limited - see `tools/warpforth-translate/` and `lib/Translation/`
 
-## Roadmap Features (Not Yet Implemented)
+## Technical Debt & Future Work
 
-- Control flow operations (IF, WHILE, DO-LOOP)
-- Memory operations (load, store)
-- GPU-specific operations (thread indexing, barriers)
-- FORTH source language parser
-- JIT execution support
-- Optimization passes (stack fusion, dead code elimination)
-- Test infrastructure
+- Control flow operations (IF, WHILE, DO-LOOP) - requires new operation definitions
+- Memory operations (load, store) - needed for real GPU kernels
+- GPU-specific operations (thread indexing, barriers) - currently missing
+- Optimization passes (stack fusion, dead code elimination) - would improve generated code
+- Test infrastructure - critical for CI/CD
+- Complete GPU dialect lowering - currently stops at Arith dialect
 
 ## File Organization
 
@@ -169,3 +163,40 @@ warpforth/
 - Uses MLIR's CMake modules: `TableGen`, `AddLLVM`, `AddMLIR`
 - TableGen processes `.td` files during build to generate C++ operation code
 - Build outputs to `build/bin/` (executables) and `build/lib/` (libraries)
+
+## Commit Message Guidelines
+
+When creating commits, follow the Conventional Commits specification:
+
+### Format
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Types
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `style`: Code style changes (formatting, missing semicolons, etc.)
+- `refactor`: Code refactoring without changing functionality
+- `perf`: Performance improvements
+- `test`: Adding or updating tests
+- `build`: Changes to build system or dependencies
+- `ci`: Changes to CI configuration
+
+### Scope Examples
+- `dialect`: Changes to FORTH dialect definitions
+- `lowering`: Changes to conversion/lowering passes
+- `ops`: Changes to operation definitions
+- `build`: Build system changes
+- `parser`: Parser-related changes (when implemented)
+
+### Attribution
+- Do not mention AI assistance or Claude in commit messages
+- Do not include "Co-Authored-By: Claude" or similar attributions
+- If git user is configured as Claude, attribute commits to the main repository author
+- Keep commit messages professional and focused on the technical changes

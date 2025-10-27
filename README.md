@@ -16,27 +16,14 @@ WarpForth is a stack-based programming language dialect inspired by FORTH, speci
 ## Architecture
 
 ```
-FORTH Source Code
-       ↓
+  FORTH Source Code
+       ↓ (warpforth-translate)
   FORTH Dialect (warpforth)
-       ↓
+       ↓ (warpforth-opt --lower-forth-to-gpu)
   GPU Dialect (MLIR)
        ↓
   Target Backend (CUDA/ROCm/Vulkan/etc.)
 ```
-
-### Dialect Operations
-
-The Forth dialect provides the following operations:
-
-- **forth.constant**: Push constant values onto the stack
-- **forth.add**: Add two values (pops two, pushes result)
-- **forth.sub**: Subtract two values
-- **forth.mul**: Multiply two values
-- **forth.div**: Divide two values
-- **forth.dup**: Duplicate top stack value
-- **forth.drop**: Remove top stack value
-- **forth.swap**: Swap top two stack values
 
 ## Building
 
@@ -64,22 +51,27 @@ The Forth dialect provides the following operations:
    cmake --build .
    ```
 
-   Alternatively, using Make:
-   ```bash
-   mkdir build && cd build
-   cmake .. \
-     -DMLIR_DIR=$MLIR_DIR \
-     -DLLVM_DIR=$LLVM_DIR \
-     -DCMAKE_BUILD_TYPE=Release
-   make -j$(nproc)
-   ```
-
 3. **Verify build**:
    ```bash
    ./bin/warpforth-opt --help
    ```
 
 ## Usage
+
+### WarpForth Translation Tool
+
+The `warpforth-translate` tool converts FORTH source code to MLIR FORTH dialect:
+
+```bash
+# Translate a FORTH source file to MLIR
+./bin/warpforth-translate input.forth -o output.mlir
+
+# Translate from stdin
+echo '5 10 +' | ./bin/warpforth-translate
+
+# Full pipeline: FORTH source → MLIR → Lowered
+./bin/warpforth-translate input.forth | ./bin/warpforth-opt --lower-forth-to-gpu
+```
 
 ### WarpForth Optimizer Tool
 
@@ -96,104 +88,16 @@ The `warpforth-opt` tool is used to parse, transform, and lower FORTH dialect op
 ./bin/warpforth-opt input.mlir --lower-forth-to-gpu -o output.mlir
 ```
 
-### Example MLIR Code
+### Example FORTH Source Code
 
-Here's a simple example of FORTH dialect operations in MLIR:
+Here's a simple FORTH program:
 
-```mlir
-module {
-  func.func @simple_add(%arg0: i32, %arg1: i32) -> i32 {
-    %0 = forth.constant 10 : i32
-    %1 = forth.add %arg0, %0 : i32
-    %2 = forth.add %1, %arg1 : i32
-    return %2 : i32
-  }
+```forth
+\ Simple arithmetic
+5 10 + 3 *
 
-  func.func @stack_operations(%arg0: i32) -> i32 {
-    %0 = forth.dup %arg0 : i32
-    %1 = forth.mul %0, %arg0 : i32
-    return %1 : i32
-  }
-}
+\ Stack operations
+42 DUP *
 ```
 
-After lowering with `--lower-forth-to-gpu`, FORTH operations are converted to standard arithmetic operations that can be further lowered to GPU-specific code.
-
-## Project Structure
-
-```
-warpforth/
-├── CMakeLists.txt                    # Root build configuration
-├── README.md                         # This file
-├── cmake/
-│   └── modules/
-│       └── FindMLIR.cmake           # MLIR/LLVM detection logic
-├── include/
-│   └── warpforth/
-│       ├── Dialect/
-│       │   └── Forth/               # FORTH dialect headers
-│       │       ├── ForthDialect.h
-│       │       ├── ForthOps.h
-│       │       └── ForthOps.td      # TableGen operation definitions
-│       └── Conversion/
-│           └── ForthToGPU/          # Lowering pass headers
-│               └── ForthToGPU.h
-├── lib/
-│   ├── Dialect/
-│   │   └── Forth/                   # FORTH dialect implementation
-│   │       ├── ForthDialect.cpp
-│   │       └── ForthOps.cpp
-│   └── Conversion/
-│       └── ForthToGPU/              # Lowering pass implementation
-│           └── ForthToGPU.cpp
-└── tools/
-    └── warpforth-opt/               # Optimizer tool
-        └── warpforth-opt.cpp
-```
-
-## Development
-
-### Adding New Operations
-
-1. Define the operation in `include/warpforth/Dialect/Forth/ForthOps.td`
-2. Implement any custom logic in `lib/Dialect/Forth/ForthOps.cpp`
-3. Add lowering patterns in `lib/Conversion/ForthToGPU/ForthToGPU.cpp`
-
-### Testing Transformations
-
-Use `warpforth-opt` to test your transformations:
-
-```bash
-echo 'func.func @test() { ... }' | ./bin/warpforth-opt --lower-forth-to-gpu
-```
-
-## Roadmap
-
-- [ ] Add control flow operations (IF, WHILE, DO-LOOP)
-- [ ] Implement memory operations (load, store)
-- [ ] Add GPU-specific operations (thread indexing, barriers)
-- [ ] Create FORTH source parser (currently using MLIR syntax)
-- [ ] Add JIT execution support
-- [ ] Implement optimizations (stack fusion, dead code elimination)
-- [ ] Add example GPU kernels (matrix multiplication, reduction, etc.)
-
-## Contributing
-
-Contributions are welcome! This project is in early development, and we're open to:
-
-- Bug reports and fixes
-- New operations and transformations
-- Documentation improvements
-- Example programs and tutorials
-
-## License
-
-This project follows LLVM's licensing. See individual files for details.
-
-## Acknowledgments
-
-Built on top of:
-- [LLVM](https://llvm.org/) - Compiler infrastructure
-- [MLIR](https://mlir.llvm.org/) - Multi-Level IR framework
-
-Inspired by the FORTH programming language and the need for high-level GPU programming abstractions.
+This translates to MLIR FORTH dialect and can be further lowered.
