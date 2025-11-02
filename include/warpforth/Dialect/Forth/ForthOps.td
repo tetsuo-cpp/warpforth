@@ -14,6 +14,19 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 // Stack manipulation operations.
 //===----------------------------------------------------------------------===//
 
+def Forth_StackOp : Forth_Op<"stack", [Pure]> {
+  let summary = "Initializes the stack";
+  let description = [{
+    Initializes the stack.
+  }];
+
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    attr-dict type($output_stack)
+  }];
+}
+
 def Forth_DupOp : Forth_Op<"dup", [Pure]> {
   let summary = "Duplicate top stack element";
   let description = [{
@@ -86,6 +99,25 @@ def Forth_RotOp : Forth_Op<"rot", [Pure]> {
 
   let assemblyFormat = [{
     $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Literal operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_LiteralOp : Forth_Op<"literal", [Pure]> {
+  let summary = "Push a literal value onto the stack";
+  let description = [{
+    Pushes a literal integer value onto the stack.
+    Forth semantics: ( -- n )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack, I64Attr:$value);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack $value attr-dict `:` type($input_stack) `->` type($output_stack)
   }];
 }
 

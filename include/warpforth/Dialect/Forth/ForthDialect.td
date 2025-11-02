@@ -22,6 +22,7 @@ def Forth_Dialect : Dialect {
         designed for GPU kernel programming.
     }];
   let cppNamespace = "::mlir::forth";
+  let useDefaultTypePrinterParser = 1;
 }
 
 //===----------------------------------------------------------------------===//

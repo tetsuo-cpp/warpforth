@@ -41,9 +41,11 @@ The project follows MLIR's standard dialect organization pattern:
 1. **Forth Stack Type**: An untyped stack representation where type correctness is the programmer's responsibility (defined in `ForthDialect.td:43`)
 
 2. **Operation Categories**:
+   - Stack initialization: `forth.stack` - initializes an empty stack
+   - Literals: `forth.literal` - pushes integer literals onto the stack
    - Stack manipulation ops: `dup`, `drop`, `swap`, `over`, `rot`
    - Arithmetic ops: `add`, `sub`, `mul`, `div`, `mod`
-   - All operations take `Forth_StackType` as input and produce `Forth_StackType` as output
+   - All operations take `Forth_StackType` as input and produce `Forth_StackType` as output (except `forth.stack` which creates the initial stack)
 
 3. **Tools**:
    - `warpforth-translate`: MLIR translation tool that registers the Forth dialect alongside standard MLIR dialects
@@ -51,16 +53,27 @@ The project follows MLIR's standard dialect organization pattern:
 ### Directory Layout
 
 ```
-include/warpforth/Dialect/Forth/  # Public headers and TableGen files
-  ├── ForthDialect.td              # Dialect and type definitions
-  ├── ForthOps.td                  # Operation definitions
-  └── ForthDialect.h               # Main C++ header
+include/warpforth/
+  ├── Dialect/Forth/               # Public headers and TableGen files
+  │   ├── ForthDialect.td          # Dialect and type definitions
+  │   ├── ForthOps.td              # Operation definitions
+  │   └── ForthDialect.h           # Main C++ header
+  └── Translation/ForthToMLIR/     # Translation public API
+      └── ForthToMLIR.h            # Translation registration
 
-lib/Dialect/Forth/                 # Implementation
-  └── ForthDialect.cpp             # Dialect initialization
+lib/
+  ├── Dialect/Forth/               # Dialect implementation
+  │   └── ForthDialect.cpp         # Dialect initialization
+  └── Translation/ForthToMLIR/     # Translation implementation
+      ├── ForthToMLIR.cpp          # Lexer, parser, and translator
+      └── ForthToMLIR.h            # Private translation headers
 
 tools/warpforth-translate/         # Translation tool
   └── warpforth-translate.cpp      # Main entry point
+
+test/                              # Test files
+  ├── example.forth                # Simple arithmetic example
+  └── stack-ops.forth              # Stack manipulation example
 ```
 
 ## TableGen Code Generation
@@ -90,6 +103,38 @@ To add a new Forth operation:
    ```
 
 2. Rebuild the project - TableGen will automatically generate the C++ implementation
+
+## Using the Translator
+
+The `warpforth-translate` tool can convert Forth source code to MLIR using the `--forth-to-mlir` flag:
+
+```bash
+# Translate Forth source to MLIR
+./build/bin/warpforth-translate --forth-to-mlir test/example.forth
+
+# Example Forth input (test/example.forth):
+# 5 3 + 2 *
+
+# Generated MLIR output:
+# module {
+#   func.func private @main() {
+#     %0 = forth.stack : !forth.stack
+#     %1 = forth.literal %0 5 : !forth.stack -> !forth.stack
+#     %2 = forth.literal %1 3 : !forth.stack -> !forth.stack
+#     %3 = forth.add %2 : !forth.stack -> !forth.stack
+#     %4 = forth.literal %3 2 : !forth.stack -> !forth.stack
+#     %5 = forth.mul %4 : !forth.stack -> !forth.stack
+#     return
+#   }
+# }
+```
+
+**Supported Forth Words:**
+- Numbers: Integer literals (e.g., `42`, `-10`)
+- Stack operations: `dup`, `drop`, `swap`, `over`, `rot`
+- Arithmetic: `+`, `-`, `*`, `/`, `mod` (or `add`, `sub`, `mul`, `div`)
+
+The translator tokenizes Forth source (whitespace-delimited), generates corresponding MLIR operations, and threads the stack value through each operation.
 
 ## Coding Conventions
 
