@@ -1,0 +1,15 @@
+add_mlir_conversion_library(MLIRForthToMemRefConversion
+  ForthToMemRef.cpp
+
+  DEPENDS
+  MLIRForth
+
+  LINK_LIBS PUBLIC
+  MLIRIR
+  MLIRPass
+  MLIRTransformUtils
+  MLIRMemRefDialect
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRForth
+)

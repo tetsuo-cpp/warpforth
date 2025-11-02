@@ -48,7 +48,11 @@ The project follows MLIR's standard dialect organization pattern:
    - All operations take `Forth_StackType` as input and produce `Forth_StackType` as output (except `forth.stack` which creates the initial stack)
 
 3. **Tools**:
-   - `warpforth-translate`: MLIR translation tool that registers the Forth dialect alongside standard MLIR dialects
+   - `warpforth-translate`: MLIR translation tool that converts Forth source to MLIR
+   - `warpforth-opt`: MLIR optimization tool for running conversion passes and transformations
+
+4. **Conversion Passes**:
+   - `convert-forth-to-memref`: Lowers Forth dialect to MemRef dialect, converting the abstract stack to concrete memory operations
 
 ### Directory Layout
 
@@ -58,18 +62,30 @@ include/warpforth/
   │   ├── ForthDialect.td          # Dialect and type definitions
   │   ├── ForthOps.td              # Operation definitions
   │   └── ForthDialect.h           # Main C++ header
+  ├── Conversion/                  # Conversion pass headers
+  │   ├── Passes.h                 # Pass registration
+  │   ├── Passes.td                # TableGen pass definitions
+  │   └── ForthToMemRef/           # Forth to MemRef conversion
+  │       └── ForthToMemRef.h      # Pass declaration
   └── Translation/ForthToMLIR/     # Translation public API
       └── ForthToMLIR.h            # Translation registration
 
 lib/
   ├── Dialect/Forth/               # Dialect implementation
   │   └── ForthDialect.cpp         # Dialect initialization
+  ├── Conversion/                  # Conversion pass implementations
+  │   ├── Passes.cpp               # Pass registration
+  │   └── ForthToMemRef/           # Forth to MemRef conversion
+  │       └── ForthToMemRef.cpp    # Conversion patterns
   └── Translation/ForthToMLIR/     # Translation implementation
       ├── ForthToMLIR.cpp          # Lexer, parser, and translator
       └── ForthToMLIR.h            # Private translation headers
 
-tools/warpforth-translate/         # Translation tool
-  └── warpforth-translate.cpp      # Main entry point
+tools/
+  ├── warpforth-translate/         # Translation tool
+  │   └── warpforth-translate.cpp  # Main entry point
+  └── warpforth-opt/               # Optimization tool
+      └── warpforth-opt.cpp        # Pass driver
 
 test/                              # Test files
   ├── example.forth                # Simple arithmetic example
@@ -135,6 +151,23 @@ The `warpforth-translate` tool can convert Forth source code to MLIR using the `
 - Arithmetic: `+`, `-`, `*`, `/`, `mod` (or `add`, `sub`, `mul`, `div`)
 
 The translator tokenizes Forth source (whitespace-delimited), generates corresponding MLIR operations, and threads the stack value through each operation.
+
+## Conversion Passes
+
+### Forth to MemRef Conversion
+
+The `convert-forth-to-memref` pass lowers the abstract `!forth.stack` type to concrete `memref<256xi64>` with an explicit stack pointer (`index` type). Use with `warpforth-opt`:
+
+```bash
+# Convert Forth dialect to MemRef dialect
+./build/bin/warpforth-opt --convert-forth-to-memref input.mlir
+
+# Full pipeline from Forth source
+./build/bin/warpforth-translate --forth-to-mlir test/example.forth | \
+  ./build/bin/warpforth-opt --convert-forth-to-memref
+```
+
+Conversion patterns are in `lib/Conversion/ForthToMemRef/ForthToMemRef.cpp`. When adding new Forth operations, add corresponding conversion patterns there.
 
 ## Coding Conventions
 
