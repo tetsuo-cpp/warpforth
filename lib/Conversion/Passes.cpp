@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "warpforth/Conversion/Passes.h"
+#include "warpforth/Conversion/ForthToGPU/ForthToGPU.h"
 #include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
 
 namespace mlir {
@@ -14,6 +15,8 @@ void registerConversionPasses() {
   registerPass([]() -> std::unique_ptr<Pass> {
     return createConvertForthToMemRefPass();
   });
+  registerPass(
+      []() -> std::unique_ptr<Pass> { return createConvertForthToGPUPass(); });
 }
 
 } // namespace warpforth

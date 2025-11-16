@@ -53,6 +53,7 @@ The project follows MLIR's standard dialect organization pattern:
 
 4. **Conversion Passes**:
    - `convert-forth-to-memref`: Lowers Forth dialect to MemRef dialect, converting the abstract stack to concrete memory operations
+   - `convert-forth-to-gpu`: Converts Forth functions to GPU dialect for GPU execution
 
 ### Directory Layout
 
@@ -65,8 +66,10 @@ include/warpforth/
   ├── Conversion/                  # Conversion pass headers
   │   ├── Passes.h                 # Pass registration
   │   ├── Passes.td                # TableGen pass definitions
-  │   └── ForthToMemRef/           # Forth to MemRef conversion
-  │       └── ForthToMemRef.h      # Pass declaration
+  │   ├── ForthToMemRef/           # Forth to MemRef conversion
+  │   │   └── ForthToMemRef.h      # Pass declaration
+  │   └── ForthToGPU/              # Forth to GPU conversion
+  │       └── ForthToGPU.h         # Pass declaration
   └── Translation/ForthToMLIR/     # Translation public API
       └── ForthToMLIR.h            # Translation registration
 
@@ -75,8 +78,10 @@ lib/
   │   └── ForthDialect.cpp         # Dialect initialization
   ├── Conversion/                  # Conversion pass implementations
   │   ├── Passes.cpp               # Pass registration
-  │   └── ForthToMemRef/           # Forth to MemRef conversion
-  │       └── ForthToMemRef.cpp    # Conversion patterns
+  │   ├── ForthToMemRef/           # Forth to MemRef conversion
+  │   │   └── ForthToMemRef.cpp    # Conversion patterns
+  │   └── ForthToGPU/              # Forth to GPU conversion
+  │       └── ForthToGPU.cpp       # GPU conversion implementation
   └── Translation/ForthToMLIR/     # Translation implementation
       ├── ForthToMLIR.cpp          # Lexer, parser, and translator
       └── ForthToMLIR.h            # Private translation headers
@@ -168,6 +173,21 @@ The `convert-forth-to-memref` pass lowers the abstract `!forth.stack` type to co
 ```
 
 Conversion patterns are in `lib/Conversion/ForthToMemRef/ForthToMemRef.cpp`. When adding new Forth operations, add corresponding conversion patterns there.
+
+### Forth to GPU Conversion
+
+The `convert-forth-to-gpu` pass converts Forth functions to GPU dialect for GPU execution. Use with `warpforth-opt`:
+
+```bash
+# Convert Forth functions to GPU dialect
+./build/bin/warpforth-opt --convert-forth-to-gpu input.mlir
+
+# Full pipeline from Forth source
+./build/bin/warpforth-translate --forth-to-mlir test/example.forth | \
+  ./build/bin/warpforth-opt --convert-forth-to-memref --convert-forth-to-gpu
+```
+
+The pass wraps `func.func` operations in a `gpu.module` and converts them to `gpu.func`. Functions named "main" receive the `gpu.kernel` attribute.
 
 ## Coding Conventions
 

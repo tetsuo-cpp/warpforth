@@ -29,4 +29,20 @@ def ConvertForthToMemRef
                            "mlir::arith::ArithDialect"];
 }
 
+def ConvertForthToGPU : Pass<"convert-forth-to-gpu", "mlir::ModuleOp"> {
+  let summary = "Convert Forth functions to GPU dialect";
+  let description = [{
+    This pass converts Forth functions to the GPU dialect to prepare them for
+    GPU execution.
+
+    The pass wraps func.func operations in a gpu.module and converts them to
+    gpu.func operations. Functions named "main" receive the gpu.kernel
+    attribute, making them launchable from host code.
+  }];
+
+  let constructor = "mlir::warpforth::createConvertForthToGPUPass()";
+
+  let dependentDialects = ["mlir::gpu::GPUDialect", "mlir::func::FuncDialect"];
+}
+
 #endif // WARPFORTH_CONVERSION_PASSES

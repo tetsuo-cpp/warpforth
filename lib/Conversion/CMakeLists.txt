@@ -7,6 +7,8 @@ add_mlir_library(MLIRConversionPasses
   LINK_LIBS PUBLIC
   MLIRPass
   MLIRForthToMemRefConversion
+  MLIRForthToGPUConversion
 )
 
 add_subdirectory(ForthToMemRef)
+add_subdirectory(ForthToGPU)
