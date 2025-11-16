@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "warpforth/Conversion/Passes.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Pass/PassManager.h"
 #include "warpforth/Conversion/ForthToGPU/ForthToGPU.h"
 #include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
 
@@ -17,6 +19,14 @@ void registerConversionPasses() {
   });
   registerPass(
       []() -> std::unique_ptr<Pass> { return createConvertForthToGPUPass(); });
+
+  // Register WarpForth pipeline
+  PassPipelineRegistration<>(
+      "warpforth-pipeline", "Complete WarpForth compilation pipeline",
+      [](OpPassManager &pm) {
+        pm.addNestedPass<func::FuncOp>(createConvertForthToMemRefPass());
+        pm.addPass(createConvertForthToGPUPass());
+      });
 }
 
 } // namespace warpforth

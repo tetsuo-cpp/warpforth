@@ -189,6 +189,25 @@ The `convert-forth-to-gpu` pass converts Forth functions to GPU dialect for GPU 
 
 The pass wraps `func.func` operations in a `gpu.module` and converts them to `gpu.func`. Functions named "main" receive the `gpu.kernel` attribute.
 
+### WarpForth Pipeline
+
+The `warpforth-pipeline` is a registered pass pipeline that runs the complete compilation sequence from Forth dialect to GPU dialect. Use with `warpforth-opt`:
+
+```bash
+# Run the complete WarpForth compilation pipeline
+./build/bin/warpforth-opt --warpforth-pipeline input.mlir
+
+# Full pipeline from Forth source (equivalent to chaining individual passes)
+./build/bin/warpforth-translate --forth-to-mlir test/example.forth | \
+  ./build/bin/warpforth-opt --warpforth-pipeline
+```
+
+This pipeline internally runs:
+1. `convert-forth-to-memref` (as a nested pass on `func.func` operations)
+2. `convert-forth-to-gpu`
+
+The pipeline is registered in `lib/Conversion/Passes.cpp`.
+
 ## Coding Conventions
 
 - Follow LLVM/MLIR naming conventions (CamelCase for types, operations)
