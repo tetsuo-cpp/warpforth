@@ -7,8 +7,10 @@
 #include "warpforth/Conversion/ForthToGPU/ForthToGPU.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -81,7 +83,27 @@ private:
       }
     }
 
+    // Annotate memref.alloca with private address space for thread-local stacks
+    annotateAllocaWithPrivateAddressSpace(gpuFunc);
+
     funcOp.erase();
+  }
+
+  void annotateAllocaWithPrivateAddressSpace(gpu::GPUFuncOp gpuFunc) {
+    gpuFunc.walk([&](memref::AllocaOp allocaOp) {
+      auto memRefType = cast<MemRefType>(allocaOp.getType());
+      if (memRefType.getMemorySpace())
+        return;
+
+      // Create a new MemRefType with private address space (address space 5)
+      auto privateAddrSpace = gpu::AddressSpaceAttr::get(
+          allocaOp.getContext(), gpu::AddressSpace::Private);
+      auto newMemRefType =
+          MemRefType::get(memRefType.getShape(), memRefType.getElementType(),
+                          memRefType.getLayout(), privateAddrSpace);
+
+      allocaOp.getResult().setType(newMemRefType);
+    });
   }
 };
 

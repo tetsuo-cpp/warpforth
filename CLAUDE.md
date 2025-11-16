@@ -187,11 +187,11 @@ The `convert-forth-to-gpu` pass converts Forth functions to GPU dialect for GPU 
   ./build/bin/warpforth-opt --convert-forth-to-memref --convert-forth-to-gpu
 ```
 
-The pass wraps `func.func` operations in a `gpu.module` and converts them to `gpu.func`. Functions named "main" receive the `gpu.kernel` attribute.
+The pass wraps `func.func` operations in a `gpu.module` and converts them to `gpu.func`. Functions named "main" receive the `gpu.kernel` attribute. Additionally, the pass annotates `memref.alloca` operations with GPU private address space (address space 5) to ensure thread-local stack allocation in GPU kernels.
 
 ### WarpForth Pipeline
 
-The `warpforth-pipeline` is a registered pass pipeline that runs the complete compilation sequence from Forth dialect to GPU dialect. Use with `warpforth-opt`:
+The `warpforth-pipeline` is a registered pass pipeline that runs the complete compilation sequence from Forth dialect to NVVM IR suitable for CUDA execution. Use with `warpforth-opt`:
 
 ```bash
 # Run the complete WarpForth compilation pipeline
@@ -203,8 +203,12 @@ The `warpforth-pipeline` is a registered pass pipeline that runs the complete co
 ```
 
 This pipeline internally runs:
-1. `convert-forth-to-memref` (as a nested pass on `func.func` operations)
-2. `convert-forth-to-gpu`
+1. `convert-forth-to-memref` (as a nested pass on `func.func` operations) - Lowers abstract stack to concrete memref operations
+2. `convert-forth-to-gpu` - Wraps functions in GPU modules, annotates with private address space for thread-local stacks
+3. Canonicalization pass - Normalizes MemRef operations for GPU
+4. `gpu-nvvm-attach-target` - Attaches NVVM target (sm_70, Volta architecture) to GPU modules
+5. `convert-gpu-ops-to-nvvm-ops` (nested on `gpu.module` ops) - Lowers GPU dialect to NVVM IR
+6. `reconcile-unrealized-casts` - Removes unrealized type conversions
 
 The pipeline is registered in `lib/Conversion/Passes.cpp`.
 

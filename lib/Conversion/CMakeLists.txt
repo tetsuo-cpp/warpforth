@@ -8,6 +8,11 @@ add_mlir_library(MLIRConversionPasses
   MLIRPass
   MLIRForthToMemRefConversion
   MLIRForthToGPUConversion
+  MLIRGPUDialect
+  MLIRGPUToNVVMTransforms
+  MLIRGPUTransforms
+  MLIRReconcileUnrealizedCasts
+  MLIRTransforms
 )
 
 add_subdirectory(ForthToMemRef)

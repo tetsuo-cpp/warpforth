@@ -10,5 +10,6 @@ add_mlir_conversion_library(MLIRForthToGPUConversion
   MLIRTransformUtils
   MLIRGPUDialect
   MLIRFuncDialect
+  MLIRMemRefDialect
   MLIRForth
 )
