@@ -13,6 +13,7 @@ target_link_libraries(warpforth-translate
   ${translation_libs}
   MLIRForth
   MLIRForthTranslation
+  MLIRToPTXTranslation
   MLIRIR
   MLIRParser
   MLIRPass

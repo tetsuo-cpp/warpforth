@@ -70,8 +70,11 @@ include/warpforth/
   │   │   └── ForthToMemRef.h      # Pass declaration
   │   └── ForthToGPU/              # Forth to GPU conversion
   │       └── ForthToGPU.h         # Pass declaration
-  └── Translation/ForthToMLIR/     # Translation public API
-      └── ForthToMLIR.h            # Translation registration
+  └── Translation/                 # Translation public API
+      ├── ForthToMLIR/
+      │   └── ForthToMLIR.h        # Forth-to-MLIR translation registration
+      └── MLIRToPTX/
+          └── MLIRToPTX.h          # MLIR-to-PTX translation registration
 
 lib/
   ├── Dialect/Forth/               # Dialect implementation
@@ -82,9 +85,12 @@ lib/
   │   │   └── ForthToMemRef.cpp    # Conversion patterns
   │   └── ForthToGPU/              # Forth to GPU conversion
   │       └── ForthToGPU.cpp       # GPU conversion implementation
-  └── Translation/ForthToMLIR/     # Translation implementation
-      ├── ForthToMLIR.cpp          # Lexer, parser, and translator
-      └── ForthToMLIR.h            # Private translation headers
+  └── Translation/                 # Translation implementations
+      ├── ForthToMLIR/
+      │   ├── ForthToMLIR.cpp      # Lexer, parser, and translator
+      │   └── ForthToMLIR.h        # Private translation headers
+      └── MLIRToPTX/
+          └── MLIRToPTX.cpp        # PTX extraction from gpu.binary
 
 tools/
   ├── warpforth-translate/         # Translation tool
@@ -215,6 +221,25 @@ This pipeline internally runs:
 The final output is a `gpu.binary` operation containing embedded PTX assembly that can be loaded and executed on NVIDIA GPUs.
 
 The pipeline is registered in `lib/Conversion/Passes.cpp`.
+
+### Extracting PTX Assembly
+
+The `--mlir-to-ptx` translation extracts PTX assembly from `gpu.binary` operations produced by `warpforth-pipeline`:
+
+```bash
+# Full pipeline from Forth source to PTX file
+./build/bin/warpforth-translate --forth-to-mlir test/example.forth | \
+  ./build/bin/warpforth-opt --warpforth-pipeline | \
+  ./build/bin/warpforth-translate --mlir-to-ptx > kernel.ptx
+
+# Or use -o flag for output file
+... | ./build/bin/warpforth-translate --mlir-to-ptx -o kernel.ptx
+
+# Pipe directly to ptxas for validation or compilation
+... | ./build/bin/warpforth-translate --mlir-to-ptx | ptxas -arch=sm_50 -o kernel.cubin -
+```
+
+The translation walks the module for `gpu.binary` operations and outputs the embedded PTX assembly to stdout (or file via `-o`).
 
 ## Coding Conventions
 

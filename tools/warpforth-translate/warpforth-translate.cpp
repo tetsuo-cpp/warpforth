@@ -12,6 +12,7 @@
 #include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
+#include "warpforth/Translation/MLIRToPTX/MLIRToPTX.h"
 
 int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
@@ -23,6 +24,9 @@ int main(int argc, char **argv) {
 
   // Register Forth-to-MLIR translation
   mlir::forth::registerForthToMLIRTranslation();
+
+  // Register MLIR-to-PTX translation
+  mlir::warpforth::registerMLIRToPTXTranslation();
 
   return mlir::failed(
       mlir::mlirTranslateMain(argc, argv, "WarpForth Translation Tool"));
