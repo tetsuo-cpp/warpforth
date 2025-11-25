@@ -1,0 +1,83 @@
+#!/bin/bash
+# warpforthc - WarpForth compiler: Forth source to PTX assembly
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TRANSLATE="$SCRIPT_DIR/build/bin/warpforth-translate"
+OPT="$SCRIPT_DIR/build/bin/warpforth-opt"
+
+usage() {
+    cat <<EOF
+Usage: warpforthc <input.forth> [-o <output.ptx>]
+
+Compile Forth source code to PTX assembly.
+
+Options:
+  -o <file>    Write output to file instead of stdout
+  -h, --help   Show this help message
+
+Example:
+  warpforthc test/example.forth
+  warpforthc test/example.forth -o kernel.ptx
+EOF
+}
+
+# Check for help flag
+if [[ $# -eq 0 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+INPUT="$1"
+OUTPUT=""
+shift
+
+# Parse remaining arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o)
+            if [[ $# -lt 2 ]]; then
+                echo "error: -o requires an output file argument" >&2
+                exit 1
+            fi
+            OUTPUT="$2"
+            shift 2
+            ;;
+        *)
+            echo "error: unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Check input file exists
+if [[ ! -f "$INPUT" ]]; then
+    echo "error: input file not found: $INPUT" >&2
+    exit 1
+fi
+
+# Check tools exist
+if [[ ! -x "$TRANSLATE" ]]; then
+    echo "error: warpforth-translate not found at $TRANSLATE" >&2
+    echo "hint: run 'cmake --build build' to build the project" >&2
+    exit 1
+fi
+
+if [[ ! -x "$OPT" ]]; then
+    echo "error: warpforth-opt not found at $OPT" >&2
+    echo "hint: run 'cmake --build build' to build the project" >&2
+    exit 1
+fi
+
+# Run the pipeline
+if [[ -n "$OUTPUT" ]]; then
+    "$TRANSLATE" --forth-to-mlir "$INPUT" | \
+        "$OPT" --warpforth-pipeline | \
+        "$TRANSLATE" --mlir-to-ptx -o "$OUTPUT"
+else
+    "$TRANSLATE" --forth-to-mlir "$INPUT" | \
+        "$OPT" --warpforth-pipeline | \
+        "$TRANSLATE" --mlir-to-ptx
+fi
