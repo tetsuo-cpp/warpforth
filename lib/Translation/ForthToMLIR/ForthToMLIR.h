@@ -38,10 +38,8 @@ public:
   Token nextToken();
 
 private:
-  llvm::SourceMgr &sourceMgr;
   const char *curPtr;
   const char *endPtr;
-  unsigned bufferID;
 
   /// Skip whitespace and comments.
   void skipWhitespace();

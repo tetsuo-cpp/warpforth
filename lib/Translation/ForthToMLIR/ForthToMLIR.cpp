@@ -21,8 +21,7 @@ using namespace mlir::forth;
 // ForthLexer implementation
 //===----------------------------------------------------------------------===//
 
-ForthLexer::ForthLexer(llvm::SourceMgr &sourceMgr, unsigned bufferID)
-    : sourceMgr(sourceMgr), bufferID(bufferID) {
+ForthLexer::ForthLexer(llvm::SourceMgr &sourceMgr, unsigned bufferID) {
   auto buffer = sourceMgr.getMemoryBuffer(bufferID);
   curPtr = buffer->getBufferStart();
   endPtr = buffer->getBufferEnd();

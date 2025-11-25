@@ -37,7 +37,6 @@ find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)
 if(CLANG_FORMAT_EXECUTABLE)
   file(GLOB_RECURSE ALL_SOURCE_FILES
     ${PROJECT_SOURCE_DIR}/include/**/*.h
-    ${PROJECT_SOURCE_DIR}/include/**/*.td
     ${PROJECT_SOURCE_DIR}/lib/**/*.cpp
     ${PROJECT_SOURCE_DIR}/tools/**/*.cpp
   )
