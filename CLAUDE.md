@@ -191,7 +191,7 @@ The pass wraps `func.func` operations in a `gpu.module` and converts them to `gp
 
 ### WarpForth Pipeline
 
-The `warpforth-pipeline` is a registered pass pipeline that runs the complete compilation sequence from Forth dialect to NVVM IR suitable for CUDA execution. Use with `warpforth-opt`:
+The `warpforth-pipeline` is a registered pass pipeline that runs the complete compilation sequence from Forth dialect to PTX assembly suitable for CUDA execution. Use with `warpforth-opt`:
 
 ```bash
 # Run the complete WarpForth compilation pipeline
@@ -206,9 +206,13 @@ This pipeline internally runs:
 1. `convert-forth-to-memref` (as a nested pass on `func.func` operations) - Lowers abstract stack to concrete memref operations
 2. `convert-forth-to-gpu` - Wraps functions in GPU modules, annotates with private address space for thread-local stacks
 3. Canonicalization pass - Normalizes MemRef operations for GPU
-4. `gpu-nvvm-attach-target` - Attaches NVVM target (sm_70, Volta architecture) to GPU modules
+4. `gpu-nvvm-attach-target` - Attaches NVVM target (sm_50) to GPU modules
 5. `convert-gpu-ops-to-nvvm-ops` (nested on `gpu.module` ops) - Lowers GPU dialect to NVVM IR
-6. `reconcile-unrealized-casts` - Removes unrealized type conversions
+6. `convert-nvvm-to-llvm` - Lowers NVVM intrinsics to LLVM dialect
+7. `reconcile-unrealized-casts` - Removes unrealized type conversions
+8. `gpu-module-to-binary` - Compiles LLVM IR to PTX assembly and packages it as a `gpu.binary`
+
+The final output is a `gpu.binary` operation containing embedded PTX assembly that can be loaded and executed on NVIDIA GPUs.
 
 The pipeline is registered in `lib/Conversion/Passes.cpp`.
 

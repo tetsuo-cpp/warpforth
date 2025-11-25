@@ -6,11 +6,14 @@
 
 #include "warpforth/Conversion/Passes.h"
 #include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
+#include "mlir/Conversion/NVVMToLLVM/NVVMToLLVM.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Target/LLVMIR/Dialect/GPU/GPUToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Transforms/Passes.h"
 #include "warpforth/Conversion/ForthToGPU/ForthToGPU.h"
 #include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
@@ -27,7 +30,7 @@ void registerConversionPasses() {
 
   // Register WarpForth pipeline
   PassPipelineRegistration<>(
-      "warpforth-pipeline", "WarpForth compilation pipeline (Forth to NVVM)",
+      "warpforth-pipeline", "WarpForth compilation pipeline (Forth to PTX)",
       [](OpPassManager &pm) {
         // Stage 1: Lower Forth to MemRef
         pm.addNestedPass<func::FuncOp>(createConvertForthToMemRefPass());
@@ -46,8 +49,16 @@ void registerConversionPasses() {
         // Stage 5: Lower GPU to NVVM
         pm.addNestedPass<gpu::GPUModuleOp>(createConvertGpuOpsToNVVMOps());
 
-        // Stage 6: Reconcile type conversions
+        // Stage 6: Lower NVVM to LLVM
+        pm.addPass(createConvertNVVMToLLVMPass());
+
+        // Stage 7: Reconcile type conversions
         pm.addPass(createReconcileUnrealizedCastsPass());
+
+        // Stage 8: Compile GPU module to PTX binary
+        GpuModuleToBinaryPassOptions binaryOptions;
+        binaryOptions.compilationTarget = "isa"; // Output PTX assembly
+        pm.addPass(createGpuModuleToBinaryPass(binaryOptions));
       });
 }
 

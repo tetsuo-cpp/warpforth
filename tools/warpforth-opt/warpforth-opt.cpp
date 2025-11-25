@@ -13,6 +13,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/FileUtilities.h"
+#include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
@@ -29,6 +30,8 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
+  // Register LLVM IR translations for GPU module serialization
+  mlir::registerAllToLLVMIRTranslations(registry);
   registry.insert<mlir::forth::ForthDialect>();
 
   return mlir::asMainReturnCode(
