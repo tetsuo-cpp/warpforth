@@ -28,6 +28,7 @@ Requires MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in CMake.
 **Tools:**
 - `tools/warpforth-translate/warpforth-translate.cpp` - Translation tool entry point
 - `tools/warpforth-opt/warpforth-opt.cpp` - Optimization tool entry point
+- `tools/warpforth-runner.cpp` - PTX execution tool for GPU kernels
 
 ## Tools Usage
 
@@ -43,6 +44,9 @@ Requires MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in CMake.
 ./build/bin/warpforth-translate --forth-to-mlir test/example.forth | \
   ./build/bin/warpforth-opt --warpforth-pipeline | \
   ./build/bin/warpforth-translate --mlir-to-ptx > kernel.ptx
+
+# Execute PTX on GPU
+./build/bin/warpforth-runner kernel.ptx
 ```
 
 ## Adding New Operations
@@ -67,9 +71,9 @@ Add corresponding conversion pattern in `lib/Conversion/ForthToMemRef/ForthToMem
 
 - **Stack Type**: `!forth.stack` - untyped stack, programmer ensures type safety
 - **Operations**: All take stack as input and produce stack as output (except `forth.stack`)
-- **Supported Words**: literals, `dup drop swap over rot`, `+ - * / mod`
+- **Supported Words**: literals, `dup drop swap over rot`, `+ - * / mod`, `@ !`
 - **Conversion**: `!forth.stack` → `memref<256xi64>` with explicit stack pointer
-- **GPU**: Functions wrapped in `gpu.module`, `main` gets `gpu.kernel` attribute
+- **GPU**: Functions wrapped in `gpu.module`, `main` gets `gpu.kernel` attribute, configured with bare pointers for NVVM conversion
 
 ## Conventions
 
