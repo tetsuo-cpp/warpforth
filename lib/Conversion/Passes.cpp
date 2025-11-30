@@ -46,8 +46,11 @@ void registerConversionPasses() {
         // architecture)
         pm.addPass(createGpuNVVMAttachTarget());
 
-        // Stage 5: Lower GPU to NVVM
-        pm.addNestedPass<gpu::GPUModuleOp>(createConvertGpuOpsToNVVMOps());
+        // Stage 5: Lower GPU to NVVM with bare pointers
+        ConvertGpuOpsToNVVMOpsOptions gpuToNVVMOptions;
+        gpuToNVVMOptions.useBarePtrCallConv = true;
+        pm.addNestedPass<gpu::GPUModuleOp>(
+            createConvertGpuOpsToNVVMOps(gpuToNVVMOptions));
 
         // Stage 6: Lower NVVM to LLVM
         pm.addPass(createConvertNVVMToLLVMPass());
