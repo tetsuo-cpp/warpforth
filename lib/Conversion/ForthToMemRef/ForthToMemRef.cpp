@@ -266,6 +266,94 @@ using MulOpConversion = BinaryArithOpConversion<forth::MulOp, arith::MulIOp>;
 using DivOpConversion = BinaryArithOpConversion<forth::DivOp, arith::DivSIOp>;
 using ModOpConversion = BinaryArithOpConversion<forth::ModOp, arith::RemSIOp>;
 
+/// Conversion pattern for forth.load operation (@).
+/// Pops address from stack, loads from buffer, pushes value: ( addr -- value )
+struct LoadOpConversion : public OpConversionPattern<forth::LoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::LoadOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getInputStack();
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Get the buffer parameter from the function
+    auto funcOp = dyn_cast<func::FuncOp>(op->getParentOp());
+    if (!funcOp || funcOp.getNumArguments() != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "expected function with buffer parameter");
+    }
+    Value bufferArg = funcOp.getArgument(0);
+
+    // Pop address from stack
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value newSP = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, newSP);
+
+    // Convert address from i64 to index for buffer access
+    Value addrIndex = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), addrValue);
+
+    // Load value from buffer at address
+    Value loadedValue =
+        rewriter.create<memref::LoadOp>(loc, bufferArg, addrIndex);
+
+    // Push loaded value onto stack
+    Value finalSP = rewriter.create<arith::AddIOp>(loc, newSP, one);
+    rewriter.create<memref::StoreOp>(loc, loadedValue, memref, finalSP);
+
+    rewriter.replaceOpWithMultiple(op, {{memref, finalSP}});
+    return success();
+  }
+};
+
+/// Conversion pattern for forth.store operation (!).
+/// Pops address and value from stack, stores value to buffer: ( addr value -- )
+struct StoreOpConversion : public OpConversionPattern<forth::StoreOp> {
+  using OpConversionPattern::OpConversionPattern;
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::StoreOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getInputStack();
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Get the buffer parameter from the function
+    auto funcOp = dyn_cast<func::FuncOp>(op->getParentOp());
+    if (!funcOp || funcOp.getNumArguments() != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "expected function with buffer parameter");
+    }
+    Value bufferArg = funcOp.getArgument(0);
+
+    // Pop value from stack
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    Value value = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
+
+    // Pop address from stack
+    Value spMinus2 = rewriter.create<arith::SubIOp>(loc, spMinus1, one);
+    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, spMinus2);
+
+    // Convert address from i64 to index for buffer access
+    Value addrIndex = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), addrValue);
+
+    // Store value to buffer at address
+    rewriter.create<memref::StoreOp>(loc, value, bufferArg, addrIndex);
+
+    // New stack pointer is SP-2 (popped both address and value)
+    rewriter.replaceOpWithMultiple(op, {{memref, spMinus2}});
+    return success();
+  }
+};
+
 /// Conversion pass implementation.
 struct ConvertForthToMemRefPass
     : public impl::ConvertForthToMemRefBase<ConvertForthToMemRefPass> {
@@ -286,7 +374,8 @@ struct ConvertForthToMemRefPass
     patterns.add<StackOpConversion, LiteralOpConversion, DupOpConversion,
                  DropOpConversion, SwapOpConversion, OverOpConversion,
                  RotOpConversion, AddOpConversion, SubOpConversion,
-                 MulOpConversion, DivOpConversion, ModOpConversion>(context);
+                 MulOpConversion, DivOpConversion, ModOpConversion,
+                 LoadOpConversion, StoreOpConversion>(context);
 
     if (failed(applyPartialConversion(function, target, std::move(patterns))))
       signalPassFailure();

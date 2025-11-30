@@ -200,4 +200,40 @@ def Forth_ModOp : Forth_Op<"mod", [Pure]> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Memory operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_LoadOp : Forth_Op<"load", [Pure]> {
+  let summary = "Load value from memory buffer";
+  let description = [{
+    Pops an address from the stack, loads a value from the memory buffer at that address,
+    and pushes the loaded value onto the stack.
+    Forth semantics: ( addr -- value )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_StoreOp : Forth_Op<"store", [Pure]> {
+  let summary = "Store value to memory buffer";
+  let description = [{
+    Pops an address and value from the stack, stores the value to the memory buffer
+    at the specified address.
+    Forth semantics: ( addr value -- )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
 #endif // FORTH_OPS

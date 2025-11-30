@@ -7,6 +7,7 @@
 #include "ForthToMLIR.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
@@ -127,6 +128,12 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack) {
     return builder.create<forth::DivOp>(loc, stackType, inputStack).getResult();
   } else if (word == "mod") {
     return builder.create<forth::ModOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "@") {
+    return builder.create<forth::LoadOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "!") {
+    return builder.create<forth::StoreOp>(loc, stackType, inputStack)
+        .getResult();
   }
 
   // Unknown word - this is where we'd check a symbol table in the future
@@ -179,13 +186,15 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
 
   builder.setInsertionPointToEnd(module->getBody());
 
-  // Create a main function to hold the Forth code
-  auto funcType = builder.getFunctionType({}, {});
+  // Create a main function to hold the Forth code with buffer parameter
+  Type bufferType = MemRefType::get({256}, builder.getI64Type());
+  auto funcType = builder.getFunctionType({bufferType}, {});
   auto funcOp = builder.create<func::FuncOp>(loc, "main", funcType);
   funcOp.setPrivate();
 
-  // Create the entry block
+  // Create the entry block with buffer argument
   Block *entryBlock = funcOp.addEntryBlock();
+  Value bufferArg = entryBlock->getArgument(0);
   builder.setInsertionPointToStart(entryBlock);
 
   // Parse Forth operations
