@@ -47,6 +47,7 @@ Requires MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in CMake.
 
 # Execute PTX on GPU
 ./build/bin/warpforth-runner kernel.ptx
+./build/bin/warpforth-runner kernel.ptx --inputs 1,2,3 --output-count 5
 ```
 
 ## Adding New Operations
