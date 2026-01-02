@@ -10,7 +10,7 @@
 include "mlir/Pass/PassBase.td"
 
 def ConvertForthToMemRef
-    : Pass<"convert-forth-to-memref", "mlir::func::FuncOp"> {
+    : Pass<"convert-forth-to-memref", "mlir::ModuleOp"> {
   let summary = "Convert Forth dialect to MemRef dialect";
   let description = [{
     This pass converts Forth dialect operations to MemRef dialect operations.

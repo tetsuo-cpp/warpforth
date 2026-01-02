@@ -33,7 +33,7 @@ void registerConversionPasses() {
       "warpforth-pipeline", "WarpForth compilation pipeline (Forth to PTX)",
       [](OpPassManager &pm) {
         // Stage 1: Lower Forth to MemRef
-        pm.addNestedPass<func::FuncOp>(createConvertForthToMemRefPass());
+        pm.addPass(createConvertForthToMemRefPass());
 
         // Stage 2: Convert to GPU dialect (includes private address space
         // annotation)

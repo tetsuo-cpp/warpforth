@@ -11,6 +11,7 @@
 #include "mlir/IR/MLIRContext.h"
 #include "llvm/Support/SourceMgr.h"
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace mlir {
@@ -18,7 +19,7 @@ namespace forth {
 
 /// Simple token representing a Forth word or literal.
 struct Token {
-  enum class Kind { Number, Word, EndOfFile };
+  enum class Kind { Number, Word, Colon, Semicolon, EndOfFile };
 
   Kind kind;
   std::string text;
@@ -37,7 +38,12 @@ public:
   /// Get the next token from the input.
   Token nextToken();
 
+  /// Reset lexer to beginning of buffer.
+  void reset();
+
 private:
+  llvm::SourceMgr &sourceMgr;
+  unsigned bufferID;
   const char *curPtr;
   const char *endPtr;
 
@@ -65,6 +71,7 @@ private:
   OpBuilder builder;
   ForthLexer lexer;
   Token currentToken;
+  std::unordered_set<std::string> wordDefs;
 
   /// Advance to the next token.
   void consume();
@@ -78,6 +85,9 @@ private:
   /// Emit a Forth operation based on the current token.
   /// Returns the updated stack value or nullptr on error.
   Value emitOperation(StringRef word, Value inputStack);
+
+  /// Parse a user-defined word definition.
+  LogicalResult parseWordDefinition();
 };
 
 } // namespace forth

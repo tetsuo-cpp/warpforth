@@ -7,7 +7,9 @@
 #include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -24,10 +26,31 @@ namespace {
 // Stack configuration constants
 constexpr int64_t kStackSize = 256;
 
+/// Type converter for forth.stack -> memref + index
+class ForthToMemRefTypeConverter : public TypeConverter {
+public:
+  ForthToMemRefTypeConverter() {
+    addConversion(
+        [&](Type type,
+            SmallVectorImpl<Type> &results) -> std::optional<LogicalResult> {
+          if (auto stackType = dyn_cast<forth::StackType>(type)) {
+            auto memrefType = MemRefType::get(
+                {kStackSize}, IntegerType::get(type.getContext(), 64));
+            auto indexType = IndexType::get(type.getContext());
+            results.push_back(memrefType);
+            results.push_back(indexType);
+            return success();
+          }
+          return std::nullopt;
+        });
+  }
+};
+
 /// Conversion pattern for forth.stack operation.
 /// Allocates a memref<256xi64> on the stack and initializes SP to 0.
 struct StackOpConversion : public OpConversionPattern<forth::StackOp> {
-  using OpConversionPattern::OpConversionPattern;
+  StackOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::StackOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
@@ -51,14 +74,15 @@ struct StackOpConversion : public OpConversionPattern<forth::StackOp> {
 /// Conversion pattern for forth.literal operation.
 /// Increments SP and stores the literal value at the new SP position.
 struct LiteralOpConversion : public OpConversionPattern<forth::LiteralOp> {
-  using OpConversionPattern::OpConversionPattern;
+  LiteralOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::LiteralOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
   matchAndRewrite(forth::LiteralOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getInputStack();
+    ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
@@ -79,14 +103,15 @@ struct LiteralOpConversion : public OpConversionPattern<forth::LiteralOp> {
 /// Conversion pattern for forth.dup operation.
 /// Duplicates the value at the top of the stack: (a -- a a)
 struct DupOpConversion : public OpConversionPattern<forth::DupOp> {
-  using OpConversionPattern::OpConversionPattern;
+  DupOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::DupOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
   matchAndRewrite(forth::DupOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getInputStack();
+    ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
@@ -108,14 +133,15 @@ struct DupOpConversion : public OpConversionPattern<forth::DupOp> {
 /// Conversion pattern for forth.drop operation.
 /// Removes the top element from the stack: (a -- )
 struct DropOpConversion : public OpConversionPattern<forth::DropOp> {
-  using OpConversionPattern::OpConversionPattern;
+  DropOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::DropOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
   matchAndRewrite(forth::DropOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getInputStack();
+    ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
@@ -131,14 +157,15 @@ struct DropOpConversion : public OpConversionPattern<forth::DropOp> {
 /// Conversion pattern for forth.swap operation.
 /// Swaps the top two elements: (a b -- b a)
 struct SwapOpConversion : public OpConversionPattern<forth::SwapOp> {
-  using OpConversionPattern::OpConversionPattern;
+  SwapOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::SwapOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
   matchAndRewrite(forth::SwapOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getInputStack();
+    ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
@@ -161,14 +188,15 @@ struct SwapOpConversion : public OpConversionPattern<forth::SwapOp> {
 /// Conversion pattern for forth.over operation.
 /// Copies the second element to top: (a b -- a b a)
 struct OverOpConversion : public OpConversionPattern<forth::OverOp> {
-  using OpConversionPattern::OpConversionPattern;
+  OverOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::OverOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
   matchAndRewrite(forth::OverOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getInputStack();
+    ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
@@ -191,14 +219,15 @@ struct OverOpConversion : public OpConversionPattern<forth::OverOp> {
 /// Conversion pattern for forth.rot operation.
 /// Rotates top three elements: (a b c -- b c a)
 struct RotOpConversion : public OpConversionPattern<forth::RotOp> {
-  using OpConversionPattern::OpConversionPattern;
+  RotOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::RotOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
   matchAndRewrite(forth::RotOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getInputStack();
+    ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
@@ -228,7 +257,9 @@ struct RotOpConversion : public OpConversionPattern<forth::RotOp> {
 /// Pops two values, applies operation, pushes result: (a b -- result)
 template <typename ForthOp, typename ArithOp>
 struct BinaryArithOpConversion : public OpConversionPattern<ForthOp> {
-  using OpConversionPattern<ForthOp>::OpConversionPattern;
+  BinaryArithOpConversion(const TypeConverter &typeConverter,
+                          MLIRContext *context)
+      : OpConversionPattern<ForthOp>(typeConverter, context) {}
   using OneToNOpAdaptor =
       typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
 
@@ -236,7 +267,7 @@ struct BinaryArithOpConversion : public OpConversionPattern<ForthOp> {
   matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getInputStack();
+    ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
@@ -269,14 +300,15 @@ using ModOpConversion = BinaryArithOpConversion<forth::ModOp, arith::RemSIOp>;
 /// Conversion pattern for forth.load operation (@).
 /// Pops address from stack, loads from buffer, pushes value: ( addr -- value )
 struct LoadOpConversion : public OpConversionPattern<forth::LoadOp> {
-  using OpConversionPattern::OpConversionPattern;
+  LoadOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::LoadOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
   matchAndRewrite(forth::LoadOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getInputStack();
+    ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
@@ -313,14 +345,15 @@ struct LoadOpConversion : public OpConversionPattern<forth::LoadOp> {
 /// Conversion pattern for forth.store operation (!).
 /// Pops address and value from stack, stores value to buffer: ( addr value -- )
 struct StoreOpConversion : public OpConversionPattern<forth::StoreOp> {
-  using OpConversionPattern::OpConversionPattern;
+  StoreOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::StoreOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
   matchAndRewrite(forth::StoreOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getInputStack();
+    ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
@@ -359,25 +392,53 @@ struct ConvertForthToMemRefPass
     : public impl::ConvertForthToMemRefBase<ConvertForthToMemRefPass> {
   void runOnOperation() override {
     auto *context = &getContext();
-    auto function = getOperation();
+    auto module = getOperation();
 
     ConversionTarget target(*context);
 
     // Mark Forth dialect as illegal (to be converted)
     target.addIllegalDialect<forth::ForthDialect>();
 
-    // Mark MemRef, Arith, and Func dialects as legal
-    target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect,
-                           func::FuncDialect>();
+    // Mark MemRef and Arith dialects as legal
+    target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect>();
 
+    // Use dynamic legality for func operations to ensure they're properly
+    // converted
+    target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
+      // Function is legal if its signature doesn't contain forth.stack types
+      return llvm::none_of(op.getFunctionType().getInputs(),
+                           [&](Type t) { return isa<forth::StackType>(t); }) &&
+             llvm::none_of(op.getFunctionType().getResults(),
+                           [&](Type t) { return isa<forth::StackType>(t); });
+    });
+
+    target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
+      return llvm::none_of(op.getResultTypes(),
+                           [&](Type t) { return isa<forth::StackType>(t); });
+    });
+
+    target.addDynamicallyLegalOp<func::ReturnOp>([&](func::ReturnOp op) {
+      return llvm::none_of(op.getOperandTypes(),
+                           [&](Type t) { return isa<forth::StackType>(t); });
+    });
+
+    ForthToMemRefTypeConverter typeConverter;
     RewritePatternSet patterns(context);
+
+    // Add Forth operation conversion patterns
     patterns.add<StackOpConversion, LiteralOpConversion, DupOpConversion,
                  DropOpConversion, SwapOpConversion, OverOpConversion,
                  RotOpConversion, AddOpConversion, SubOpConversion,
                  MulOpConversion, DivOpConversion, ModOpConversion,
-                 LoadOpConversion, StoreOpConversion>(context);
+                 LoadOpConversion, StoreOpConversion>(typeConverter, context);
 
-    if (failed(applyPartialConversion(function, target, std::move(patterns))))
+    // Add built-in function conversion patterns
+    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
+        patterns, typeConverter);
+    populateCallOpTypeConversionPattern(patterns, typeConverter);
+    populateReturnOpTypeConversionPattern(patterns, typeConverter);
+
+    if (failed(applyPartialConversion(module, target, std::move(patterns))))
       signalPassFailure();
   }
 };
@@ -385,7 +446,7 @@ struct ConvertForthToMemRefPass
 } // namespace
 
 std::unique_ptr<Pass> createConvertForthToMemRefPass() {
-  return std::make_unique<ConvertForthToMemRefPass>();
+  return std::make_unique<::mlir::warpforth::ConvertForthToMemRefPass>();
 }
 
 } // namespace warpforth

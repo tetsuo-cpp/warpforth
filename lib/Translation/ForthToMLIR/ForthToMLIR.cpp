@@ -22,7 +22,8 @@ using namespace mlir::forth;
 // ForthLexer implementation
 //===----------------------------------------------------------------------===//
 
-ForthLexer::ForthLexer(llvm::SourceMgr &sourceMgr, unsigned bufferID) {
+ForthLexer::ForthLexer(llvm::SourceMgr &sourceMgr, unsigned bufferID)
+    : sourceMgr(sourceMgr), bufferID(bufferID) {
   auto buffer = sourceMgr.getMemoryBuffer(bufferID);
   curPtr = buffer->getBufferStart();
   endPtr = buffer->getBufferEnd();
@@ -36,6 +37,12 @@ void ForthLexer::skipWhitespace() {
 
 bool ForthLexer::isWhitespace(char c) const {
   return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+void ForthLexer::reset() {
+  auto buffer = sourceMgr.getMemoryBuffer(bufferID);
+  curPtr = buffer->getBufferStart();
+  endPtr = buffer->getBufferEnd();
 }
 
 bool ForthLexer::isNumber(const std::string &str) const {
@@ -68,14 +75,20 @@ Token ForthLexer::nextToken() {
   const char *tokenStart = curPtr;
   llvm::SMLoc loc = llvm::SMLoc::getFromPointer(tokenStart);
 
-  // Read until whitespace
+  if (*curPtr == ':') {
+    ++curPtr;
+    return Token(Token::Kind::Colon, ":", loc);
+  }
+  if (*curPtr == ';') {
+    ++curPtr;
+    return Token(Token::Kind::Semicolon, ";", loc);
+  }
+
   while (curPtr < endPtr && !isWhitespace(*curPtr)) {
     ++curPtr;
   }
 
   std::string text(tokenStart, curPtr - tokenStart);
-
-  // Determine token kind
   Token::Kind kind = isNumber(text) ? Token::Kind::Number : Token::Kind::Word;
 
   return Token(kind, text, loc);
@@ -104,7 +117,15 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack) {
   Location loc = builder.getUnknownLoc();
   Type stackType = forth::StackType::get(context);
 
-  // Map Forth words to operations
+  // Check user-defined words first
+  if (wordDefs.count(word.str())) {
+    Type stackType = forth::StackType::get(context);
+    auto symbolRef = mlir::FlatSymbolRefAttr::get(context, word.str());
+    return builder.create<func::CallOp>(loc, stackType, symbolRef, inputStack)
+        .getResult(0);
+  }
+
+  // Built-in operations
   if (word == "dup") {
     return builder.create<forth::DupOp>(loc, stackType, inputStack).getResult();
   } else if (word == "drop") {
@@ -140,6 +161,74 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack) {
   return nullptr;
 }
 
+LogicalResult ForthParser::parseWordDefinition() {
+  // Expect ':'
+  Location loc = builder.getUnknownLoc();
+
+  // Save current insertion point
+  auto savedInsertionPoint = builder.saveInsertionPoint();
+
+  consume(); // consume ':'
+
+  if (currentToken.kind != Token::Kind::Word) {
+    return emitError("expected word name after ':'");
+  }
+
+  std::string wordName = currentToken.text;
+  consume(); // consume word name
+
+  // Create function: !forth.stack -> !forth.stack
+  Type stackType = forth::StackType::get(context);
+  auto funcType = builder.getFunctionType({stackType}, {stackType});
+  auto funcOp = builder.create<func::FuncOp>(loc, wordName, funcType);
+  funcOp.setPrivate();
+
+  // Create entry block
+  Block *entryBlock = funcOp.addEntryBlock();
+  Value inputStack = entryBlock->getArgument(0);
+  builder.setInsertionPointToStart(entryBlock);
+
+  // Parse word body until ';'
+  Value resultStack = inputStack;
+  while (currentToken.kind != Token::Kind::Semicolon) {
+    if (currentToken.kind == Token::Kind::EndOfFile) {
+      return emitError("unterminated word definition: missing ';'");
+    }
+
+    if (currentToken.kind == Token::Kind::Number) {
+      int64_t value = std::stoll(currentToken.text);
+      resultStack =
+          builder
+              .create<forth::LiteralOp>(loc, stackType, resultStack,
+                                        builder.getI64IntegerAttr(value))
+              .getResult();
+      consume();
+    } else if (currentToken.kind == Token::Kind::Word) {
+      Value newStack = emitOperation(currentToken.text, resultStack);
+      if (!newStack) {
+        return emitError("unknown word in definition: " + currentToken.text);
+      }
+      resultStack = newStack;
+      consume();
+    } else {
+      return emitError("unexpected token in word definition");
+    }
+  }
+
+  // Add return - move to end of block to ensure it's the terminator
+  builder.setInsertionPointToEnd(entryBlock);
+  builder.create<func::ReturnOp>(loc, resultStack);
+
+  // Register the word
+  wordDefs.insert(wordName);
+
+  consume(); // consume ';'
+
+  // Restore insertion point
+  builder.restoreInsertionPoint(savedInsertionPoint);
+  return success();
+}
+
 LogicalResult ForthParser::parseOperations(Value &stack) {
   Type stackType = forth::StackType::get(context);
   Location loc = builder.getUnknownLoc();
@@ -148,7 +237,18 @@ LogicalResult ForthParser::parseOperations(Value &stack) {
   stack = builder.create<forth::StackOp>(loc, stackType);
 
   while (currentToken.kind != Token::Kind::EndOfFile) {
-    if (currentToken.kind == Token::Kind::Number) {
+    if (currentToken.kind == Token::Kind::Colon) {
+      // Skip entire word definition
+      consume(); // consume ':'
+      while (currentToken.kind != Token::Kind::Semicolon) {
+        if (currentToken.kind == Token::Kind::EndOfFile) {
+          return emitError("unterminated word definition: missing ';'");
+        }
+        consume();
+      }
+      consume(); // consume ';'
+      continue;
+    } else if (currentToken.kind == Token::Kind::Number) {
       // Parse numeric literal
       int64_t value = std::stoll(currentToken.text);
 
@@ -184,6 +284,24 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   Location loc = builder.getUnknownLoc();
   OwningOpRef<ModuleOp> module = builder.create<ModuleOp>(loc);
 
+  builder.setInsertionPointToEnd(module->getBody());
+
+  // First pass: parse all word definitions
+  while (currentToken.kind != Token::Kind::EndOfFile) {
+    if (currentToken.kind == Token::Kind::Colon) {
+      if (failed(parseWordDefinition())) {
+        return nullptr;
+      }
+    } else {
+      consume();
+    }
+  }
+
+  // Reset lexer for second pass
+  lexer.reset();
+  consume();
+
+  // Reset insertion point to end of module for main function
   builder.setInsertionPointToEnd(module->getBody());
 
   // Create a main function to hold the Forth code with buffer parameter

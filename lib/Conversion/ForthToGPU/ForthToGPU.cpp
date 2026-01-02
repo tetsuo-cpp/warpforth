@@ -50,17 +50,24 @@ struct ConvertForthToGPUPass
 private:
   void convertFuncToGPU(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
                         OpBuilder &builder) {
+    bool isKernel = funcOp.getName() == "main";
+    if (isKernel) {
+      convertKernelFunc(funcOp, gpuModule, builder);
+    } else {
+      convertWordFunc(funcOp, gpuModule);
+    }
+  }
+
+  void convertKernelFunc(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
+                         OpBuilder &builder) {
     // Create a gpu.func inside the WarpForth module
     builder.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
     auto gpuFunc = builder.create<gpu::GPUFuncOp>(
         funcOp.getLoc(), funcOp.getName(), funcOp.getFunctionType());
 
-    // Add kernel attribute if this is the main function
-    bool isKernel = funcOp.getName() == "main";
-    if (isKernel) {
-      gpuFunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
-                       builder.getUnitAttr());
-    }
+    // Add attribute for kernel function
+    gpuFunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
+                     builder.getUnitAttr());
 
     Block &srcBlock = funcOp.getBody().front(),
           &dstBlock = gpuFunc.getBody().front();
@@ -89,8 +96,17 @@ private:
     funcOp.erase();
   }
 
-  void annotateAllocaWithPrivateAddressSpace(gpu::GPUFuncOp gpuFunc) {
-    gpuFunc.walk([&](memref::AllocaOp allocaOp) {
+  void convertWordFunc(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule) {
+    // Move the existing func.func operation into gpu.module without conversion
+    funcOp->moveBefore(&gpuModule.getBodyRegion().front(),
+                       gpuModule.getBodyRegion().front().end());
+
+    // Apply alloca annotation for thread-local stacks
+    annotateAllocaWithPrivateAddressSpace(funcOp);
+  }
+
+  void annotateAllocaWithPrivateAddressSpace(Operation *op) {
+    op->walk([&](memref::AllocaOp allocaOp) {
       auto memRefType = cast<MemRefType>(allocaOp.getType());
       if (memRefType.getMemorySpace())
         return;
