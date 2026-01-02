@@ -312,7 +312,6 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
 
   // Create the entry block with buffer argument
   Block *entryBlock = funcOp.addEntryBlock();
-  Value bufferArg = entryBlock->getArgument(0);
   builder.setInsertionPointToStart(entryBlock);
 
   // Parse Forth operations
