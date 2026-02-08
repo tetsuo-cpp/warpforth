@@ -82,3 +82,7 @@ Add corresponding conversion pattern in `lib/Conversion/ForthToMemRef/ForthToMem
 - Document stack effects as `( input -- output )`
 - C++17 required
 - Use `clang-format` (config in `.clang-format`)
+
+## Agent Instructions
+
+- Use context7 MCP for MLIR API documentation: query with `/websites/mlir_llvm` for MLIR dialects, operations, types, and conversion patterns
