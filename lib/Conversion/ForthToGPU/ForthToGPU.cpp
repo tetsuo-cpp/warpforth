@@ -12,8 +12,10 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir {
 namespace warpforth {
@@ -23,6 +25,30 @@ namespace warpforth {
 
 namespace {
 
+/// Pattern to annotate memref.alloca with private address space for
+/// thread-local stacks
+struct AllocaAddressSpacePattern : public OpRewritePattern<memref::AllocaOp> {
+  using OpRewritePattern<memref::AllocaOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::AllocaOp allocaOp,
+                                PatternRewriter &rewriter) const override {
+    auto memRefType = cast<MemRefType>(allocaOp.getType());
+
+    if (memRefType.getMemorySpace())
+      return failure();
+
+    auto privateAddrSpace = gpu::AddressSpaceAttr::get(
+        allocaOp.getContext(), gpu::AddressSpace::Private);
+    auto newMemRefType =
+        MemRefType::get(memRefType.getShape(), memRefType.getElementType(),
+                        memRefType.getLayout(), privateAddrSpace);
+
+    rewriter.modifyOpInPlace(
+        allocaOp, [&] { allocaOp.getResult().setType(newMemRefType); });
+    return success();
+  }
+};
+
 /// Pass implementation that wraps func.func operations in a single gpu.module
 /// and converts them to gpu.func operations.
 struct ConvertForthToGPUPass
@@ -30,7 +56,7 @@ struct ConvertForthToGPUPass
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
-    OpBuilder builder(module.getContext());
+    IRRewriter rewriter(module.getContext());
 
     SmallVector<func::FuncOp> funcsToConvert;
     module.walk([&](func::FuncOp funcOp) { funcsToConvert.push_back(funcOp); });
@@ -38,36 +64,21 @@ struct ConvertForthToGPUPass
     if (funcsToConvert.empty())
       return;
 
-    builder.setInsertionPointToStart(&module.getBodyRegion().front());
+    rewriter.setInsertionPointToStart(&module.getBodyRegion().front());
     auto gpuModule =
-        builder.create<gpu::GPUModuleOp>(module.getLoc(), "warpforth_module");
+        rewriter.create<gpu::GPUModuleOp>(module.getLoc(), "warpforth_module");
 
     for (auto funcOp : funcsToConvert) {
-      convertFuncToGPU(funcOp, gpuModule, builder);
+      convertFuncToGPU(funcOp, gpuModule, rewriter);
     }
   }
 
 private:
-  void convertFuncToGPU(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
-                        OpBuilder &builder) {
-    bool isKernel = funcOp.getName() == "main";
-    if (isKernel) {
-      convertKernelFunc(funcOp, gpuModule, builder);
-    } else {
-      convertWordFunc(funcOp, gpuModule);
-    }
-  }
-
-  void convertKernelFunc(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
-                         OpBuilder &builder) {
-    // Create a gpu.func inside the WarpForth module
-    builder.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
-    auto gpuFunc = builder.create<gpu::GPUFuncOp>(
+  gpu::GPUFuncOp createGPUFunc(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
+                               IRRewriter &rewriter) {
+    rewriter.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
+    auto gpuFunc = rewriter.create<gpu::GPUFuncOp>(
         funcOp.getLoc(), funcOp.getName(), funcOp.getFunctionType());
-
-    // Add attribute for kernel function
-    gpuFunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
-                     builder.getUnitAttr());
 
     Block &srcBlock = funcOp.getBody().front(),
           &dstBlock = gpuFunc.getBody().front();
@@ -78,48 +89,38 @@ private:
       mapping.map(srcArg, dstArg);
     }
 
-    // Copy operations from func.func to gpu.func
-    builder.setInsertionPointToStart(&dstBlock);
+    rewriter.setInsertionPointToStart(&dstBlock);
     for (Operation &op : srcBlock.getOperations()) {
-      // Replace func.return with gpu.return
       if (auto returnOp = dyn_cast<func::ReturnOp>(&op)) {
-        builder.create<gpu::ReturnOp>(returnOp.getLoc(),
-                                      returnOp.getOperands());
+        rewriter.create<gpu::ReturnOp>(returnOp.getLoc(),
+                                       returnOp.getOperands());
       } else {
-        builder.clone(op, mapping);
+        rewriter.clone(op, mapping);
       }
     }
 
-    // Annotate memref.alloca with private address space for thread-local stacks
-    annotateAllocaWithPrivateAddressSpace(gpuFunc);
-
-    funcOp.erase();
+    return gpuFunc;
   }
 
-  void convertWordFunc(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule) {
-    // Move the existing func.func operation into gpu.module without conversion
-    funcOp->moveBefore(&gpuModule.getBodyRegion().front(),
-                       gpuModule.getBodyRegion().front().end());
+  void convertFuncToGPU(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
+                        IRRewriter &rewriter) {
+    bool isKernel = funcOp.getName() == "main";
+    Operation *targetFunc;
 
-    // Apply alloca annotation for thread-local stacks
-    annotateAllocaWithPrivateAddressSpace(funcOp);
-  }
+    if (isKernel) {
+      targetFunc = createGPUFunc(funcOp, gpuModule, rewriter);
+      targetFunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
+                          rewriter.getUnitAttr());
+      rewriter.eraseOp(funcOp);
+    } else {
+      funcOp->moveBefore(&gpuModule.getBodyRegion().front(),
+                         gpuModule.getBodyRegion().front().end());
+      targetFunc = funcOp;
+    }
 
-  void annotateAllocaWithPrivateAddressSpace(Operation *op) {
-    op->walk([&](memref::AllocaOp allocaOp) {
-      auto memRefType = cast<MemRefType>(allocaOp.getType());
-      if (memRefType.getMemorySpace())
-        return;
-
-      // Create a new MemRefType with private address space (address space 5)
-      auto privateAddrSpace = gpu::AddressSpaceAttr::get(
-          allocaOp.getContext(), gpu::AddressSpace::Private);
-      auto newMemRefType =
-          MemRefType::get(memRefType.getShape(), memRefType.getElementType(),
-                          memRefType.getLayout(), privateAddrSpace);
-
-      allocaOp.getResult().setType(newMemRefType);
-    });
+    RewritePatternSet patterns(targetFunc->getContext());
+    patterns.add<AllocaAddressSpacePattern>(targetFunc->getContext());
+    (void)applyPatternsGreedily(targetFunc, std::move(patterns));
   }
 };
 
