@@ -15,7 +15,6 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir {
 namespace warpforth {
@@ -24,30 +23,6 @@ namespace warpforth {
 #include "warpforth/Conversion/Passes.h.inc"
 
 namespace {
-
-/// Pattern to annotate memref.alloca with private address space for
-/// thread-local stacks
-struct AllocaAddressSpacePattern : public OpRewritePattern<memref::AllocaOp> {
-  using OpRewritePattern<memref::AllocaOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(memref::AllocaOp allocaOp,
-                                PatternRewriter &rewriter) const override {
-    auto memRefType = cast<MemRefType>(allocaOp.getType());
-
-    if (memRefType.getMemorySpace())
-      return failure();
-
-    auto privateAddrSpace = gpu::AddressSpaceAttr::get(
-        allocaOp.getContext(), gpu::AddressSpace::Private);
-    auto newMemRefType =
-        MemRefType::get(memRefType.getShape(), memRefType.getElementType(),
-                        memRefType.getLayout(), privateAddrSpace);
-
-    rewriter.modifyOpInPlace(
-        allocaOp, [&] { allocaOp.getResult().setType(newMemRefType); });
-    return success();
-  }
-};
 
 /// Pass implementation that wraps func.func operations in a single gpu.module
 /// and converts them to gpu.func operations.
@@ -105,22 +80,16 @@ private:
   void convertFuncToGPU(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
                         IRRewriter &rewriter) {
     bool isKernel = funcOp.getName() == "main";
-    Operation *targetFunc;
 
     if (isKernel) {
-      targetFunc = createGPUFunc(funcOp, gpuModule, rewriter);
-      targetFunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
-                          rewriter.getUnitAttr());
+      auto gpuFunc = createGPUFunc(funcOp, gpuModule, rewriter);
+      gpuFunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
+                       rewriter.getUnitAttr());
       rewriter.eraseOp(funcOp);
     } else {
       funcOp->moveBefore(&gpuModule.getBodyRegion().front(),
                          gpuModule.getBodyRegion().front().end());
-      targetFunc = funcOp;
     }
-
-    RewritePatternSet patterns(targetFunc->getContext());
-    patterns.add<AllocaAddressSpacePattern>(targetFunc->getContext());
-    (void)applyPatternsGreedily(targetFunc, std::move(patterns));
   }
 };
 
