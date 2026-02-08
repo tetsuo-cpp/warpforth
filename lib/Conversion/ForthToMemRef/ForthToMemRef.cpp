@@ -413,7 +413,9 @@ struct ConvertForthToMemRefPass
     });
 
     target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
-      return llvm::none_of(op.getResultTypes(),
+      return llvm::none_of(op.getOperandTypes(),
+                           [&](Type t) { return isa<forth::StackType>(t); }) &&
+             llvm::none_of(op.getResultTypes(),
                            [&](Type t) { return isa<forth::StackType>(t); });
     });
 
