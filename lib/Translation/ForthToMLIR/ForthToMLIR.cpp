@@ -155,6 +155,45 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack) {
   } else if (word == "!") {
     return builder.create<forth::StoreOp>(loc, stackType, inputStack)
         .getResult();
+  } else if (word == "tid-x") {
+    return builder.create<forth::ThreadIdXOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "tid-y") {
+    return builder.create<forth::ThreadIdYOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "tid-z") {
+    return builder.create<forth::ThreadIdZOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "bid-x") {
+    return builder.create<forth::BlockIdXOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "bid-y") {
+    return builder.create<forth::BlockIdYOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "bid-z") {
+    return builder.create<forth::BlockIdZOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "bdim-x") {
+    return builder.create<forth::BlockDimXOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "bdim-y") {
+    return builder.create<forth::BlockDimYOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "bdim-z") {
+    return builder.create<forth::BlockDimZOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "gdim-x") {
+    return builder.create<forth::GridDimXOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "gdim-y") {
+    return builder.create<forth::GridDimYOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "gdim-z") {
+    return builder.create<forth::GridDimZOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "global-id") {
+    return builder.create<forth::GlobalIdOp>(loc, stackType, inputStack)
+        .getResult();
   }
 
   // Unknown word - this is where we'd check a symbol table in the future

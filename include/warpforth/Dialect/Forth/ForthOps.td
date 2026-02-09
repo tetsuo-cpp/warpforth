@@ -236,4 +236,190 @@ def Forth_StoreOp : Forth_Op<"store", [Pure]> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// GPU indexing operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_ThreadIdXOp : Forth_Op<"thread_id_x", [Pure]> {
+  let summary = "Push x-dimension thread index";
+  let description = [{
+    Pushes the x-dimension thread index within the current block.
+    Corresponds to CUDA's threadIdx.x.
+    Forth semantics: ( -- thread_idx_x )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_ThreadIdYOp : Forth_Op<"thread_id_y", [Pure]> {
+  let summary = "Push y-dimension thread index";
+  let description = [{
+    Pushes the y-dimension thread index within the current block.
+    Corresponds to CUDA's threadIdx.y.
+    Forth semantics: ( -- thread_idx_y )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_ThreadIdZOp : Forth_Op<"thread_id_z", [Pure]> {
+  let summary = "Push z-dimension thread index";
+  let description = [{
+    Pushes the z-dimension thread index within the current block.
+    Corresponds to CUDA's threadIdx.z.
+    Forth semantics: ( -- thread_idx_z )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_BlockIdXOp : Forth_Op<"block_id_x", [Pure]> {
+  let summary = "Push x-dimension block index";
+  let description = [{
+    Pushes the x-dimension block index within the grid.
+    Corresponds to CUDA's blockIdx.x.
+    Forth semantics: ( -- block_idx_x )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_BlockIdYOp : Forth_Op<"block_id_y", [Pure]> {
+  let summary = "Push y-dimension block index";
+  let description = [{
+    Pushes the y-dimension block index within the grid.
+    Corresponds to CUDA's blockIdx.y.
+    Forth semantics: ( -- block_idx_y )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_BlockIdZOp : Forth_Op<"block_id_z", [Pure]> {
+  let summary = "Push z-dimension block index";
+  let description = [{
+    Pushes the z-dimension block index within the grid.
+    Corresponds to CUDA's blockIdx.z.
+    Forth semantics: ( -- block_idx_z )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_BlockDimXOp : Forth_Op<"block_dim_x", [Pure]> {
+  let summary = "Push x-dimension block dimension";
+  let description = [{
+    Pushes the number of threads in the x-dimension of a block.
+    Corresponds to CUDA's blockDim.x.
+    Forth semantics: ( -- block_dim_x )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_BlockDimYOp : Forth_Op<"block_dim_y", [Pure]> {
+  let summary = "Push y-dimension block dimension";
+  let description = [{
+    Pushes the number of threads in the y-dimension of a block.
+    Corresponds to CUDA's blockDim.y.
+    Forth semantics: ( -- block_dim_y )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_BlockDimZOp : Forth_Op<"block_dim_z", [Pure]> {
+  let summary = "Push z-dimension block dimension";
+  let description = [{
+    Pushes the number of threads in the z-dimension of a block.
+    Corresponds to CUDA's blockDim.z.
+    Forth semantics: ( -- block_dim_z )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_GridDimXOp : Forth_Op<"grid_dim_x", [Pure]> {
+  let summary = "Push x-dimension grid dimension";
+  let description = [{
+    Pushes the number of blocks in the x-dimension of the grid.
+    Corresponds to CUDA's gridDim.x.
+    Forth semantics: ( -- grid_dim_x )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_GridDimYOp : Forth_Op<"grid_dim_y", [Pure]> {
+  let summary = "Push y-dimension grid dimension";
+  let description = [{
+    Pushes the number of blocks in the y-dimension of the grid.
+    Corresponds to CUDA's gridDim.y.
+    Forth semantics: ( -- grid_dim_y )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_GridDimZOp : Forth_Op<"grid_dim_z", [Pure]> {
+  let summary = "Push z-dimension grid dimension";
+  let description = [{
+    Pushes the number of blocks in the z-dimension of the grid.
+    Corresponds to CUDA's gridDim.z.
+    Forth semantics: ( -- grid_dim_z )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_GlobalIdOp : Forth_Op<"global_id", [Pure]> {
+  let summary = "Push 1D global thread ID";
+  let description = [{
+    Computes and pushes the 1D global thread ID.
+    Equivalent to blockIdx.x * blockDim.x + threadIdx.x.
+    Forth semantics: ( -- global_id )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
 #endif // FORTH_OPS
