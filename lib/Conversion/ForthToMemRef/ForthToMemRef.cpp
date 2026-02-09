@@ -387,6 +387,82 @@ struct StoreOpConversion : public OpConversionPattern<forth::StoreOp> {
   }
 };
 
+/// Template for converting GPU indexing ops to intrinsic ops.
+/// Creates an intrinsic op with the specified name and pushes the value onto
+/// the stack.
+template <typename ForthOp>
+struct IntrinsicOpConversion : public OpConversionPattern<ForthOp> {
+  IntrinsicOpConversion(const TypeConverter &typeConverter,
+                        MLIRContext *context, StringRef intrinsicName)
+      : OpConversionPattern<ForthOp>(typeConverter, context),
+        intrinsicName(intrinsicName) {}
+
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Increment stack pointer
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
+
+    // Create intrinsic op
+    Value intrinsicValue = rewriter.create<forth::IntrinsicOp>(
+        loc, rewriter.getI64Type(), rewriter.getStringAttr(intrinsicName));
+
+    // Store at new SP
+    rewriter.create<memref::StoreOp>(loc, intrinsicValue, memref, newSP);
+
+    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
+    return success();
+  }
+
+  std::string intrinsicName;
+};
+
+/// Conversion pattern for forth.global_id operation.
+/// Computes global_id = bid-x * bdim-x + tid-x using intrinsics.
+struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
+  GlobalIdOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::GlobalIdOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::GlobalIdOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Create intrinsic ops for each component
+    Value bidX = rewriter.create<forth::IntrinsicOp>(
+        loc, rewriter.getI64Type(), rewriter.getStringAttr("bid-x"));
+    Value bdimX = rewriter.create<forth::IntrinsicOp>(
+        loc, rewriter.getI64Type(), rewriter.getStringAttr("bdim-x"));
+    Value tidX = rewriter.create<forth::IntrinsicOp>(
+        loc, rewriter.getI64Type(), rewriter.getStringAttr("tid-x"));
+
+    // Compute: bid-x * bdim-x + tid-x
+    Value product = rewriter.create<arith::MulIOp>(loc, bidX, bdimX);
+    Value globalId = rewriter.create<arith::AddIOp>(loc, product, tidX);
+
+    // Increment SP and store result
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
+    rewriter.create<memref::StoreOp>(loc, globalId, memref, newSP);
+
+    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
+    return success();
+  }
+};
+
 /// Conversion pass implementation.
 struct ConvertForthToMemRefPass
     : public impl::ConvertForthToMemRefBase<ConvertForthToMemRefPass> {
@@ -401,6 +477,9 @@ struct ConvertForthToMemRefPass
 
     // Mark MemRef and Arith dialects as legal
     target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect>();
+
+    // Mark IntrinsicOp as legal (to be lowered later)
+    target.addLegalOp<forth::IntrinsicOp>();
 
     // Use dynamic legality for func operations to ensure they're properly
     // converted
@@ -433,6 +512,35 @@ struct ConvertForthToMemRefPass
                  RotOpConversion, AddOpConversion, SubOpConversion,
                  MulOpConversion, DivOpConversion, ModOpConversion,
                  LoadOpConversion, StoreOpConversion>(typeConverter, context);
+
+    // Add GPU indexing op conversion patterns
+    patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,
+                                                            context, "tid-x");
+    patterns.add<IntrinsicOpConversion<forth::ThreadIdYOp>>(typeConverter,
+                                                            context, "tid-y");
+    patterns.add<IntrinsicOpConversion<forth::ThreadIdZOp>>(typeConverter,
+                                                            context, "tid-z");
+    patterns.add<IntrinsicOpConversion<forth::BlockIdXOp>>(typeConverter,
+                                                           context, "bid-x");
+    patterns.add<IntrinsicOpConversion<forth::BlockIdYOp>>(typeConverter,
+                                                           context, "bid-y");
+    patterns.add<IntrinsicOpConversion<forth::BlockIdZOp>>(typeConverter,
+                                                           context, "bid-z");
+    patterns.add<IntrinsicOpConversion<forth::BlockDimXOp>>(typeConverter,
+                                                            context, "bdim-x");
+    patterns.add<IntrinsicOpConversion<forth::BlockDimYOp>>(typeConverter,
+                                                            context, "bdim-y");
+    patterns.add<IntrinsicOpConversion<forth::BlockDimZOp>>(typeConverter,
+                                                            context, "bdim-z");
+    patterns.add<IntrinsicOpConversion<forth::GridDimXOp>>(typeConverter,
+                                                           context, "gdim-x");
+    patterns.add<IntrinsicOpConversion<forth::GridDimYOp>>(typeConverter,
+                                                           context, "gdim-y");
+    patterns.add<IntrinsicOpConversion<forth::GridDimZOp>>(typeConverter,
+                                                           context, "gdim-z");
+
+    // GlobalIdOp has custom pattern
+    patterns.add<GlobalIdOpConversion>(typeConverter, context);
 
     // Add built-in function conversion patterns
     populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(

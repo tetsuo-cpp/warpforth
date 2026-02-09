@@ -11,29 +11,33 @@
     bid-x bdim-x * tid-x + +
 ;
 
-: store-dimensions
-    tid-x 0 !
-    tid-y 1 !
-    tid-z 2 !
-    bid-x 3 !
-    bid-y 4 !
-    bid-z 5 !
+: get-dimensions
+    tid-x tid-y tid-z bid-x bid-y bid-z
 ;
 
-: store-block-dims
-    bdim-x 6 !
-    bdim-y 7 !
-    bdim-z 8 !
+: get-block-dims
+    bdim-x bdim-y bdim-z
 ;
 
-: store-grid-dims
-    gdim-x 9 !
-    gdim-y 10 !
-    gdim-z 11 !
+: get-grid-dims
+    gdim-x gdim-y gdim-z
 ;
 
-store-dimensions
-store-block-dims
-store-grid-dims
-compute-2d-index 12 !
-global-id 13 !
+: get-global-id
+    global-id
+;
+
+get-dimensions
+5 ! 4 ! 3 ! 2 ! 1 ! 0 !
+
+get-block-dims
+8 ! 7 ! 6 !
+
+get-grid-dims
+11 ! 10 ! 9 !
+
+compute-2d-index
+12 !
+
+get-global-id
+13 !

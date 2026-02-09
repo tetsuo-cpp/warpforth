@@ -422,4 +422,22 @@ def Forth_GlobalIdOp : Forth_Op<"global_id", [Pure]> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Intrinsic operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_IntrinsicOp : Forth_Op<"intrinsic", [Pure]> {
+  let summary = "Push intrinsic value onto the stack";
+  let description = [{
+    Pushes a hardware intrinsic value onto the stack.
+    The intrinsic name is specified as a string attribute.
+    Forth semantics: ( -- value )
+  }];
+  let arguments = (ins StrAttr:$intrinsic);
+  let results = (outs I64:$value);
+  let assemblyFormat = [{
+    $intrinsic attr-dict `:` type($value)
+  }];
+}
+
 #endif // FORTH_OPS
