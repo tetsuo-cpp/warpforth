@@ -38,6 +38,10 @@ def ConvertForthToGPU : Pass<"convert-forth-to-gpu", "mlir::ModuleOp"> {
     The pass wraps func.func operations in a gpu.module and converts them to
     gpu.func operations. Functions named "main" receive the gpu.kernel
     attribute, making them launchable from host code.
+
+    Additionally, the pass lowers forth.intrinsic operations to corresponding
+    GPU dialect operations (gpu.thread_id, gpu.block_id, gpu.block_dim,
+    gpu.grid_dim).
   }];
 
   let constructor = "mlir::warpforth::createConvertForthToGPUPass()";

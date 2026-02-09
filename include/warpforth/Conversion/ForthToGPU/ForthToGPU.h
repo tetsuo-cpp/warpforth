@@ -16,6 +16,8 @@ namespace warpforth {
 /// This pass wraps func.func operations in gpu.module and converts them to
 /// gpu.func operations. Functions named "main" receive the gpu.kernel
 /// attribute.
+/// Additionally, the pass lowers forth.intrinsic operations to GPU dialect
+/// operations (gpu.thread_id, gpu.block_id, gpu.block_dim, gpu.grid_dim).
 std::unique_ptr<Pass> createConvertForthToGPUPass();
 
 } // namespace warpforth
