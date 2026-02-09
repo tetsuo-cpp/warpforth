@@ -72,9 +72,10 @@ Add corresponding conversion pattern in `lib/Conversion/ForthToMemRef/ForthToMem
 
 - **Stack Type**: `!forth.stack` - untyped stack, programmer ensures type safety
 - **Operations**: All take stack as input and produce stack as output (except `forth.stack`)
-- **Supported Words**: literals, `dup drop swap over rot`, `+ - * / mod`, `@ !`
+- **Supported Words**: literals, `dup drop swap over rot`, `+ - * / mod`, `@ !`, `tid-x/y/z bid-x/y/z bdim-x/y/z gdim-x/y/z global-id` (GPU indexing)
 - **Conversion**: `!forth.stack` → `memref<256xi64>` with explicit stack pointer
 - **GPU**: Functions wrapped in `gpu.module`, `main` gets `gpu.kernel` attribute, configured with bare pointers for NVVM conversion
+- **User-defined Words**: Modeled as `func.func` with signature `(!forth.stack) -> !forth.stack`, called via `func.call`
 
 ## Conventions
 
