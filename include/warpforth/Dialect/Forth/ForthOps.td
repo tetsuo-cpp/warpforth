@@ -434,7 +434,7 @@ def Forth_IntrinsicOp : Forth_Op<"intrinsic", [Pure]> {
     Forth semantics: ( -- value )
   }];
   let arguments = (ins StrAttr:$intrinsic);
-  let results = (outs I64:$value);
+  let results = (outs Index:$value);
   let assemblyFormat = [{
     $intrinsic attr-dict `:` type($value)
   }];

@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "warpforth/Conversion/ForthToGPU/ForthToGPU.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -15,6 +16,8 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "warpforth/Dialect/Forth/ForthDialect.h"
 
 namespace mlir {
 namespace warpforth {
@@ -23,6 +26,80 @@ namespace warpforth {
 #include "warpforth/Conversion/Passes.h.inc"
 
 namespace {
+
+/// Maps intrinsic names to GPU dimension operations.
+static gpu::Dimension getDimensionFromIntrinsic(StringRef intrinsic) {
+  if (intrinsic.ends_with("-x"))
+    return gpu::Dimension::x;
+  if (intrinsic.ends_with("-y"))
+    return gpu::Dimension::y;
+  if (intrinsic.ends_with("-z"))
+    return gpu::Dimension::z;
+  return gpu::Dimension::x; // Default
+}
+
+/// Conversion pattern for forth.intrinsic to GPU dialect operations.
+/// Maps intrinsic names like "tid-x", "bid-x", etc. to gpu.thread_id,
+/// gpu.block_id, gpu.block_dim, gpu.grid_dim operations.
+struct IntrinsicOpConversion : public OpConversionPattern<forth::IntrinsicOp> {
+  using OpConversionPattern<forth::IntrinsicOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(forth::IntrinsicOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    StringRef intrinsic = op.getIntrinsic();
+    gpu::Dimension dim = getDimensionFromIntrinsic(intrinsic);
+
+    Value result;
+    if (intrinsic.starts_with("tid-")) {
+      // thread_id: tid-x, tid-y, tid-z
+      result =
+          rewriter.create<gpu::ThreadIdOp>(loc, rewriter.getIndexType(), dim);
+    } else if (intrinsic.starts_with("bid-")) {
+      // block_id: bid-x, bid-y, bid-z
+      result =
+          rewriter.create<gpu::BlockIdOp>(loc, rewriter.getIndexType(), dim);
+    } else if (intrinsic.starts_with("bdim-")) {
+      // block_dim: bdim-x, bdim-y, bdim-z
+      result =
+          rewriter.create<gpu::BlockDimOp>(loc, rewriter.getIndexType(), dim);
+    } else if (intrinsic.starts_with("gdim-")) {
+      // grid_dim: gdim-x, gdim-y, gdim-z
+      result =
+          rewriter.create<gpu::GridDimOp>(loc, rewriter.getIndexType(), dim);
+    } else {
+      return rewriter.notifyMatchFailure(op, "unknown intrinsic: " + intrinsic);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Applies conversion patterns to a function.
+static void applyConversionPatterns(Operation *op, MLIRContext *context) {
+  ConversionTarget target(*context);
+
+  // Mark forth.intrinsic as illegal - it must be converted
+  target.addIllegalOp<forth::IntrinsicOp>();
+
+  // GPU dialect ops are legal
+  target.addLegalDialect<gpu::GPUDialect>();
+
+  // Arith dialect is legal (for index cast)
+  target.addLegalDialect<arith::ArithDialect>();
+
+  // MemRef dialect is legal
+  target.addLegalDialect<memref::MemRefDialect>();
+
+  RewritePatternSet patterns(context);
+  patterns.add<IntrinsicOpConversion>(context);
+
+  if (failed(applyPartialConversion(op, target, std::move(patterns)))) {
+    return;
+  }
+}
 
 /// Pass implementation that wraps func.func operations in a single gpu.module
 /// and converts them to gpu.func operations.
@@ -74,6 +151,9 @@ private:
       }
     }
 
+    // Apply conversion patterns to convert forth.intrinsic ops
+    applyConversionPatterns(gpuFunc, funcOp.getContext());
+
     return gpuFunc;
   }
 
@@ -89,6 +169,7 @@ private:
     } else {
       funcOp->moveBefore(&gpuModule.getBodyRegion().front(),
                          gpuModule.getBodyRegion().front().end());
+      applyConversionPatterns(funcOp, funcOp.getContext());
     }
   }
 };

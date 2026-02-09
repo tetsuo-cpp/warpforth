@@ -414,10 +414,12 @@ struct IntrinsicOpConversion : public OpConversionPattern<ForthOp> {
 
     // Create intrinsic op
     Value intrinsicValue = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getI64Type(), rewriter.getStringAttr(intrinsicName));
+        loc, rewriter.getIndexType(), rewriter.getStringAttr(intrinsicName));
+    Value intrinsicI64 = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getI64Type(), intrinsicValue);
 
     // Store at new SP
-    rewriter.create<memref::StoreOp>(loc, intrinsicValue, memref, newSP);
+    rewriter.create<memref::StoreOp>(loc, intrinsicI64, memref, newSP);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
@@ -443,20 +445,22 @@ struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
 
     // Create intrinsic ops for each component
     Value bidX = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getI64Type(), rewriter.getStringAttr("bid-x"));
+        loc, rewriter.getIndexType(), rewriter.getStringAttr("bid-x"));
     Value bdimX = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getI64Type(), rewriter.getStringAttr("bdim-x"));
+        loc, rewriter.getIndexType(), rewriter.getStringAttr("bdim-x"));
     Value tidX = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getI64Type(), rewriter.getStringAttr("tid-x"));
+        loc, rewriter.getIndexType(), rewriter.getStringAttr("tid-x"));
 
     // Compute: bid-x * bdim-x + tid-x
     Value product = rewriter.create<arith::MulIOp>(loc, bidX, bdimX);
     Value globalId = rewriter.create<arith::AddIOp>(loc, product, tidX);
+    Value globalIdI64 = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getI64Type(), globalId);
 
     // Increment SP and store result
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-    rewriter.create<memref::StoreOp>(loc, globalId, memref, newSP);
+    rewriter.create<memref::StoreOp>(loc, globalIdI64, memref, newSP);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
