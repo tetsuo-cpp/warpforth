@@ -85,17 +85,9 @@ static void applyConversionPatterns(Operation *op, MLIRContext *context) {
   // Mark forth.intrinsic as illegal - it must be converted
   target.addIllegalOp<forth::IntrinsicOp>();
 
-  // GPU dialect ops are legal
-  target.addLegalDialect<gpu::GPUDialect>();
-
-  // Arith dialect is legal (for index cast)
-  target.addLegalDialect<arith::ArithDialect>();
-
-  // MemRef dialect is legal
-  target.addLegalDialect<memref::MemRefDialect>();
-
-  // LLVM dialect ops (from ForthToMemRef lowering) are legal
-  target.addLegalDialect<LLVM::LLVMDialect>();
+  // GPU, Arith, Memref and LLVM dialect ops are legal
+  target.addLegalDialect<gpu::GPUDialect, arith::ArithDialect,
+                         memref::MemRefDialect, LLVM::LLVMDialect>();
 
   RewritePatternSet patterns(context);
   patterns.add<IntrinsicOpConversion>(context);
