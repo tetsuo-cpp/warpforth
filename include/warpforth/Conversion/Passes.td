@@ -26,7 +26,8 @@ def ConvertForthToMemRef
   let constructor = "mlir::warpforth::createConvertForthToMemRefPass()";
 
   let dependentDialects = ["mlir::memref::MemRefDialect",
-                           "mlir::arith::ArithDialect"];
+                           "mlir::arith::ArithDialect",
+                           "mlir::LLVM::LLVMDialect"];
 }
 
 def ConvertForthToGPU : Pass<"convert-forth-to-gpu", "mlir::ModuleOp"> {

@@ -1,3 +1,5 @@
+param buf 256
+
 : compute-2d-index
     bid-y bdim-y * tid-y +
     bid-x bdim-x * tid-x +
@@ -28,16 +30,25 @@
 ;
 
 get-dimensions
-5 ! 4 ! 3 ! 2 ! 1 ! 0 !
+5 cells buf + !
+4 cells buf + !
+3 cells buf + !
+2 cells buf + !
+1 cells buf + !
+0 cells buf + !
 
 get-block-dims
-8 ! 7 ! 6 !
+8 cells buf + !
+7 cells buf + !
+6 cells buf + !
 
 get-grid-dims
-11 ! 10 ! 9 !
+11 cells buf + !
+10 cells buf + !
+9 cells buf + !
 
 compute-2d-index
-12 !
+12 cells buf + !
 
 get-global-id
-13 !
+13 cells buf + !

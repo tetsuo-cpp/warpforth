@@ -1,1 +1,3 @@
-0 @ 2 + 3 * 0 !
+param data 256
+
+data @ 2 + 3 * data !

@@ -8,6 +8,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -93,6 +94,9 @@ static void applyConversionPatterns(Operation *op, MLIRContext *context) {
   // MemRef dialect is legal
   target.addLegalDialect<memref::MemRefDialect>();
 
+  // LLVM dialect ops (from ForthToMemRef lowering) are legal
+  target.addLegalDialect<LLVM::LLVMDialect>();
+
   RewritePatternSet patterns(context);
   patterns.add<IntrinsicOpConversion>(context);
 
@@ -131,6 +135,14 @@ private:
     rewriter.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
     auto gpuFunc = rewriter.create<gpu::GPUFuncOp>(
         funcOp.getLoc(), funcOp.getName(), funcOp.getFunctionType());
+
+    // Copy forth.param_name arg attributes
+    for (unsigned i = 0; i < funcOp.getNumArguments(); ++i) {
+      if (auto nameAttr =
+              funcOp.getArgAttrOfType<StringAttr>(i, "forth.param_name")) {
+        gpuFunc.setArgAttr(i, "forth.param_name", nameAttr);
+      }
+    }
 
     Block &srcBlock = funcOp.getBody().front(),
           &dstBlock = gpuFunc.getBody().front();

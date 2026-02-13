@@ -225,7 +225,7 @@ def Forth_StoreOp : Forth_Op<"store", [Pure]> {
   let description = [{
     Pops an address and value from the stack, stores the value to the memory buffer
     at the specified address.
-    Forth semantics: ( addr value -- )
+    Forth semantics: ( x addr -- )
   }];
 
   let arguments = (ins Forth_StackType:$input_stack);
@@ -233,6 +233,19 @@ def Forth_StoreOp : Forth_Op<"store", [Pure]> {
 
   let assemblyFormat = [{
     $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_ParamRefOp : Forth_Op<"param_ref", [Pure]> {
+  let summary = "Push kernel parameter address onto stack";
+  let description = [{
+    Pushes the byte address of a named kernel parameter onto the stack.
+    Forth semantics: ( -- addr )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack, StrAttr:$param_name);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack $param_name attr-dict `:` type($input_stack) `->` type($output_stack)
   }];
 }
 

@@ -8,6 +8,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -297,8 +298,59 @@ using MulOpConversion = BinaryArithOpConversion<forth::MulOp, arith::MulIOp>;
 using DivOpConversion = BinaryArithOpConversion<forth::DivOp, arith::DivSIOp>;
 using ModOpConversion = BinaryArithOpConversion<forth::ModOp, arith::RemSIOp>;
 
+/// Conversion pattern for forth.param_ref operation.
+/// Pushes the byte address of a named kernel parameter onto the stack.
+struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
+  ParamRefOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::ParamRefOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::ParamRefOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Find the function argument with matching forth.param_name
+    auto funcOp = op->getParentOfType<func::FuncOp>();
+    if (!funcOp)
+      return rewriter.notifyMatchFailure(op, "not inside a func.func");
+
+    StringRef paramName = op.getParamName();
+    Value memrefArg;
+    for (unsigned i = 0; i < funcOp.getNumArguments(); ++i) {
+      auto nameAttr =
+          funcOp.getArgAttrOfType<StringAttr>(i, "forth.param_name");
+      if (nameAttr && nameAttr.getValue() == paramName) {
+        memrefArg = funcOp.getArgument(i);
+        break;
+      }
+    }
+    if (!memrefArg)
+      return rewriter.notifyMatchFailure(
+          op, "no function argument with param_name: " + paramName);
+
+    // Extract pointer as index, then cast to i64
+    Value ptrIndex =
+        rewriter.create<memref::ExtractAlignedPointerAsIndexOp>(loc, memrefArg);
+    Value ptrI64 = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getI64Type(), ptrIndex);
+
+    // Push onto stack
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
+    rewriter.create<memref::StoreOp>(loc, ptrI64, memref, newSP);
+
+    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
+    return success();
+  }
+};
+
 /// Conversion pattern for forth.load operation (@).
-/// Pops address from stack, loads from buffer, pushes value: ( addr -- value )
+/// Pops address from stack, loads value via pointer, pushes value: ( addr --
+/// value )
 struct LoadOpConversion : public OpConversionPattern<forth::LoadOp> {
   LoadOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<forth::LoadOp>(typeConverter, context) {}
@@ -312,38 +364,26 @@ struct LoadOpConversion : public OpConversionPattern<forth::LoadOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Get the buffer parameter from the function
-    auto funcOp = dyn_cast<func::FuncOp>(op->getParentOp());
-    if (!funcOp || funcOp.getNumArguments() != 1) {
-      return rewriter.notifyMatchFailure(
-          op, "expected function with buffer parameter");
-    }
-    Value bufferArg = funcOp.getArgument(0);
+    auto i64Type = rewriter.getI64Type();
+    auto ptrType = LLVM::LLVMPointerType::get(rewriter.getContext());
 
-    // Pop address from stack
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSP = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, newSP);
+    // Load address from stack
+    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
 
-    // Convert address from i64 to index for buffer access
-    Value addrIndex = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getIndexType(), addrValue);
+    // Load value from memory via pointer
+    Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
+    Value loadedValue = rewriter.create<LLVM::LoadOp>(loc, i64Type, ptr);
 
-    // Load value from buffer at address
-    Value loadedValue =
-        rewriter.create<memref::LoadOp>(loc, bufferArg, addrIndex);
+    // Store loaded value back at same position (replaces address)
+    rewriter.create<memref::StoreOp>(loc, loadedValue, memref, stackPtr);
 
-    // Push loaded value onto stack
-    Value finalSP = rewriter.create<arith::AddIOp>(loc, newSP, one);
-    rewriter.create<memref::StoreOp>(loc, loadedValue, memref, finalSP);
-
-    rewriter.replaceOpWithMultiple(op, {{memref, finalSP}});
+    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
     return success();
   }
 };
 
 /// Conversion pattern for forth.store operation (!).
-/// Pops address and value from stack, stores value to buffer: ( addr value -- )
+/// Pops address and value from stack, stores value to memory: ( x addr -- )
 struct StoreOpConversion : public OpConversionPattern<forth::StoreOp> {
   StoreOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<forth::StoreOp>(typeConverter, context) {}
@@ -357,31 +397,22 @@ struct StoreOpConversion : public OpConversionPattern<forth::StoreOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Get the buffer parameter from the function
-    auto funcOp = dyn_cast<func::FuncOp>(op->getParentOp());
-    if (!funcOp || funcOp.getNumArguments() != 1) {
-      return rewriter.notifyMatchFailure(
-          op, "expected function with buffer parameter");
-    }
-    Value bufferArg = funcOp.getArgument(0);
+    auto ptrType = LLVM::LLVMPointerType::get(rewriter.getContext());
+
+    // Pop address from stack
+    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
 
     // Pop value from stack
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
     Value value = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
 
-    // Pop address from stack
-    Value spMinus2 = rewriter.create<arith::SubIOp>(loc, spMinus1, one);
-    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, spMinus2);
-
-    // Convert address from i64 to index for buffer access
-    Value addrIndex = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getIndexType(), addrValue);
-
-    // Store value to buffer at address
-    rewriter.create<memref::StoreOp>(loc, value, bufferArg, addrIndex);
+    // Store value to memory via pointer
+    Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
+    rewriter.create<LLVM::StoreOp>(loc, value, ptr);
 
     // New stack pointer is SP-2 (popped both address and value)
+    Value spMinus2 = rewriter.create<arith::SubIOp>(loc, spMinus1, one);
     rewriter.replaceOpWithMultiple(op, {{memref, spMinus2}});
     return success();
   }
@@ -479,8 +510,9 @@ struct ConvertForthToMemRefPass
     // Mark Forth dialect as illegal (to be converted)
     target.addIllegalDialect<forth::ForthDialect>();
 
-    // Mark MemRef and Arith dialects as legal
-    target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect>();
+    // Mark MemRef, Arith, and LLVM dialects as legal
+    target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect,
+                           LLVM::LLVMDialect>();
 
     // Mark IntrinsicOp as legal (to be lowered later)
     target.addLegalOp<forth::IntrinsicOp>();
@@ -515,7 +547,8 @@ struct ConvertForthToMemRefPass
                  DropOpConversion, SwapOpConversion, OverOpConversion,
                  RotOpConversion, AddOpConversion, SubOpConversion,
                  MulOpConversion, DivOpConversion, ModOpConversion,
-                 LoadOpConversion, StoreOpConversion>(typeConverter, context);
+                 ParamRefOpConversion, LoadOpConversion, StoreOpConversion>(
+        typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,

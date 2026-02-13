@@ -113,9 +113,43 @@ LogicalResult ForthParser::emitError(const llvm::Twine &message) {
   return failure();
 }
 
+void ForthParser::scanParamDeclarations() {
+  lexer.reset();
+  consume();
+  while (currentToken.kind != Token::Kind::EndOfFile) {
+    if (currentToken.kind == Token::Kind::Word &&
+        currentToken.text == "param") {
+      consume(); // consume "param"
+      if (currentToken.kind != Token::Kind::Word)
+        continue;
+      std::string name = currentToken.text;
+      consume(); // consume name
+      if (currentToken.kind != Token::Kind::Number)
+        continue;
+      int64_t size = std::stoll(currentToken.text);
+      consume(); // consume size
+      paramDecls.push_back({name, size});
+    } else {
+      consume();
+    }
+  }
+}
+
 Value ForthParser::emitOperation(StringRef word, Value inputStack) {
   Location loc = builder.getUnknownLoc();
   Type stackType = forth::StackType::get(context);
+
+  // Check if word is a param name (only valid outside word definitions)
+  if (!inWordDefinition) {
+    for (const auto &param : paramDecls) {
+      if (word == param.name) {
+        return builder
+            .create<forth::ParamRefOp>(loc, stackType, inputStack,
+                                       builder.getStringAttr(param.name))
+            .getResult();
+      }
+    }
+  }
 
   // Check user-defined words first
   if (wordDefs.count(word.str())) {
@@ -123,6 +157,15 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack) {
     auto symbolRef = mlir::FlatSymbolRefAttr::get(context, word.str());
     return builder.create<func::CallOp>(loc, stackType, symbolRef, inputStack)
         .getResult(0);
+  }
+
+  // cells: multiply by 8 (sizeof i64) for byte addressing
+  if (word == "cells") {
+    Value lit8 = builder
+                     .create<forth::LiteralOp>(loc, stackType, inputStack,
+                                               builder.getI64IntegerAttr(8))
+                     .getResult();
+    return builder.create<forth::MulOp>(loc, stackType, lit8).getResult();
   }
 
   // Built-in operations
@@ -206,6 +249,7 @@ LogicalResult ForthParser::parseWordDefinition() {
 
   // Save current insertion point
   auto savedInsertionPoint = builder.saveInsertionPoint();
+  inWordDefinition = true;
 
   consume(); // consume ':'
 
@@ -263,6 +307,8 @@ LogicalResult ForthParser::parseWordDefinition() {
 
   consume(); // consume ';'
 
+  inWordDefinition = false;
+
   // Restore insertion point
   builder.restoreInsertionPoint(savedInsertionPoint);
   return success();
@@ -286,6 +332,13 @@ LogicalResult ForthParser::parseOperations(Value &stack) {
         consume();
       }
       consume(); // consume ';'
+      continue;
+    } else if (currentToken.kind == Token::Kind::Word &&
+               currentToken.text == "param") {
+      // Skip param declarations (already processed in pre-pass)
+      consume(); // consume "param"
+      consume(); // consume name
+      consume(); // consume size
       continue;
     } else if (currentToken.kind == Token::Kind::Number) {
       // Parse numeric literal
@@ -325,7 +378,12 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
 
   builder.setInsertionPointToEnd(module->getBody());
 
+  // Pre-pass: scan for param declarations
+  scanParamDeclarations();
+
   // First pass: parse all word definitions
+  lexer.reset();
+  consume();
   while (currentToken.kind != Token::Kind::EndOfFile) {
     if (currentToken.kind == Token::Kind::Colon) {
       if (failed(parseWordDefinition())) {
@@ -343,13 +401,23 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   // Reset insertion point to end of module for main function
   builder.setInsertionPointToEnd(module->getBody());
 
-  // Create a main function to hold the Forth code with buffer parameter
-  Type bufferType = MemRefType::get({256}, builder.getI64Type());
-  auto funcType = builder.getFunctionType({bufferType}, {});
+  // Build function argument types from param declarations
+  SmallVector<Type> argTypes;
+  for (const auto &param : paramDecls) {
+    argTypes.push_back(MemRefType::get({param.size}, builder.getI64Type()));
+  }
+
+  auto funcType = builder.getFunctionType(argTypes, {});
   auto funcOp = builder.create<func::FuncOp>(loc, "main", funcType);
   funcOp.setPrivate();
 
-  // Create the entry block with buffer argument
+  // Annotate arguments with param names
+  for (size_t i = 0; i < paramDecls.size(); ++i) {
+    funcOp.setArgAttr(i, "forth.param_name",
+                      builder.getStringAttr(paramDecls[i].name));
+  }
+
+  // Create the entry block with arguments
   Block *entryBlock = funcOp.addEntryBlock();
   builder.setInsertionPointToStart(entryBlock);
 

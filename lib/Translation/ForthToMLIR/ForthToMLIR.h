@@ -17,6 +17,12 @@
 namespace mlir {
 namespace forth {
 
+/// A declared kernel parameter: `param <name> <size>`.
+struct ParamDecl {
+  std::string name;
+  int64_t size;
+};
+
 /// Simple token representing a Forth word or literal.
 struct Token {
   enum class Kind { Number, Word, Colon, Semicolon, EndOfFile };
@@ -72,6 +78,11 @@ private:
   ForthLexer lexer;
   Token currentToken;
   std::unordered_set<std::string> wordDefs;
+  std::vector<ParamDecl> paramDecls;
+  bool inWordDefinition = false;
+
+  /// Scan for `param <name> <size>` declarations (pre-pass).
+  void scanParamDeclarations();
 
   /// Advance to the next token.
   void consume();

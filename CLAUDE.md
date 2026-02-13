@@ -47,7 +47,7 @@ Requires MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in CMake.
 
 # Execute PTX on GPU
 ./build/bin/warpforth-runner kernel.ptx
-./build/bin/warpforth-runner kernel.ptx --inputs 1,2,3 --output-count 5
+./build/bin/warpforth-runner kernel.ptx --param 1,2,3 --param 256 --output-param 1 --output-count 5
 ```
 
 ## Adding New Operations
@@ -72,7 +72,8 @@ Add corresponding conversion pattern in `lib/Conversion/ForthToMemRef/ForthToMem
 
 - **Stack Type**: `!forth.stack` - untyped stack, programmer ensures type safety
 - **Operations**: All take stack as input and produce stack as output (except `forth.stack`)
-- **Supported Words**: literals, `dup drop swap over rot`, `+ - * / mod`, `@ !`, `tid-x/y/z bid-x/y/z bdim-x/y/z gdim-x/y/z global-id` (GPU indexing)
+- **Supported Words**: literals, `dup drop swap over rot`, `+ - * / mod`, `@ !`, `cells`, `tid-x/y/z bid-x/y/z bdim-x/y/z gdim-x/y/z global-id` (GPU indexing)
+- **Kernel Parameters**: Declared with `param <name> <size>`, each becomes a `memref<Nxi64>` function argument with `forth.param_name` attribute. Using a param name in code pushes its byte address onto the stack via `forth.param_ref`
 - **Conversion**: `!forth.stack` → `memref<256xi64>` with explicit stack pointer
 - **GPU**: Functions wrapped in `gpu.module`, `main` gets `gpu.kernel` attribute, configured with bare pointers for NVVM conversion
 - **User-defined Words**: Modeled as `func.func` with signature `(!forth.stack) -> !forth.stack`, called via `func.call`
