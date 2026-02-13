@@ -1,0 +1,8 @@
+import os
+import sys
+
+config.warpforth_src_root = "@CMAKE_SOURCE_DIR@"
+config.warpforth_bin_root = "@CMAKE_BINARY_DIR@"
+config.filecheck_path = "@FILECHECK_PATH@"
+
+lit_config.load_config(config, os.path.join("@CMAKE_SOURCE_DIR@", "test", "lit.cfg.py"))

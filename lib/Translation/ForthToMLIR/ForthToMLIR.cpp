@@ -57,8 +57,31 @@ ForthLexer::ForthLexer(llvm::SourceMgr &sourceMgr, unsigned bufferID)
 }
 
 void ForthLexer::skipWhitespace() {
-  while (curPtr < endPtr && isWhitespace(*curPtr)) {
-    ++curPtr;
+  while (curPtr < endPtr) {
+    // Skip whitespace characters
+    while (curPtr < endPtr && isWhitespace(*curPtr)) {
+      ++curPtr;
+    }
+
+    // Check for line comment: '\' followed by space/tab or at end of input.
+    // Also matches '\' at the start of a line (curPtr == bufferStart or
+    // preceded by '\n').
+    if (curPtr < endPtr && *curPtr == '\\') {
+      const char *next = curPtr + 1;
+      if (next >= endPtr || *next == ' ' || *next == '\t' || *next == '\n' ||
+          *next == '\r') {
+        // Skip to end of line
+        while (curPtr < endPtr && *curPtr != '\n') {
+          ++curPtr;
+        }
+        // Skip the newline itself
+        if (curPtr < endPtr)
+          ++curPtr;
+        continue;
+      }
+    }
+
+    break;
   }
 }
 

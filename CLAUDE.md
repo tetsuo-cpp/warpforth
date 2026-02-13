@@ -10,6 +10,9 @@ cmake --build build
 
 # Format code
 cmake --build build --target format
+
+# Run tests (requires lit: .venv/bin/pip install lit)
+cmake --build build --target check-warpforth
 ```
 
 Requires MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in CMake.

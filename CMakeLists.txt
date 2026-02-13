@@ -32,6 +32,19 @@ add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
 
+# Test infrastructure (lit + FileCheck)
+find_program(LIT_COMMAND NAMES lit llvm-lit
+  HINTS ${CMAKE_SOURCE_DIR}/.venv/bin)
+find_program(FILECHECK_PATH NAMES FileCheck
+  HINTS /opt/homebrew/opt/llvm/bin ${LLVM_TOOLS_BINARY_DIR})
+if(LIT_COMMAND AND FILECHECK_PATH)
+  message(STATUS "Found lit: ${LIT_COMMAND}")
+  message(STATUS "Found FileCheck: ${FILECHECK_PATH}")
+  add_subdirectory(test)
+else()
+  message(STATUS "lit or FileCheck not found, skipping tests")
+endif()
+
 # Add format target to run clang-format on all source files
 find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)
 if(CLANG_FORMAT_EXECUTABLE)
