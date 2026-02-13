@@ -12,11 +12,38 @@
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <cctype>
 
 using namespace mlir;
 using namespace mlir::forth;
+
+/// Mangle a Forth word name into a valid LLVM/PTX identifier.
+/// - alphanumeric chars kept as-is
+/// - '-' → '_'
+/// - '_' → '__'
+/// - other → '_XX' (uppercase hex)
+/// - leading digit → prepend '_'
+static std::string mangleForthName(llvm::StringRef name) {
+  std::string result;
+  for (char c : name) {
+    if (std::isalnum(static_cast<unsigned char>(c))) {
+      result += c;
+    } else if (c == '-') {
+      result += '_';
+    } else if (c == '_') {
+      result += "__";
+    } else {
+      result += '_';
+      result += llvm::hexdigit((c >> 4) & 0xF, /*UpperCase=*/true);
+      result += llvm::hexdigit(c & 0xF, /*UpperCase=*/true);
+    }
+  }
+  if (!result.empty() && std::isdigit(static_cast<unsigned char>(result[0])))
+    result.insert(result.begin(), '_');
+  return result;
+}
 
 //===----------------------------------------------------------------------===//
 // ForthLexer implementation
@@ -152,9 +179,10 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack) {
   }
 
   // Check user-defined words first
-  if (wordDefs.count(word.str())) {
+  std::string mangledWord = mangleForthName(word);
+  if (wordDefs.count(mangledWord)) {
     Type stackType = forth::StackType::get(context);
-    auto symbolRef = mlir::FlatSymbolRefAttr::get(context, word.str());
+    auto symbolRef = mlir::FlatSymbolRefAttr::get(context, mangledWord);
     return builder.create<func::CallOp>(loc, stackType, symbolRef, inputStack)
         .getResult(0);
   }
@@ -257,7 +285,7 @@ LogicalResult ForthParser::parseWordDefinition() {
     return emitError("expected word name after ':'");
   }
 
-  std::string wordName = currentToken.text;
+  std::string wordName = mangleForthName(currentToken.text);
   consume(); // consume word name
 
   // Create function: !forth.stack -> !forth.stack
