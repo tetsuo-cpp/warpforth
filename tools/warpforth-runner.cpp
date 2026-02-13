@@ -25,14 +25,13 @@ void printUsage(const char *programName) {
   std::cerr
       << "Usage: " << programName
       << " <ptx_file> [--param values|N] ... [--output-param idx] "
-         "[--output-count N] [--inputs val1,val2,...]\n"
+         "[--output-count N]\n"
       << "\n"
       << "  --param values   Add a parameter with comma-separated initial "
          "values\n"
       << "  --param N        Add a parameter initialized with N zeros\n"
       << "  --output-param   Which parameter index to print (default: 0)\n"
-      << "  --output-count   How many elements to print (default: 10)\n"
-      << "  --inputs         Legacy: single parameter with initial values\n";
+      << "  --output-count   How many elements to print (default: 10)\n";
 }
 
 int main(int argc, char **argv) {
@@ -68,9 +67,6 @@ int main(int argc, char **argv) {
       } else {
         params.push_back(parseValues(val));
       }
-    } else if (arg == "--inputs" && i + 1 < argc) {
-      // Legacy single-parameter mode
-      params.push_back(parseValues(argv[++i]));
     } else if (arg == "--output-param" && i + 1 < argc) {
       outputParam = std::stoi(argv[++i]);
     } else if (arg == "--output-count" && i + 1 < argc) {
