@@ -21,6 +21,37 @@
 namespace mlir {
 namespace warpforth {
 
+void buildWarpForthPipeline(OpPassManager &pm) {
+  // Stage 1: Lower Forth to MemRef
+  pm.addPass(createConvertForthToMemRefPass());
+
+  // Stage 2: Convert to GPU dialect (includes private address space annotation)
+  pm.addPass(createConvertForthToGPUPass());
+
+  // Stage 3: Normalize MemRefs for GPU
+  pm.addPass(createCanonicalizerPass());
+
+  // Stage 4: Attach NVVM target to GPU modules (sm_70 = Volta architecture)
+  pm.addPass(createGpuNVVMAttachTarget());
+
+  // Stage 5: Lower GPU to NVVM with bare pointers
+  ConvertGpuOpsToNVVMOpsOptions gpuToNVVMOptions;
+  gpuToNVVMOptions.useBarePtrCallConv = true;
+  pm.addNestedPass<gpu::GPUModuleOp>(
+      createConvertGpuOpsToNVVMOps(gpuToNVVMOptions));
+
+  // Stage 6: Lower NVVM to LLVM
+  pm.addPass(createConvertNVVMToLLVMPass());
+
+  // Stage 7: Reconcile type conversions
+  pm.addPass(createReconcileUnrealizedCastsPass());
+
+  // Stage 8: Compile GPU module to PTX binary
+  GpuModuleToBinaryPassOptions binaryOptions;
+  binaryOptions.compilationTarget = "isa"; // Output PTX assembly
+  pm.addPass(createGpuModuleToBinaryPass(binaryOptions));
+}
+
 void registerConversionPasses() {
   registerPass([]() -> std::unique_ptr<Pass> {
     return createConvertForthToMemRefPass();
@@ -29,40 +60,9 @@ void registerConversionPasses() {
       []() -> std::unique_ptr<Pass> { return createConvertForthToGPUPass(); });
 
   // Register WarpForth pipeline
-  PassPipelineRegistration<>(
-      "warpforth-pipeline", "WarpForth compilation pipeline (Forth to PTX)",
-      [](OpPassManager &pm) {
-        // Stage 1: Lower Forth to MemRef
-        pm.addPass(createConvertForthToMemRefPass());
-
-        // Stage 2: Convert to GPU dialect (includes private address space
-        // annotation)
-        pm.addPass(createConvertForthToGPUPass());
-
-        // Stage 3: Normalize MemRefs for GPU
-        pm.addPass(createCanonicalizerPass());
-
-        // Stage 4: Attach NVVM target to GPU modules (sm_70 = Volta
-        // architecture)
-        pm.addPass(createGpuNVVMAttachTarget());
-
-        // Stage 5: Lower GPU to NVVM with bare pointers
-        ConvertGpuOpsToNVVMOpsOptions gpuToNVVMOptions;
-        gpuToNVVMOptions.useBarePtrCallConv = true;
-        pm.addNestedPass<gpu::GPUModuleOp>(
-            createConvertGpuOpsToNVVMOps(gpuToNVVMOptions));
-
-        // Stage 6: Lower NVVM to LLVM
-        pm.addPass(createConvertNVVMToLLVMPass());
-
-        // Stage 7: Reconcile type conversions
-        pm.addPass(createReconcileUnrealizedCastsPass());
-
-        // Stage 8: Compile GPU module to PTX binary
-        GpuModuleToBinaryPassOptions binaryOptions;
-        binaryOptions.compilationTarget = "isa"; // Output PTX assembly
-        pm.addPass(createGpuModuleToBinaryPass(binaryOptions));
-      });
+  PassPipelineRegistration<>("warpforth-pipeline",
+                             "WarpForth compilation pipeline (Forth to PTX)",
+                             buildWarpForthPipeline);
 }
 
 } // namespace warpforth

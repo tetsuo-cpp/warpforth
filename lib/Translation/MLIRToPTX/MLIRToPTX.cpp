@@ -14,10 +14,8 @@
 
 using namespace mlir;
 
-namespace {
-
-/// Extract PTX assembly from all gpu.binary operations in the module.
-LogicalResult extractPTXFromModule(ModuleOp module, llvm::raw_ostream &output) {
+LogicalResult mlir::warpforth::extractPTXFromModule(ModuleOp module,
+                                                    llvm::raw_ostream &output) {
   bool foundBinary = false;
 
   module.walk([&](gpu::BinaryOp binaryOp) {
@@ -42,8 +40,6 @@ LogicalResult extractPTXFromModule(ModuleOp module, llvm::raw_ostream &output) {
   return success();
 }
 
-} // namespace
-
 void mlir::warpforth::registerMLIRToPTXTranslation() {
   TranslateFromMLIRRegistration registration(
       "mlir-to-ptx", "Extract PTX assembly from gpu.binary operations",
@@ -53,7 +49,7 @@ void mlir::warpforth::registerMLIRToPTXTranslation() {
           llvm::errs() << "error: expected ModuleOp at top level\n";
           return failure();
         }
-        return extractPTXFromModule(module, output);
+        return warpforth::extractPTXFromModule(module, output);
       },
       [](DialectRegistry &registry) {
         registry.insert<gpu::GPUDialect, NVVM::NVVMDialect>();

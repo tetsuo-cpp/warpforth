@@ -10,10 +10,15 @@
 #include <memory>
 
 namespace mlir {
+class OpPassManager;
+
 namespace warpforth {
 
 /// Register all conversion passes.
 void registerConversionPasses();
+
+/// Build the WarpForth compilation pipeline (Forth to PTX).
+void buildWarpForthPipeline(OpPassManager &pm);
 
 } // namespace warpforth
 } // namespace mlir

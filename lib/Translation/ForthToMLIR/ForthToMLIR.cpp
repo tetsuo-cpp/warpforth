@@ -465,10 +465,8 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
 // Translation registration
 //===----------------------------------------------------------------------===//
 
-namespace {
-/// Parse Forth source and convert to MLIR.
-OwningOpRef<Operation *> parseForthSource(llvm::SourceMgr &sourceMgr,
-                                          MLIRContext *context) {
+OwningOpRef<ModuleOp> forth::parseForthSource(llvm::SourceMgr &sourceMgr,
+                                              MLIRContext *context) {
   // Ensure the Forth dialect is loaded
   context->loadDialect<forth::ForthDialect>();
   context->loadDialect<func::FuncDialect>();
@@ -477,13 +475,13 @@ OwningOpRef<Operation *> parseForthSource(llvm::SourceMgr &sourceMgr,
   ForthParser parser(sourceMgr, context);
   return parser.parseModule();
 }
-} // namespace
 
 void mlir::forth::registerForthToMLIRTranslation() {
   TranslateToMLIRRegistration registration(
       "forth-to-mlir", "Translate Forth source to MLIR",
-      [](llvm::SourceMgr &sourceMgr, MLIRContext *context) {
-        return parseForthSource(sourceMgr, context);
+      [](llvm::SourceMgr &sourceMgr,
+         MLIRContext *context) -> OwningOpRef<Operation *> {
+        return forth::parseForthSource(sourceMgr, context);
       },
       [](DialectRegistry &registry) {
         registry.insert<forth::ForthDialect, func::FuncDialect>();
