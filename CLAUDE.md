@@ -11,7 +11,7 @@ cmake --build build
 # Format code
 cmake --build build --target format
 
-# Run tests (requires lit: .venv/bin/pip install lit)
+# Run tests (requires: uv sync)
 cmake --build build --target check-warpforth
 ```
 
@@ -75,15 +75,12 @@ Add corresponding conversion pattern in `lib/Conversion/ForthToMemRef/ForthToMem
 End-to-end GPU execution tests live in `gpu_test/`. They compile Forth kernels locally, rent a GPU on Vast.ai, and verify output.
 
 ```bash
-cd gpu_test
-uv sync
-
 # Run GPU tests
 VASTAI_API_KEY=xxx uv run pytest -v -m gpu
 
 # Lint and format Python code
-uv run ruff check .
-uv run ruff format .
+uv run ruff check gpu_test/
+uv run ruff format gpu_test/
 ```
 
 ## Architecture Notes

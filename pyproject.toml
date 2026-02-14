@@ -1,8 +1,9 @@
 [project]
-name = "warpforth-gpu-tests"
+name = "warpforth"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "lit>=18.1.0",
     "pytest",
     "vastai-sdk",
 ]
@@ -13,6 +14,7 @@ dev = ["ruff", "pytest-timeout"]
 [tool.pytest.ini_options]
 markers = ["gpu: marks tests requiring GPU execution via Vast.ai"]
 timeout = 300
+testpaths = ["gpu_test"]
 
 [tool.ruff]
 line-length = 100
@@ -23,5 +25,5 @@ select = ["ALL"]
 ignore = ["D", "COM812", "ISC001"]
 
 [tool.ruff.lint.per-file-ignores]
-"test_*.py" = ["S101", "PLR2004"]
-"conftest.py" = ["S603", "S607", "PLR0913", "PLR2004"]
+"gpu_test/test_*.py" = ["S101", "PLR2004"]
+"gpu_test/conftest.py" = ["S603", "S607", "PLR0913", "PLR2004"]
