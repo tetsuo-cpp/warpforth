@@ -93,9 +93,12 @@ private:
   /// Parse a sequence of Forth operations.
   LogicalResult parseOperations(Value &stack);
 
+  /// Convert the current token's SMLoc to an MLIR FileLineColLoc.
+  Location getLoc();
+
   /// Emit a Forth operation based on the current token.
   /// Returns the updated stack value or nullptr on error.
-  Value emitOperation(StringRef word, Value inputStack);
+  Value emitOperation(StringRef word, Value inputStack, Location loc);
 
   /// Parse a user-defined word definition.
   LogicalResult parseWordDefinition();

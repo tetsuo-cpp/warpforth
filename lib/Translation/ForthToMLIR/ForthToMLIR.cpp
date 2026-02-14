@@ -157,6 +157,14 @@ ForthParser::ForthParser(llvm::SourceMgr &sourceMgr, MLIRContext *context)
 
 void ForthParser::consume() { currentToken = lexer.nextToken(); }
 
+Location ForthParser::getLoc() {
+  auto lineAndCol = sourceMgr.getLineAndColumn(currentToken.location);
+  auto bufferID = sourceMgr.getMainFileID();
+  auto bufferName = sourceMgr.getMemoryBuffer(bufferID)->getBufferIdentifier();
+  return FileLineColLoc::get(builder.getStringAttr(bufferName),
+                             lineAndCol.first, lineAndCol.second);
+}
+
 LogicalResult ForthParser::emitError(const llvm::Twine &message) {
   sourceMgr.PrintMessage(currentToken.location, llvm::SourceMgr::DK_Error,
                          message);
@@ -185,8 +193,8 @@ void ForthParser::scanParamDeclarations() {
   }
 }
 
-Value ForthParser::emitOperation(StringRef word, Value inputStack) {
-  Location loc = builder.getUnknownLoc();
+Value ForthParser::emitOperation(StringRef word, Value inputStack,
+                                 Location loc) {
   Type stackType = forth::StackType::get(context);
 
   // Check if word is a param name (only valid outside word definitions)
@@ -296,7 +304,7 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack) {
 
 LogicalResult ForthParser::parseWordDefinition() {
   // Expect ':'
-  Location loc = builder.getUnknownLoc();
+  Location loc = getLoc();
 
   // Save current insertion point
   auto savedInsertionPoint = builder.saveInsertionPoint();
@@ -330,15 +338,17 @@ LogicalResult ForthParser::parseWordDefinition() {
     }
 
     if (currentToken.kind == Token::Kind::Number) {
+      Location tokenLoc = getLoc();
       int64_t value = std::stoll(currentToken.text);
       resultStack =
           builder
-              .create<forth::LiteralOp>(loc, stackType, resultStack,
+              .create<forth::LiteralOp>(tokenLoc, stackType, resultStack,
                                         builder.getI64IntegerAttr(value))
               .getResult();
       consume();
     } else if (currentToken.kind == Token::Kind::Word) {
-      Value newStack = emitOperation(currentToken.text, resultStack);
+      Location tokenLoc = getLoc();
+      Value newStack = emitOperation(currentToken.text, resultStack, tokenLoc);
       if (!newStack) {
         return emitError("unknown word in definition: " + currentToken.text);
       }
@@ -367,7 +377,7 @@ LogicalResult ForthParser::parseWordDefinition() {
 
 LogicalResult ForthParser::parseOperations(Value &stack) {
   Type stackType = forth::StackType::get(context);
-  Location loc = builder.getUnknownLoc();
+  Location loc = getLoc();
 
   // Start with a null stack - first operation will initialize it
   stack = builder.create<forth::StackOp>(loc, stackType);
@@ -393,10 +403,11 @@ LogicalResult ForthParser::parseOperations(Value &stack) {
       continue;
     } else if (currentToken.kind == Token::Kind::Number) {
       // Parse numeric literal
+      Location tokenLoc = getLoc();
       int64_t value = std::stoll(currentToken.text);
 
       stack = builder
-                  .create<forth::LiteralOp>(loc, stackType, stack,
+                  .create<forth::LiteralOp>(tokenLoc, stackType, stack,
                                             builder.getI64IntegerAttr(value))
                   .getResult();
 
@@ -408,7 +419,8 @@ LogicalResult ForthParser::parseOperations(Value &stack) {
                          currentToken.text);
       }
 
-      Value newStack = emitOperation(currentToken.text, stack);
+      Location tokenLoc = getLoc();
+      Value newStack = emitOperation(currentToken.text, stack, tokenLoc);
 
       if (!newStack) {
         return emitError("unknown word: " + currentToken.text);
@@ -424,7 +436,7 @@ LogicalResult ForthParser::parseOperations(Value &stack) {
 
 OwningOpRef<ModuleOp> ForthParser::parseModule() {
   // Create a module to hold the parsed operations
-  Location loc = builder.getUnknownLoc();
+  Location loc = getLoc();
   OwningOpRef<ModuleOp> module = builder.create<ModuleOp>(loc);
 
   builder.setInsertionPointToEnd(module->getBody());
