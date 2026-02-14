@@ -16,3 +16,6 @@ config.substitutions.append(
 config.substitutions.append(
     ("%FileCheck", config.filecheck_path)
 )
+config.substitutions.append(
+    ("%not", os.path.join(os.path.dirname(config.filecheck_path), "not"))
+)

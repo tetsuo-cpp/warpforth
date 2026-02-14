@@ -207,6 +207,15 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
             .getResult();
       }
     }
+  } else {
+    for (const auto &param : paramDecls) {
+      if (word == param.name) {
+        (void)emitError("parameter '" + param.name +
+                        "' cannot be referenced inside a word definition; "
+                        "pass the address from the caller instead");
+        return nullptr;
+      }
+    }
   }
 
   // Check user-defined words first
