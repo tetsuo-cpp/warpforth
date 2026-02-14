@@ -31,7 +31,7 @@ Requires MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in CMake.
 **Tools:**
 - `tools/warpforth-translate/warpforth-translate.cpp` - Translation tool entry point
 - `tools/warpforth-opt/warpforth-opt.cpp` - Optimization tool entry point
-- `tools/warpforth-runner.cpp` - PTX execution tool for GPU kernels
+- `tools/warpforth-runner/warpforth-runner.cpp` - PTX execution tool for GPU kernels
 
 ## Tools Usage
 
@@ -49,8 +49,7 @@ Requires MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in CMake.
   ./build/bin/warpforth-translate --mlir-to-ptx > kernel.ptx
 
 # Execute PTX on GPU
-./build/bin/warpforth-runner kernel.ptx
-./build/bin/warpforth-runner kernel.ptx --param 1,2,3 --param 256 --output-param 1 --output-count 5
+./warpforth-runner kernel.ptx --param 1,2,3 --param 0,0,0,0 --output-param 1 --output-count 5
 ```
 
 ## Adding New Operations
@@ -70,6 +69,22 @@ def Forth_NewOp : Forth_Op<"opname", [Pure]> {
 ```
 
 Add corresponding conversion pattern in `lib/Conversion/ForthToMemRef/ForthToMemRef.cpp`.
+
+## GPU Tests
+
+End-to-end GPU execution tests live in `gpu_test/`. They compile Forth kernels locally, rent a GPU on Vast.ai, and verify output.
+
+```bash
+cd gpu_test
+uv sync
+
+# Run GPU tests
+VASTAI_API_KEY=xxx uv run pytest -v -m gpu
+
+# Lint and format Python code
+uv run ruff check .
+uv run ruff format .
+```
 
 ## Architecture Notes
 
