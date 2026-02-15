@@ -42,3 +42,9 @@ jobs:
 
       - name: Test
         run: cmake --build build --target check-warpforth
+
+      - name: Check C++ formatting
+        run: cmake --build build --target check-format
+
+      - name: Ruff check
+        run: uv run ruff check gpu_test/ && uv run ruff format --check gpu_test/

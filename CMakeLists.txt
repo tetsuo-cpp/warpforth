@@ -46,7 +46,8 @@ else()
 endif()
 
 # Add format target to run clang-format on all source files
-find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)
+find_program(CLANG_FORMAT_EXECUTABLE
+  NAMES clang-format-${LLVM_VERSION_MAJOR} clang-format)
 if(CLANG_FORMAT_EXECUTABLE)
   file(GLOB_RECURSE ALL_SOURCE_FILES
     ${PROJECT_SOURCE_DIR}/include/**/*.h
@@ -56,6 +57,11 @@ if(CLANG_FORMAT_EXECUTABLE)
   add_custom_target(format
     COMMAND ${CLANG_FORMAT_EXECUTABLE} -i ${ALL_SOURCE_FILES}
     COMMENT "Running clang-format on all source files"
+    VERBATIM
+  )
+  add_custom_target(check-format
+    COMMAND ${CLANG_FORMAT_EXECUTABLE} --dry-run --Werror ${ALL_SOURCE_FILES}
+    COMMENT "Checking clang-format on all source files"
     VERBATIM
   )
 endif()
