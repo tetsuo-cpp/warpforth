@@ -298,6 +298,13 @@ using SubOpConversion = BinaryArithOpConversion<forth::SubOp, arith::SubIOp>;
 using MulOpConversion = BinaryArithOpConversion<forth::MulOp, arith::MulIOp>;
 using DivOpConversion = BinaryArithOpConversion<forth::DivOp, arith::DivSIOp>;
 using ModOpConversion = BinaryArithOpConversion<forth::ModOp, arith::RemSIOp>;
+using AndOpConversion = BinaryArithOpConversion<forth::AndOp, arith::AndIOp>;
+using OrOpConversion = BinaryArithOpConversion<forth::OrOp, arith::OrIOp>;
+using XorOpConversion = BinaryArithOpConversion<forth::XorOp, arith::XOrIOp>;
+using LshiftOpConversion =
+    BinaryArithOpConversion<forth::LshiftOp, arith::ShLIOp>;
+using RshiftOpConversion =
+    BinaryArithOpConversion<forth::RshiftOp, arith::ShRUIOp>;
 
 /// Base template for binary comparison operations.
 /// Pops two values, compares, pushes -1 (true) or 0 (false): (a b -- flag)
@@ -347,6 +354,37 @@ using LtOpConversion =
     BinaryCmpOpConversion<forth::LtOp, arith::CmpIPredicate::slt>;
 using GtOpConversion =
     BinaryCmpOpConversion<forth::GtOp, arith::CmpIPredicate::sgt>;
+
+/// Conversion pattern for forth.not operation (bitwise NOT).
+/// Unary: pops one value, XORs with -1 (all bits set), pushes result: (a -- ~a)
+struct NotOpConversion : public OpConversionPattern<forth::NotOp> {
+  NotOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::NotOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::NotOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Load top value
+    Value a = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+
+    // XOR with -1 (all bits set) to flip all bits
+    Value allOnes = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(-1));
+    Value result = rewriter.create<arith::XOrIOp>(loc, a, allOnes);
+
+    // Store result at same position (SP unchanged)
+    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
+
+    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
+    return success();
+  }
+};
 
 /// Conversion pattern for forth.zero_eq operation (0=).
 /// Unary: pops one value, pushes -1 if zero, 0 otherwise: (a -- flag)
@@ -891,15 +929,17 @@ struct ConvertForthToMemRefPass
     RewritePatternSet patterns(context);
 
     // Add Forth operation conversion patterns
-    patterns.add<StackOpConversion, LiteralOpConversion, DupOpConversion,
-                 DropOpConversion, SwapOpConversion, OverOpConversion,
-                 RotOpConversion, AddOpConversion, SubOpConversion,
-                 MulOpConversion, DivOpConversion, ModOpConversion,
-                 EqOpConversion, LtOpConversion, GtOpConversion,
-                 ZeroEqOpConversion, ParamRefOpConversion, LoadOpConversion,
-                 StoreOpConversion, IfOpConversion, BeginUntilOpConversion,
-                 DoLoopOpConversion, LoopIndexOpConversion, YieldOpConversion>(
-        typeConverter, context);
+    patterns
+        .add<StackOpConversion, LiteralOpConversion, DupOpConversion,
+             DropOpConversion, SwapOpConversion, OverOpConversion,
+             RotOpConversion, AddOpConversion, SubOpConversion, MulOpConversion,
+             DivOpConversion, ModOpConversion, AndOpConversion, OrOpConversion,
+             XorOpConversion, NotOpConversion, LshiftOpConversion,
+             RshiftOpConversion, EqOpConversion, LtOpConversion, GtOpConversion,
+             ZeroEqOpConversion, ParamRefOpConversion, LoadOpConversion,
+             StoreOpConversion, IfOpConversion, BeginUntilOpConversion,
+             DoLoopOpConversion, LoopIndexOpConversion, YieldOpConversion>(
+            typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,
