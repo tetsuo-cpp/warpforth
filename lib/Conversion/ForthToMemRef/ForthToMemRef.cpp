@@ -298,6 +298,91 @@ using MulOpConversion = BinaryArithOpConversion<forth::MulOp, arith::MulIOp>;
 using DivOpConversion = BinaryArithOpConversion<forth::DivOp, arith::DivSIOp>;
 using ModOpConversion = BinaryArithOpConversion<forth::ModOp, arith::RemSIOp>;
 
+/// Base template for binary comparison operations.
+/// Pops two values, compares, pushes -1 (true) or 0 (false): (a b -- flag)
+template <typename ForthOp, arith::CmpIPredicate predicate>
+struct BinaryCmpOpConversion : public OpConversionPattern<ForthOp> {
+  BinaryCmpOpConversion(const TypeConverter &typeConverter,
+                        MLIRContext *context)
+      : OpConversionPattern<ForthOp>(typeConverter, context) {}
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    // Load top two values (b at SP, a at SP-1)
+    Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    Value a = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
+
+    // Compare
+    Value cmp = rewriter.create<arith::CmpIOp>(loc, predicate, a, b);
+
+    // Extend i1 to i64: true → -1 (all bits set), false → 0
+    Value result =
+        rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), cmp);
+
+    // Store result at SP-1
+    rewriter.create<memref::StoreOp>(loc, result, memref, spMinus1);
+
+    // New SP is SP-1 (net: two pops, one push)
+    rewriter.replaceOpWithMultiple(op, {{memref, spMinus1}});
+    return success();
+  }
+};
+
+// Instantiate comparison operation conversions
+using EqOpConversion =
+    BinaryCmpOpConversion<forth::EqOp, arith::CmpIPredicate::eq>;
+using LtOpConversion =
+    BinaryCmpOpConversion<forth::LtOp, arith::CmpIPredicate::slt>;
+using GtOpConversion =
+    BinaryCmpOpConversion<forth::GtOp, arith::CmpIPredicate::sgt>;
+
+/// Conversion pattern for forth.zero_eq operation (0=).
+/// Unary: pops one value, pushes -1 if zero, 0 otherwise: (a -- flag)
+struct ZeroEqOpConversion : public OpConversionPattern<forth::ZeroEqOp> {
+  ZeroEqOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::ZeroEqOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::ZeroEqOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Load top value
+    Value a = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+
+    // Compare with zero
+    Value zero = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+    Value cmp =
+        rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a, zero);
+
+    // Extend i1 to i64: true → -1, false → 0
+    Value result =
+        rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), cmp);
+
+    // Store result at same position (SP unchanged)
+    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
+
+    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
+    return success();
+  }
+};
+
 /// Conversion pattern for forth.param_ref operation.
 /// Pushes the byte address of a named kernel parameter onto the stack.
 struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
@@ -543,12 +628,13 @@ struct ConvertForthToMemRefPass
     RewritePatternSet patterns(context);
 
     // Add Forth operation conversion patterns
-    patterns.add<StackOpConversion, LiteralOpConversion, DupOpConversion,
-                 DropOpConversion, SwapOpConversion, OverOpConversion,
-                 RotOpConversion, AddOpConversion, SubOpConversion,
-                 MulOpConversion, DivOpConversion, ModOpConversion,
-                 ParamRefOpConversion, LoadOpConversion, StoreOpConversion>(
-        typeConverter, context);
+    patterns
+        .add<StackOpConversion, LiteralOpConversion, DupOpConversion,
+             DropOpConversion, SwapOpConversion, OverOpConversion,
+             RotOpConversion, AddOpConversion, SubOpConversion, MulOpConversion,
+             DivOpConversion, ModOpConversion, EqOpConversion, LtOpConversion,
+             GtOpConversion, ZeroEqOpConversion, ParamRefOpConversion,
+             LoadOpConversion, StoreOpConversion>(typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,

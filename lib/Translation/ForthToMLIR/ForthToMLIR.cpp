@@ -305,6 +305,15 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   } else if (word == "global-id") {
     return builder.create<forth::GlobalIdOp>(loc, stackType, inputStack)
         .getResult();
+  } else if (word == "=") {
+    return builder.create<forth::EqOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "<") {
+    return builder.create<forth::LtOp>(loc, stackType, inputStack).getResult();
+  } else if (word == ">") {
+    return builder.create<forth::GtOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "0=") {
+    return builder.create<forth::ZeroEqOp>(loc, stackType, inputStack)
+        .getResult();
   }
 
   // Unknown word - this is where we'd check a symbol table in the future

@@ -436,6 +436,70 @@ def Forth_GlobalIdOp : Forth_Op<"global_id", [Pure]> {
 }
 
 //===----------------------------------------------------------------------===//
+// Comparison operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_EqOp : Forth_Op<"eq", [Pure]> {
+  let summary = "Test equality of top two stack elements";
+  let description = [{
+    Pops two values, pushes -1 (true) if equal, 0 (false) otherwise.
+    Forth semantics: ( a b -- flag )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_LtOp : Forth_Op<"lt", [Pure]> {
+  let summary = "Test less-than of top two stack elements";
+  let description = [{
+    Pops two values, pushes -1 (true) if a < b, 0 (false) otherwise.
+    Forth semantics: ( a b -- flag )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_GtOp : Forth_Op<"gt", [Pure]> {
+  let summary = "Test greater-than of top two stack elements";
+  let description = [{
+    Pops two values, pushes -1 (true) if a > b, 0 (false) otherwise.
+    Forth semantics: ( a b -- flag )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_ZeroEqOp : Forth_Op<"zero_eq", [Pure]> {
+  let summary = "Test if top of stack is zero";
+  let description = [{
+    Pops one value, pushes -1 (true) if zero, 0 (false) otherwise.
+    Forth semantics: ( a -- flag )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Intrinsic operations.
 //===----------------------------------------------------------------------===//
 
