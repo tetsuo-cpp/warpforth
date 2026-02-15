@@ -6,8 +6,8 @@
 \ Test ! produces forth.store
 \ CHECK: forth.store %{{.*}} : !forth.stack -> !forth.stack
 
-\ Test cells produces literal 8 + mul
+\ Test CELLS produces literal 8 + mul
 \ CHECK: forth.literal %{{.*}} 8
 \ CHECK-NEXT: forth.mul
 1 @ 2 3 !
-4 cells
+4 CELLS

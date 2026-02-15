@@ -281,7 +281,7 @@ def _parse_param_declarations(forth_source: str) -> list[tuple[str, int]]:
     decls = []
     for line in forth_source.splitlines():
         parts = line.split()
-        if len(parts) >= 3 and parts[0] == "param":
+        if len(parts) >= 3 and parts[0].upper() == "PARAM":
             decls.append((parts[1], int(parts[2])))
     return decls
 

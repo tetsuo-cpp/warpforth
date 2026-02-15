@@ -45,6 +45,15 @@ static std::string mangleForthName(llvm::StringRef name) {
   return result;
 }
 
+/// Convert a string to uppercase for case-insensitive word matching.
+static std::string toUpperCase(llvm::StringRef str) {
+  std::string result;
+  result.reserve(str.size());
+  for (char c : str)
+    result += std::toupper(static_cast<unsigned char>(c));
+  return result;
+}
+
 //===----------------------------------------------------------------------===//
 // ForthLexer implementation
 //===----------------------------------------------------------------------===//
@@ -140,6 +149,8 @@ Token ForthLexer::nextToken() {
 
   std::string text(tokenStart, curPtr - tokenStart);
   Token::Kind kind = isNumber(text) ? Token::Kind::Number : Token::Kind::Word;
+  if (kind == Token::Kind::Word)
+    text = toUpperCase(text);
 
   return Token(kind, text, loc);
 }
@@ -176,8 +187,8 @@ void ForthParser::scanParamDeclarations() {
   consume();
   while (currentToken.kind != Token::Kind::EndOfFile) {
     if (currentToken.kind == Token::Kind::Word &&
-        currentToken.text == "param") {
-      consume(); // consume "param"
+        currentToken.text == "PARAM") {
+      consume(); // consume "PARAM"
       if (currentToken.kind != Token::Kind::Word)
         continue;
       std::string name = currentToken.text;
@@ -227,8 +238,8 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
         .getResult(0);
   }
 
-  // cells: multiply by 8 (sizeof i64) for byte addressing
-  if (word == "cells") {
+  // CELLS: multiply by 8 (sizeof i64) for byte addressing
+  if (word == "CELLS") {
     Value lit8 = builder
                      .create<forth::LiteralOp>(loc, stackType, inputStack,
                                                builder.getI64IntegerAttr(8))
@@ -237,28 +248,28 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   }
 
   // Built-in operations
-  if (word == "dup") {
+  if (word == "DUP") {
     return builder.create<forth::DupOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "drop") {
+  } else if (word == "DROP") {
     return builder.create<forth::DropOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "swap") {
+  } else if (word == "SWAP") {
     return builder.create<forth::SwapOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "over") {
+  } else if (word == "OVER") {
     return builder.create<forth::OverOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "rot") {
+  } else if (word == "ROT") {
     return builder.create<forth::RotOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "+" || word == "add") {
+  } else if (word == "+" || word == "ADD") {
     return builder.create<forth::AddOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "-" || word == "sub") {
+  } else if (word == "-" || word == "SUB") {
     return builder.create<forth::SubOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "*" || word == "mul") {
+  } else if (word == "*" || word == "MUL") {
     return builder.create<forth::MulOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "/" || word == "div") {
+  } else if (word == "/" || word == "DIV") {
     return builder.create<forth::DivOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "mod") {
+  } else if (word == "MOD") {
     return builder.create<forth::ModOp>(loc, stackType, inputStack).getResult();
   } else if (word == "@") {
     return builder.create<forth::LoadOp>(loc, stackType, inputStack)
@@ -266,43 +277,43 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   } else if (word == "!") {
     return builder.create<forth::StoreOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "tid-x") {
+  } else if (word == "TID-X") {
     return builder.create<forth::ThreadIdXOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "tid-y") {
+  } else if (word == "TID-Y") {
     return builder.create<forth::ThreadIdYOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "tid-z") {
+  } else if (word == "TID-Z") {
     return builder.create<forth::ThreadIdZOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "bid-x") {
+  } else if (word == "BID-X") {
     return builder.create<forth::BlockIdXOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "bid-y") {
+  } else if (word == "BID-Y") {
     return builder.create<forth::BlockIdYOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "bid-z") {
+  } else if (word == "BID-Z") {
     return builder.create<forth::BlockIdZOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "bdim-x") {
+  } else if (word == "BDIM-X") {
     return builder.create<forth::BlockDimXOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "bdim-y") {
+  } else if (word == "BDIM-Y") {
     return builder.create<forth::BlockDimYOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "bdim-z") {
+  } else if (word == "BDIM-Z") {
     return builder.create<forth::BlockDimZOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "gdim-x") {
+  } else if (word == "GDIM-X") {
     return builder.create<forth::GridDimXOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "gdim-y") {
+  } else if (word == "GDIM-Y") {
     return builder.create<forth::GridDimYOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "gdim-z") {
+  } else if (word == "GDIM-Z") {
     return builder.create<forth::GridDimZOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "global-id") {
+  } else if (word == "GLOBAL-ID") {
     return builder.create<forth::GlobalIdOp>(loc, stackType, inputStack)
         .getResult();
   } else if (word == "=") {
@@ -344,10 +355,10 @@ ForthParser::parseBody(Value &stack,
     if (currentToken.kind == Token::Kind::Word && isStopWord(currentToken.text))
       break;
 
-    // Skip param declarations at top level.
+    // Skip PARAM declarations at top level.
     if (!inWordDefinition && currentToken.kind == Token::Kind::Word &&
-        currentToken.text == "param") {
-      consume(); // "param"
+        currentToken.text == "PARAM") {
+      consume(); // "PARAM"
       consume(); // name
       consume(); // size
       continue;

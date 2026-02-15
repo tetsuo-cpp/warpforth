@@ -13,8 +13,8 @@
 \ CHECK: forth.grid_dim_y
 \ CHECK: forth.grid_dim_z
 \ CHECK: forth.global_id
-tid-x tid-y tid-z
-bid-x bid-y bid-z
-bdim-x bdim-y bdim-z
-gdim-x gdim-y gdim-z
-global-id
+TID-X TID-Y TID-Z
+BID-X BID-Y BID-Z
+BDIM-X BDIM-Y BDIM-Z
+GDIM-X GDIM-Y GDIM-Z
+GLOBAL-ID

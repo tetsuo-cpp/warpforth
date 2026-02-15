@@ -6,7 +6,7 @@
 
 \ Verify intermediate MLIR structure at the memref+gpu stage
 \ MID: gpu.module @warpforth_module
-\ MID: gpu.func @main(%arg0: memref<256xi64> {forth.param_name = "data"}) kernel
+\ MID: gpu.func @main(%arg0: memref<256xi64> {forth.param_name = "DATA"}) kernel
 \ MID: memref.alloca() : memref<256xi64>
 \ MID: gpu.thread_id  x
 \ MID: memref.extract_aligned_pointer_as_index %arg0
@@ -14,7 +14,7 @@
 \ MID: llvm.store
 \ MID: gpu.return
 
-param data 256
-global-id cells data + @
+PARAM DATA 256
+GLOBAL-ID CELLS DATA + @
 1 +
-global-id cells data + !
+GLOBAL-ID CELLS DATA + !

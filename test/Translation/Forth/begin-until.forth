@@ -12,4 +12,4 @@
 \ CHECK:   forth.zero_eq
 \ CHECK:   forth.yield
 \ CHECK: }
-10 BEGIN 1 - dup 0= UNTIL
+10 BEGIN 1 - DUP 0= UNTIL

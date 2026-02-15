@@ -9,4 +9,4 @@
 \ CHECK: %[[S5:.*]] = forth.mul %[[S4]]
 \ CHECK: %[[S6:.*]] = forth.div %[[S5]]
 \ CHECK: %{{.*}} = forth.mod %[[S6]]
-1 2 + - * / mod
+1 2 + - * / MOD

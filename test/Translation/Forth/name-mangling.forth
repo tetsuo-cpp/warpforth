@@ -1,14 +1,14 @@
 \ RUN: %warpforth-translate --forth-to-mlir %s | %FileCheck %s
 
 \ Hyphen becomes underscore
-\ CHECK: func.func private @my_word
+\ CHECK: func.func private @MY_WORD
 
 \ Underscore becomes double underscore
-\ CHECK: func.func private @under__score
+\ CHECK: func.func private @UNDER__SCORE
 
 \ Leading digit gets underscore prefix
-\ CHECK: func.func private @_2start
+\ CHECK: func.func private @_2START
 
-: my-word 1 ;
-: under_score 2 ;
-: 2start 3 ;
+: MY-WORD 1 ;
+: UNDER_SCORE 2 ;
+: 2START 3 ;

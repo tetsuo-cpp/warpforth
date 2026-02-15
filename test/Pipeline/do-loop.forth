@@ -6,10 +6,10 @@
 
 \ Verify intermediate MLIR: gpu.func with loop structure
 \ MID: gpu.module @warpforth_module
-\ MID: gpu.func @main(%arg0: memref<4xi64> {forth.param_name = "data"}) kernel
+\ MID: gpu.func @main(%arg0: memref<4xi64> {forth.param_name = "DATA"}) kernel
 \ MID: cf.br
 \ MID: cf.cond_br
 \ MID: gpu.return
 
-param data 4
-10 0 DO I LOOP data 0 cells + !
+PARAM DATA 4
+10 0 DO I LOOP DATA 0 CELLS + !

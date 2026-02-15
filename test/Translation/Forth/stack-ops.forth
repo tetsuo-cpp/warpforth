@@ -6,4 +6,4 @@
 \ CHECK: forth.swap %{{.*}} : !forth.stack -> !forth.stack
 \ CHECK: forth.over %{{.*}} : !forth.stack -> !forth.stack
 \ CHECK: forth.rot %{{.*}} : !forth.stack -> !forth.stack
-1 dup drop swap over rot
+1 DUP DROP SWAP OVER ROT
