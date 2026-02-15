@@ -13,7 +13,7 @@ dev = ["ruff", "pytest-timeout"]
 
 [tool.pytest.ini_options]
 markers = ["gpu: marks tests requiring GPU execution via Vast.ai"]
-timeout = 300
+timeout = 600
 testpaths = ["gpu_test"]
 
 [tool.ruff]
