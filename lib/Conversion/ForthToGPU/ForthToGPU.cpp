@@ -145,13 +145,32 @@ private:
       mapping.map(srcArg, dstArg);
     }
 
-    rewriter.setInsertionPointToStart(&dstBlock);
-    for (Operation &op : srcBlock.getOperations()) {
-      if (auto returnOp = dyn_cast<func::ReturnOp>(&op)) {
-        rewriter.create<gpu::ReturnOp>(returnOp.getLoc(),
-                                       returnOp.getOperands());
-      } else {
-        rewriter.clone(op, mapping);
+    // Clone all blocks after the entry block.
+    for (auto it = std::next(funcOp.getBody().begin());
+         it != funcOp.getBody().end(); ++it) {
+      Block *newBlock =
+          rewriter.createBlock(&gpuFunc.getBody(), gpuFunc.getBody().end());
+      mapping.map(&*it, newBlock);
+      for (auto arg : it->getArguments()) {
+        Value newArg = newBlock->addArgument(arg.getType(), arg.getLoc());
+        mapping.map(arg, newArg);
+      }
+    }
+
+    // Clone ops from each source block into the corresponding destination
+    // block. Replace func.return with gpu.return.
+    for (auto [srcBlock, dstBlock] :
+         llvm::zip(funcOp.getBody(), gpuFunc.getBody())) {
+      rewriter.setInsertionPointToEnd(&dstBlock);
+      for (Operation &op : srcBlock.getOperations()) {
+        if (auto returnOp = dyn_cast<func::ReturnOp>(&op)) {
+          SmallVector<Value> remappedOperands;
+          for (Value operand : returnOp.getOperands())
+            remappedOperands.push_back(mapping.lookup(operand));
+          rewriter.create<gpu::ReturnOp>(returnOp.getLoc(), remappedOperands);
+        } else {
+          rewriter.clone(op, mapping);
+        }
       }
     }
 

@@ -7,6 +7,7 @@
 #include "warpforth/Dialect/Forth/ForthDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/OpImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
@@ -19,6 +20,68 @@ using namespace mlir::forth;
 
 #define GET_OP_CLASSES
 #include "warpforth/Dialect/Forth/ForthOps.cpp.inc"
+
+//===----------------------------------------------------------------------===//
+// IfOp RegionBranchOpInterface.
+//===----------------------------------------------------------------------===//
+
+void IfOp::getSuccessorRegions(RegionBranchPoint point,
+                               SmallVectorImpl<RegionSuccessor> &regions) {
+  if (point.isParent()) {
+    // From parent: branch into then or else region.
+    regions.push_back(
+        RegionSuccessor(&getThenRegion(), getThenRegion().getArguments()));
+    regions.push_back(
+        RegionSuccessor(&getElseRegion(), getElseRegion().getArguments()));
+    return;
+  }
+  // From either region: return to parent with op results.
+  regions.push_back(RegionSuccessor(getOperation()->getResults()));
+}
+
+OperandRange IfOp::getEntrySuccessorOperands(RegionBranchPoint point) {
+  return getOperation()->getOperands();
+}
+
+//===----------------------------------------------------------------------===//
+// IfOp custom assembly format.
+//===----------------------------------------------------------------------===//
+
+void IfOp::print(OpAsmPrinter &p) {
+  p << ' ' << getInputStack() << " : " << getInputStack().getType() << " -> "
+    << getOutputStack().getType() << ' ';
+  p.printRegion(getThenRegion());
+  p << " else ";
+  p.printRegion(getElseRegion());
+}
+
+ParseResult IfOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand inputStack;
+  Type inputType, outputType;
+
+  if (parser.parseOperand(inputStack) || parser.parseColon() ||
+      parser.parseType(inputType) || parser.parseArrow() ||
+      parser.parseType(outputType) ||
+      parser.resolveOperand(inputStack, inputType, result.operands))
+    return failure();
+
+  result.addTypes(outputType);
+
+  // Parse then region.
+  auto *thenRegion = result.addRegion();
+  if (parser.parseRegion(*thenRegion))
+    return failure();
+
+  // Parse "else" keyword and else region.
+  if (parser.parseKeyword("else"))
+    return failure();
+
+  auto *elseRegion = result.addRegion();
+  if (parser.parseRegion(*elseRegion))
+    return failure();
+
+  return success();
+}
 
 //===----------------------------------------------------------------------===//
 // Forth dialect.

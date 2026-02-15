@@ -13,5 +13,6 @@ add_mlir_conversion_library(MLIRForthToMemRefConversion
   MLIRArithDialect
   MLIRLLVMDialect
   MLIRFuncDialect
+  MLIRSCFDialect
   MLIRForth
 )

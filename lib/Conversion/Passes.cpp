@@ -8,6 +8,7 @@
 #include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
 #include "mlir/Conversion/NVVMToLLVM/NVVMToLLVM.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
@@ -25,28 +26,31 @@ void buildWarpForthPipeline(OpPassManager &pm) {
   // Stage 1: Lower Forth to MemRef
   pm.addPass(createConvertForthToMemRefPass());
 
-  // Stage 2: Convert to GPU dialect (includes private address space annotation)
+  // Stage 2: Lower SCF to CF
+  pm.addPass(createConvertSCFToCFPass());
+
+  // Stage 3: Convert to GPU dialect (includes private address space annotation)
   pm.addPass(createConvertForthToGPUPass());
 
-  // Stage 3: Normalize MemRefs for GPU
+  // Stage 4: Normalize MemRefs for GPU
   pm.addPass(createCanonicalizerPass());
 
-  // Stage 4: Attach NVVM target to GPU modules (sm_70 = Volta architecture)
+  // Stage 5: Attach NVVM target to GPU modules (sm_70 = Volta architecture)
   pm.addPass(createGpuNVVMAttachTarget());
 
-  // Stage 5: Lower GPU to NVVM with bare pointers
+  // Stage 6: Lower GPU to NVVM with bare pointers
   ConvertGpuOpsToNVVMOpsOptions gpuToNVVMOptions;
   gpuToNVVMOptions.useBarePtrCallConv = true;
   pm.addNestedPass<gpu::GPUModuleOp>(
       createConvertGpuOpsToNVVMOps(gpuToNVVMOptions));
 
-  // Stage 6: Lower NVVM to LLVM
+  // Stage 7: Lower NVVM to LLVM
   pm.addPass(createConvertNVVMToLLVMPass());
 
-  // Stage 7: Reconcile type conversions
+  // Stage 8: Reconcile type conversions
   pm.addPass(createReconcileUnrealizedCastsPass());
 
-  // Stage 8: Compile GPU module to PTX binary
+  // Stage 9: Compile GPU module to PTX binary
   GpuModuleToBinaryPassOptions binaryOptions;
   binaryOptions.compilationTarget = "isa"; // Output PTX assembly
   pm.addPass(createGpuModuleToBinaryPass(binaryOptions));

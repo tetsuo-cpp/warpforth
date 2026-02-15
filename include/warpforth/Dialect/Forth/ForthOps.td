@@ -8,6 +8,7 @@
 #define FORTH_OPS
 
 include "warpforth/Dialect/Forth/ForthDialect.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 //===----------------------------------------------------------------------===//
@@ -497,6 +498,40 @@ def Forth_ZeroEqOp : Forth_Op<"zero_eq", [Pure]> {
   let assemblyFormat = [{
     $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
   }];
+}
+
+//===----------------------------------------------------------------------===//
+// Control flow operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_YieldOp : Forth_Op<"yield", [Pure, Terminator, ReturnLike,
+    ParentOneOf<["IfOp"]>]> {
+  let summary = "Yield stack from control flow region";
+  let description = [{
+    Yields the current stack state from a control flow region back to
+    the parent operation. Acts as a region terminator.
+  }];
+  let arguments = (ins Forth_StackType:$result);
+  let assemblyFormat = [{
+    $result attr-dict `:` type($result)
+  }];
+}
+
+def Forth_IfOp : Forth_Op<"if", [RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface,
+        ["getEntrySuccessorOperands"]>]> {
+  let summary = "Conditional execution";
+  let description = [{
+    Conditional execution. If the flag is non-zero, the then region executes;
+    otherwise the else region executes. Each region must yield the resulting
+    stack.
+    Forth semantics: flag IF then-body ELSE else-body THEN
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let regions = (region SizedRegion<1>:$then_region,
+                        SizedRegion<1>:$else_region);
+  let hasCustomAssemblyFormat = 1;
 }
 
 //===----------------------------------------------------------------------===//

@@ -10,6 +10,7 @@
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -583,6 +584,87 @@ struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
   }
 };
 
+/// Conversion pattern for forth.yield operation.
+/// Extracts the SP from the adapted stack and emits scf.yield.
+struct YieldOpConversion : public OpConversionPattern<forth::YieldOp> {
+  YieldOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::YieldOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::YieldOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // The yield's result (!forth.stack) is adapted to {memref, sp}.
+    // We emit scf.yield with just the SP (memref is captured).
+    ValueRange adaptedResult = adaptor.getOperands()[0];
+    Value sp = adaptedResult[1]; // index
+    rewriter.replaceOpWithNewOp<scf::YieldOp>(op, ValueRange{sp});
+    return success();
+  }
+};
+
+/// Conversion pattern for forth.if operation.
+/// Loads the flag from the stack top, creates scf.if with the condition,
+/// and inlines the region content after converting block args.
+struct IfOpConversion : public OpConversionPattern<forth::IfOp> {
+  IfOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::IfOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::IfOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Load flag from stack top.
+    Value flag = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+
+    // Condition: flag != 0.
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
+    Value cond = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne,
+                                                flag, zero);
+
+    // Create scf.if with index result (SP).
+    auto indexType = rewriter.getIndexType();
+    auto scfIf = rewriter.create<scf::IfOp>(loc, TypeRange{indexType}, cond,
+                                            /*addElseBlock=*/true);
+
+    // Convert block signatures and inline regions into scf.if.
+    // convertRegionTypes converts !forth.stack block arg → {memref, index}
+    // and inserts tracked materializations (unrealized_conversion_cast).
+    // We inline into scf.if and mergeBlocks to substitute the converted
+    // block args with parent-scope values. The original materialization
+    // cast stays intact (tracked by the framework). When the framework
+    // later converts the inlined inner ops, their adaptors unwrap the
+    // cast to get {memref, index}.
+    auto convertRegion = [&](Region &srcRegion,
+                             Region &dstRegion) -> LogicalResult {
+      if (failed(rewriter.convertRegionTypes(&srcRegion, *getTypeConverter())))
+        return failure();
+
+      rewriter.eraseBlock(&dstRegion.front());
+      rewriter.inlineRegionBefore(srcRegion, dstRegion, dstRegion.end());
+
+      Block &blockWithArgs = dstRegion.front();
+      Block *newBlock = rewriter.createBlock(&dstRegion);
+      rewriter.mergeBlocks(&blockWithArgs, newBlock, {memref, stackPtr});
+      return success();
+    };
+
+    if (failed(convertRegion(op.getThenRegion(), scfIf.getThenRegion())))
+      return failure();
+    if (failed(convertRegion(op.getElseRegion(), scfIf.getElseRegion())))
+      return failure();
+
+    // Replace forth.if with {memref, scf.if result SP}.
+    rewriter.replaceOpWithMultiple(op, {{memref, scfIf.getResult(0)}});
+    return success();
+  }
+};
+
 /// Conversion pass implementation.
 struct ConvertForthToMemRefPass
     : public impl::ConvertForthToMemRefBase<ConvertForthToMemRefPass> {
@@ -595,9 +677,9 @@ struct ConvertForthToMemRefPass
     // Mark Forth dialect as illegal (to be converted)
     target.addIllegalDialect<forth::ForthDialect>();
 
-    // Mark MemRef, Arith, and LLVM dialects as legal
+    // Mark MemRef, Arith, LLVM, and SCF dialects as legal
     target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect,
-                           LLVM::LLVMDialect>();
+                           LLVM::LLVMDialect, scf::SCFDialect>();
 
     // Mark IntrinsicOp as legal (to be lowered later)
     target.addLegalOp<forth::IntrinsicOp>();
@@ -628,13 +710,14 @@ struct ConvertForthToMemRefPass
     RewritePatternSet patterns(context);
 
     // Add Forth operation conversion patterns
-    patterns
-        .add<StackOpConversion, LiteralOpConversion, DupOpConversion,
-             DropOpConversion, SwapOpConversion, OverOpConversion,
-             RotOpConversion, AddOpConversion, SubOpConversion, MulOpConversion,
-             DivOpConversion, ModOpConversion, EqOpConversion, LtOpConversion,
-             GtOpConversion, ZeroEqOpConversion, ParamRefOpConversion,
-             LoadOpConversion, StoreOpConversion>(typeConverter, context);
+    patterns.add<StackOpConversion, LiteralOpConversion, DupOpConversion,
+                 DropOpConversion, SwapOpConversion, OverOpConversion,
+                 RotOpConversion, AddOpConversion, SubOpConversion,
+                 MulOpConversion, DivOpConversion, ModOpConversion,
+                 EqOpConversion, LtOpConversion, GtOpConversion,
+                 ZeroEqOpConversion, ParamRefOpConversion, LoadOpConversion,
+                 StoreOpConversion, IfOpConversion, YieldOpConversion>(
+        typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,

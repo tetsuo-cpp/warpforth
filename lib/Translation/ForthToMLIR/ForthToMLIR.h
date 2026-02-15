@@ -100,6 +100,14 @@ private:
   /// Returns the updated stack value or nullptr on error.
   Value emitOperation(StringRef word, Value inputStack, Location loc);
 
+  /// Parse a sequence of Forth operations until a stop word is hit.
+  /// The stop word is NOT consumed. Returns the final stack value.
+  LogicalResult parseBody(Value &stack,
+                          llvm::function_ref<bool(StringRef)> isStopWord);
+
+  /// Parse an IF/ELSE/THEN construct, creating a forth.if op.
+  Value parseIf(Value inputStack, Location loc);
+
   /// Parse a user-defined word definition.
   LogicalResult parseWordDefinition();
 };

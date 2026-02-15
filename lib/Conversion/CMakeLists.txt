@@ -12,6 +12,7 @@ add_mlir_library(MLIRConversionPasses
   MLIRGPUToNVVMTransforms
   MLIRGPUTransforms
   MLIRReconcileUnrealizedCasts
+  MLIRSCFToControlFlow
   MLIRTransforms
 )
 

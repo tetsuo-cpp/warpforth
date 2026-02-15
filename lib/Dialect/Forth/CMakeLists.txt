@@ -8,5 +8,6 @@ add_mlir_dialect_library(MLIRForth
   MLIRForthOpsIncGen
 
   LINK_LIBS PUBLIC
+  MLIRControlFlowInterfaces
   MLIRIR
   )

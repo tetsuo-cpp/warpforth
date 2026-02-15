@@ -316,15 +316,139 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
         .getResult();
   }
 
-  // Unknown word - this is where we'd check a symbol table in the future
+  // Unknown word
   return nullptr;
 }
 
-LogicalResult ForthParser::parseWordDefinition() {
-  // Expect ':'
-  Location loc = getLoc();
+//===----------------------------------------------------------------------===//
+// Body parsing — shared by word definitions, main, and control flow regions.
+//===----------------------------------------------------------------------===//
 
-  // Save current insertion point
+LogicalResult
+ForthParser::parseBody(Value &stack,
+                       llvm::function_ref<bool(StringRef)> isStopWord) {
+  Type stackType = forth::StackType::get(context);
+
+  while (currentToken.kind != Token::Kind::EndOfFile &&
+         currentToken.kind != Token::Kind::Semicolon &&
+         currentToken.kind != Token::Kind::Colon) {
+
+    // Check if current word is a stop word.
+    if (currentToken.kind == Token::Kind::Word && isStopWord(currentToken.text))
+      break;
+
+    // Skip param declarations at top level.
+    if (!inWordDefinition && currentToken.kind == Token::Kind::Word &&
+        currentToken.text == "param") {
+      consume(); // "param"
+      consume(); // name
+      consume(); // size
+      continue;
+    }
+
+    if (currentToken.kind == Token::Kind::Number) {
+      Location tokenLoc = getLoc();
+      int64_t value = std::stoll(currentToken.text);
+      stack = builder
+                  .create<forth::LiteralOp>(tokenLoc, stackType, stack,
+                                            builder.getI64IntegerAttr(value))
+                  .getResult();
+      consume();
+    } else if (currentToken.kind == Token::Kind::Word) {
+      if (currentToken.text == "IF") {
+        Location tokenLoc = getLoc();
+        consume(); // consume IF
+        stack = parseIf(stack, tokenLoc);
+        if (!stack)
+          return failure();
+      } else {
+        Location tokenLoc = getLoc();
+        Value newStack = emitOperation(currentToken.text, stack, tokenLoc);
+        if (!newStack)
+          return emitError("unknown word: " + currentToken.text);
+        stack = newStack;
+        consume();
+      }
+    } else {
+      return emitError("unexpected token");
+    }
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// IF / ELSE / THEN parsing.
+//===----------------------------------------------------------------------===//
+
+Value ForthParser::parseIf(Value inputStack, Location loc) {
+  Type stackType = forth::StackType::get(context);
+
+  // Create forth.if op. inputStack has the flag on top.
+  // Regions capture inputStack from the enclosing scope (no block args).
+  // Each region starts with forth.drop to pop the flag.
+  auto ifOp = builder.create<forth::IfOp>(loc, stackType, inputStack);
+
+  auto isElseOrThen = [](StringRef word) {
+    return word == "ELSE" || word == "THEN";
+  };
+  auto isThen = [](StringRef word) { return word == "THEN"; };
+
+  // --- Then region ---
+  Block *thenBlock = new Block();
+  thenBlock->addArgument(stackType, loc);
+  ifOp.getThenRegion().push_back(thenBlock);
+
+  builder.setInsertionPointToStart(thenBlock);
+  Value thenArg = thenBlock->getArgument(0);
+  // Drop the flag from the block arg.
+  Value thenStack =
+      builder.create<forth::DropOp>(loc, stackType, thenArg).getResult();
+  if (failed(parseBody(thenStack, isElseOrThen)))
+    return nullptr;
+  builder.create<forth::YieldOp>(getLoc(), thenStack);
+
+  // --- Else region ---
+  Block *elseBlock = new Block();
+  elseBlock->addArgument(stackType, loc);
+  ifOp.getElseRegion().push_back(elseBlock);
+
+  if (currentToken.kind == Token::Kind::Word && currentToken.text == "ELSE") {
+    consume(); // consume ELSE
+    builder.setInsertionPointToStart(elseBlock);
+    Value elseArg = elseBlock->getArgument(0);
+    Value elseStack =
+        builder.create<forth::DropOp>(loc, stackType, elseArg).getResult();
+    if (failed(parseBody(elseStack, isThen)))
+      return nullptr;
+    builder.create<forth::YieldOp>(getLoc(), elseStack);
+  } else {
+    // No ELSE clause — just drop the flag and yield (identity).
+    builder.setInsertionPointToStart(elseBlock);
+    Value elseArg = elseBlock->getArgument(0);
+    Value elseStack =
+        builder.create<forth::DropOp>(loc, stackType, elseArg).getResult();
+    builder.create<forth::YieldOp>(loc, elseStack);
+  }
+
+  // Consume THEN.
+  if (currentToken.kind != Token::Kind::Word || currentToken.text != "THEN") {
+    (void)emitError("expected 'THEN'");
+    return nullptr;
+  }
+  consume(); // consume THEN
+
+  // Restore insertion point to after the forth.if op.
+  builder.setInsertionPointAfter(ifOp);
+  return ifOp.getOutputStack();
+}
+
+//===----------------------------------------------------------------------===//
+// Word definition and top-level parsing.
+//===----------------------------------------------------------------------===//
+
+LogicalResult ForthParser::parseWordDefinition() {
+  Location loc = getLoc();
   auto savedInsertionPoint = builder.saveInsertionPoint();
   inWordDefinition = true;
 
@@ -345,39 +469,18 @@ LogicalResult ForthParser::parseWordDefinition() {
 
   // Create entry block
   Block *entryBlock = funcOp.addEntryBlock();
-  Value inputStack = entryBlock->getArgument(0);
+  Value resultStack = entryBlock->getArgument(0);
   builder.setInsertionPointToStart(entryBlock);
 
   // Parse word body until ';'
-  Value resultStack = inputStack;
-  while (currentToken.kind != Token::Kind::Semicolon) {
-    if (currentToken.kind == Token::Kind::EndOfFile) {
-      return emitError("unterminated word definition: missing ';'");
-    }
+  if (failed(parseBody(resultStack, [](StringRef) { return false; })))
+    return failure();
 
-    if (currentToken.kind == Token::Kind::Number) {
-      Location tokenLoc = getLoc();
-      int64_t value = std::stoll(currentToken.text);
-      resultStack =
-          builder
-              .create<forth::LiteralOp>(tokenLoc, stackType, resultStack,
-                                        builder.getI64IntegerAttr(value))
-              .getResult();
-      consume();
-    } else if (currentToken.kind == Token::Kind::Word) {
-      Location tokenLoc = getLoc();
-      Value newStack = emitOperation(currentToken.text, resultStack, tokenLoc);
-      if (!newStack) {
-        return emitError("unknown word in definition: " + currentToken.text);
-      }
-      resultStack = newStack;
-      consume();
-    } else {
-      return emitError("unexpected token in word definition");
-    }
+  if (currentToken.kind != Token::Kind::Semicolon) {
+    return emitError("unterminated word definition: missing ';'");
   }
 
-  // Add return - move to end of block to ensure it's the terminator
+  // Add return
   builder.setInsertionPointToEnd(entryBlock);
   builder.create<func::ReturnOp>(loc, resultStack);
 
@@ -397,7 +500,7 @@ LogicalResult ForthParser::parseOperations(Value &stack) {
   Type stackType = forth::StackType::get(context);
   Location loc = getLoc();
 
-  // Start with a null stack - first operation will initialize it
+  // Initialize the stack.
   stack = builder.create<forth::StackOp>(loc, stackType);
 
   while (currentToken.kind != Token::Kind::EndOfFile) {
@@ -412,41 +515,11 @@ LogicalResult ForthParser::parseOperations(Value &stack) {
       }
       consume(); // consume ';'
       continue;
-    } else if (currentToken.kind == Token::Kind::Word &&
-               currentToken.text == "param") {
-      // Skip param declarations (already processed in pre-pass)
-      consume(); // consume "param"
-      consume(); // consume name
-      consume(); // consume size
-      continue;
-    } else if (currentToken.kind == Token::Kind::Number) {
-      // Parse numeric literal
-      Location tokenLoc = getLoc();
-      int64_t value = std::stoll(currentToken.text);
-
-      stack = builder
-                  .create<forth::LiteralOp>(tokenLoc, stackType, stack,
-                                            builder.getI64IntegerAttr(value))
-                  .getResult();
-
-      consume();
-    } else if (currentToken.kind == Token::Kind::Word) {
-      // Parse operation - these operations thread the stack through
-      if (!stack) {
-        return emitError("operation requires a value on the stack: " +
-                         currentToken.text);
-      }
-
-      Location tokenLoc = getLoc();
-      Value newStack = emitOperation(currentToken.text, stack, tokenLoc);
-
-      if (!newStack) {
-        return emitError("unknown word: " + currentToken.text);
-      }
-
-      stack = newStack;
-      consume();
     }
+
+    // parseBody handles numbers, words, and IF/ELSE/THEN.
+    if (failed(parseBody(stack, [](StringRef) { return false; })))
+      return failure();
   }
 
   return success();

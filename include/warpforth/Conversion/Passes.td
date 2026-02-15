@@ -27,7 +27,8 @@ def ConvertForthToMemRef
 
   let dependentDialects = ["mlir::memref::MemRefDialect",
                            "mlir::arith::ArithDialect",
-                           "mlir::LLVM::LLVMDialect"];
+                           "mlir::LLVM::LLVMDialect",
+                           "mlir::scf::SCFDialect"];
 }
 
 def ConvertForthToGPU : Pass<"convert-forth-to-gpu", "mlir::ModuleOp"> {
