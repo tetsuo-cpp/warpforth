@@ -202,6 +202,100 @@ def Forth_ModOp : Forth_Op<"mod", [Pure]> {
 }
 
 //===----------------------------------------------------------------------===//
+// Bitwise operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_AndOp : Forth_Op<"and", [Pure]> {
+  let summary = "Bitwise AND of top two stack elements";
+  let description = [{
+    Pops the top two elements, performs bitwise AND, and pushes the result.
+    Forth semantics: ( a b -- a&b )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_OrOp : Forth_Op<"or", [Pure]> {
+  let summary = "Bitwise OR of top two stack elements";
+  let description = [{
+    Pops the top two elements, performs bitwise OR, and pushes the result.
+    Forth semantics: ( a b -- a|b )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_XorOp : Forth_Op<"xor", [Pure]> {
+  let summary = "Bitwise XOR of top two stack elements";
+  let description = [{
+    Pops the top two elements, performs bitwise XOR, and pushes the result.
+    Forth semantics: ( a b -- a^b )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_NotOp : Forth_Op<"not", [Pure]> {
+  let summary = "Bitwise NOT of top stack element";
+  let description = [{
+    Pops the top element, performs bitwise NOT (complement), and pushes the result.
+    Forth semantics: ( a -- ~a )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_LshiftOp : Forth_Op<"lshift", [Pure]> {
+  let summary = "Left shift";
+  let description = [{
+    Pops shift amount and value, shifts value left, and pushes the result.
+    Forth semantics: ( a n -- a<<n )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_RshiftOp : Forth_Op<"rshift", [Pure]> {
+  let summary = "Logical right shift";
+  let description = [{
+    Pops shift amount and value, shifts value right (logical/unsigned), and pushes the result.
+    Forth semantics: ( a n -- a>>n )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Memory operations.
 //===----------------------------------------------------------------------===//
 

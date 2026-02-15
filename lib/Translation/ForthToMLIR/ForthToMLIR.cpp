@@ -271,6 +271,20 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
     return builder.create<forth::DivOp>(loc, stackType, inputStack).getResult();
   } else if (word == "MOD") {
     return builder.create<forth::ModOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "AND") {
+    return builder.create<forth::AndOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "OR") {
+    return builder.create<forth::OrOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "XOR") {
+    return builder.create<forth::XorOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "NOT") {
+    return builder.create<forth::NotOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "LSHIFT") {
+    return builder.create<forth::LshiftOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "RSHIFT") {
+    return builder.create<forth::RshiftOp>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "@") {
     return builder.create<forth::LoadOp>(loc, stackType, inputStack)
         .getResult();
