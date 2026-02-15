@@ -744,6 +744,108 @@ struct BeginUntilOpConversion
   }
 };
 
+/// Conversion pattern for forth.do_loop operation.
+/// Pops start and limit from the stack, creates scf.for from start to limit.
+struct DoLoopOpConversion : public OpConversionPattern<forth::DoLoopOp> {
+  DoLoopOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::DoLoopOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::DoLoopOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    auto indexType = rewriter.getIndexType();
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    // Pop start (TOS): load memref[SP], SP -= 1
+    Value startI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    Value spAfterStart = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+
+    // Pop limit (new TOS): load memref[SP-1], SP -= 1
+    Value limitI64 = rewriter.create<memref::LoadOp>(loc, memref, spAfterStart);
+    Value spAfterPops = rewriter.create<arith::SubIOp>(loc, spAfterStart, one);
+
+    // Cast i64 → index for scf.for bounds
+    Value startIdx =
+        rewriter.create<arith::IndexCastOp>(loc, indexType, startI64);
+    Value limitIdx =
+        rewriter.create<arith::IndexCastOp>(loc, indexType, limitI64);
+    Value stepIdx = one; // step = 1
+
+    // Create scf.for %iv = start to limit step 1 iter_args(%sp = spAfterPops)
+    auto forOp = rewriter.create<scf::ForOp>(loc, startIdx, limitIdx, stepIdx,
+                                             ValueRange{spAfterPops});
+
+    // Convert body region types and inline into scf.for
+    Region &bodyRegion = op.getBodyRegion();
+    if (failed(rewriter.convertRegionTypes(&bodyRegion, *getTypeConverter())))
+      return failure();
+
+    // Erase the auto-created body block of scf.for
+    rewriter.eraseBlock(forOp.getBody());
+
+    // Inline the converted body region into scf.for
+    rewriter.inlineRegionBefore(bodyRegion, forOp.getRegion(),
+                                forOp.getRegion().end());
+
+    // Merge block args: the converted block has {memref, index} args.
+    // Replace with {memref, iter_arg SP}.
+    Block &bodyBlock = forOp.getRegion().front();
+    Block *newBlock = rewriter.createBlock(&forOp.getRegion());
+    // scf.for block has: induction var, then iter args
+    newBlock->addArgument(indexType, loc); // induction variable
+    newBlock->addArgument(indexType, loc); // SP iter arg
+    Value spIterArg = newBlock->getArgument(1);
+    rewriter.mergeBlocks(&bodyBlock, newBlock, {memref, spIterArg});
+
+    // Replace forth.do_loop with {memref, forOp result SP}
+    rewriter.replaceOpWithMultiple(op, {{memref, forOp.getResult(0)}});
+    return success();
+  }
+};
+
+/// Conversion pattern for forth.loop_index operation (I word).
+/// Finds the enclosing scf.for and pushes its induction variable onto the
+/// stack.
+struct LoopIndexOpConversion : public OpConversionPattern<forth::LoopIndexOp> {
+  LoopIndexOpConversion(const TypeConverter &typeConverter,
+                        MLIRContext *context)
+      : OpConversionPattern<forth::LoopIndexOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::LoopIndexOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Find enclosing scf.for
+    auto forOp = op->getParentOfType<scf::ForOp>();
+    if (!forOp)
+      return rewriter.notifyMatchFailure(op, "not inside an scf.for");
+
+    // Get induction variable and cast index → i64
+    Value iv = forOp.getInductionVar();
+    Value ivI64 =
+        rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), iv);
+
+    // Push onto stack: SP += 1, store at new SP
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
+    rewriter.create<memref::StoreOp>(loc, ivI64, memref, newSP);
+
+    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
+    return success();
+  }
+};
+
 /// Conversion pass implementation.
 struct ConvertForthToMemRefPass
     : public impl::ConvertForthToMemRefBase<ConvertForthToMemRefPass> {
@@ -789,14 +891,15 @@ struct ConvertForthToMemRefPass
     RewritePatternSet patterns(context);
 
     // Add Forth operation conversion patterns
-    patterns
-        .add<StackOpConversion, LiteralOpConversion, DupOpConversion,
-             DropOpConversion, SwapOpConversion, OverOpConversion,
-             RotOpConversion, AddOpConversion, SubOpConversion, MulOpConversion,
-             DivOpConversion, ModOpConversion, EqOpConversion, LtOpConversion,
-             GtOpConversion, ZeroEqOpConversion, ParamRefOpConversion,
-             LoadOpConversion, StoreOpConversion, IfOpConversion,
-             BeginUntilOpConversion, YieldOpConversion>(typeConverter, context);
+    patterns.add<StackOpConversion, LiteralOpConversion, DupOpConversion,
+                 DropOpConversion, SwapOpConversion, OverOpConversion,
+                 RotOpConversion, AddOpConversion, SubOpConversion,
+                 MulOpConversion, DivOpConversion, ModOpConversion,
+                 EqOpConversion, LtOpConversion, GtOpConversion,
+                 ZeroEqOpConversion, ParamRefOpConversion, LoadOpConversion,
+                 StoreOpConversion, IfOpConversion, BeginUntilOpConversion,
+                 DoLoopOpConversion, LoopIndexOpConversion, YieldOpConversion>(
+        typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,

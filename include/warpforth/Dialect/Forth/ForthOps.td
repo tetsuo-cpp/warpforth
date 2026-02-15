@@ -505,7 +505,7 @@ def Forth_ZeroEqOp : Forth_Op<"zero_eq", [Pure]> {
 //===----------------------------------------------------------------------===//
 
 def Forth_YieldOp : Forth_Op<"yield", [Pure, Terminator, ReturnLike,
-    ParentOneOf<["IfOp", "BeginUntilOp"]>]> {
+    ParentOneOf<["IfOp", "BeginUntilOp", "DoLoopOp"]>]> {
   let summary = "Yield stack from control flow region";
   let description = [{
     Yields the current stack state from a control flow region back to
@@ -546,6 +546,31 @@ def Forth_BeginUntilOp : Forth_Op<"begin_until", [RecursiveMemoryEffects,
   let results = (outs Forth_StackType:$output_stack);
   let regions = (region SizedRegion<1>:$body_region);
   let hasCustomAssemblyFormat = 1;
+}
+
+def Forth_DoLoopOp : Forth_Op<"do_loop", [RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface,
+        ["getEntrySuccessorOperands"]>]> {
+  let summary = "Counted loop (DO/LOOP)";
+  let description = [{
+    Pops start and limit from the stack, iterates from start to limit-1.
+    Use forth.loop_index (I word) inside to access the current loop index.
+    Stack effect: ( limit start -- )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let regions = (region SizedRegion<1>:$body_region);
+  let hasCustomAssemblyFormat = 1;
+}
+
+def Forth_LoopIndexOp : Forth_Op<"loop_index", [Pure]> {
+  let summary = "Push loop index onto stack (I word)";
+  let description = [{ Only valid inside a forth.do_loop body. ( -- i ) }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
 }
 
 //===----------------------------------------------------------------------===//

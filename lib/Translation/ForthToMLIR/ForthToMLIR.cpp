@@ -314,6 +314,13 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   } else if (word == "0=") {
     return builder.create<forth::ZeroEqOp>(loc, stackType, inputStack)
         .getResult();
+  } else if (word == "I") {
+    if (doLoopDepth == 0) {
+      (void)emitError("'I' used outside of DO/LOOP");
+      return nullptr;
+    }
+    return builder.create<forth::LoopIndexOp>(loc, stackType, inputStack)
+        .getResult();
   }
 
   // Unknown word
@@ -365,6 +372,12 @@ ForthParser::parseBody(Value &stack,
         Location tokenLoc = getLoc();
         consume(); // consume BEGIN
         stack = parseBeginUntil(stack, tokenLoc);
+        if (!stack)
+          return failure();
+      } else if (currentToken.text == "DO") {
+        Location tokenLoc = getLoc();
+        consume(); // consume DO
+        stack = parseDoLoop(stack, tokenLoc);
         if (!stack)
           return failure();
       } else {
@@ -483,6 +496,45 @@ Value ForthParser::parseBeginUntil(Value inputStack, Location loc) {
   // Restore insertion point to after the forth.begin_until op.
   builder.setInsertionPointAfter(beginUntilOp);
   return beginUntilOp.getOutputStack();
+}
+
+//===----------------------------------------------------------------------===//
+// DO / LOOP parsing.
+//===----------------------------------------------------------------------===//
+
+Value ForthParser::parseDoLoop(Value inputStack, Location loc) {
+  Type stackType = forth::StackType::get(context);
+
+  // Create forth.do_loop op.
+  auto doLoopOp = builder.create<forth::DoLoopOp>(loc, stackType, inputStack);
+
+  auto isLoop = [](StringRef word) { return word == "LOOP"; };
+
+  // --- Body region ---
+  Block *bodyBlock = new Block();
+  bodyBlock->addArgument(stackType, loc);
+  doLoopOp.getBodyRegion().push_back(bodyBlock);
+
+  builder.setInsertionPointToStart(bodyBlock);
+  Value bodyStack = bodyBlock->getArgument(0);
+  ++doLoopDepth;
+  if (failed(parseBody(bodyStack, isLoop))) {
+    --doLoopDepth;
+    return nullptr;
+  }
+  --doLoopDepth;
+  builder.create<forth::YieldOp>(getLoc(), bodyStack);
+
+  // Consume LOOP.
+  if (currentToken.kind != Token::Kind::Word || currentToken.text != "LOOP") {
+    (void)emitError("expected 'LOOP'");
+    return nullptr;
+  }
+  consume(); // consume LOOP
+
+  // Restore insertion point to after the forth.do_loop op.
+  builder.setInsertionPointAfter(doLoopOp);
+  return doLoopOp.getOutputStack();
 }
 
 //===----------------------------------------------------------------------===//

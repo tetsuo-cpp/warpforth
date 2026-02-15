@@ -80,6 +80,7 @@ private:
   std::unordered_set<std::string> wordDefs;
   std::vector<ParamDecl> paramDecls;
   bool inWordDefinition = false;
+  int doLoopDepth = 0;
 
   /// Scan for `param <name> <size>` declarations (pre-pass).
   void scanParamDeclarations();
@@ -110,6 +111,9 @@ private:
 
   /// Parse a BEGIN/UNTIL loop, creating a forth.begin_until op.
   Value parseBeginUntil(Value inputStack, Location loc);
+
+  /// Parse a DO/LOOP counted loop, creating a forth.do_loop op.
+  Value parseDoLoop(Value inputStack, Location loc);
 
   /// Parse a user-defined word definition.
   LogicalResult parseWordDefinition();
