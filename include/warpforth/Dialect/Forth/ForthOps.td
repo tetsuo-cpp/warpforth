@@ -505,7 +505,7 @@ def Forth_ZeroEqOp : Forth_Op<"zero_eq", [Pure]> {
 //===----------------------------------------------------------------------===//
 
 def Forth_YieldOp : Forth_Op<"yield", [Pure, Terminator, ReturnLike,
-    ParentOneOf<["IfOp"]>]> {
+    ParentOneOf<["IfOp", "BeginUntilOp"]>]> {
   let summary = "Yield stack from control flow region";
   let description = [{
     Yields the current stack state from a control flow region back to
@@ -531,6 +531,20 @@ def Forth_IfOp : Forth_Op<"if", [RecursiveMemoryEffects,
   let results = (outs Forth_StackType:$output_stack);
   let regions = (region SizedRegion<1>:$then_region,
                         SizedRegion<1>:$else_region);
+  let hasCustomAssemblyFormat = 1;
+}
+
+def Forth_BeginUntilOp : Forth_Op<"begin_until", [RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface,
+        ["getEntrySuccessorOperands"]>]> {
+  let summary = "Post-test loop (do-while)";
+  let description = [{
+    BEGIN/UNTIL loop. Executes body, pops flag. If flag is zero, loops back.
+    If non-zero, exits. Stack effect: ( -- ) with flag consumed each iteration.
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let regions = (region SizedRegion<1>:$body_region);
   let hasCustomAssemblyFormat = 1;
 }
 

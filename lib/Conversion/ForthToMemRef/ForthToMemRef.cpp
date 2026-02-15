@@ -585,7 +585,8 @@ struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
 };
 
 /// Conversion pattern for forth.yield operation.
-/// Extracts the SP from the adapted stack and emits scf.yield.
+/// Context-aware: inside scf.while's `before` region (from BeginUntilOp),
+/// emits flag-pop + scf.condition; otherwise emits scf.yield with SP.
 struct YieldOpConversion : public OpConversionPattern<forth::YieldOp> {
   YieldOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<forth::YieldOp>(typeConverter, context) {}
@@ -594,10 +595,33 @@ struct YieldOpConversion : public OpConversionPattern<forth::YieldOp> {
   LogicalResult
   matchAndRewrite(forth::YieldOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    // The yield's result (!forth.stack) is adapted to {memref, sp}.
-    // We emit scf.yield with just the SP (memref is captured).
+    auto loc = op.getLoc();
     ValueRange adaptedResult = adaptor.getOperands()[0];
+    Value memref = adaptedResult[0];
     Value sp = adaptedResult[1]; // index
+
+    // Check if we're inside scf.while's `before` region.
+    auto *parentOp = op->getParentOp();
+    if (auto whileOp = dyn_cast<scf::WhileOp>(parentOp)) {
+      if (op->getParentRegion() == &whileOp.getBefore()) {
+        // Pop flag from stack top.
+        Value flag = rewriter.create<memref::LoadOp>(loc, memref, sp);
+        Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+        Value spAfterPop = rewriter.create<arith::SubIOp>(loc, sp, one);
+
+        // UNTIL exits on non-zero; scf.while continues on true.
+        // So keep going when flag == 0.
+        Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
+        Value keepGoing = rewriter.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::eq, flag, zero);
+
+        rewriter.replaceOpWithNewOp<scf::ConditionOp>(op, keepGoing,
+                                                      ValueRange{spAfterPop});
+        return success();
+      }
+    }
+
+    // Default: emit scf.yield with just the SP.
     rewriter.replaceOpWithNewOp<scf::YieldOp>(op, ValueRange{sp});
     return success();
   }
@@ -665,6 +689,61 @@ struct IfOpConversion : public OpConversionPattern<forth::IfOp> {
   }
 };
 
+/// Conversion pattern for forth.begin_until operation.
+/// Creates scf.while with the body as the `before` region (condition test),
+/// and an identity `after` region.
+struct BeginUntilOpConversion
+    : public OpConversionPattern<forth::BeginUntilOp> {
+  BeginUntilOpConversion(const TypeConverter &typeConverter,
+                         MLIRContext *context)
+      : OpConversionPattern<forth::BeginUntilOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::BeginUntilOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    auto indexType = rewriter.getIndexType();
+
+    // Create scf.while with index result, stackPtr as iter arg.
+    auto whileOp = rewriter.create<scf::WhileOp>(loc, TypeRange{indexType},
+                                                 ValueRange{stackPtr});
+
+    // --- Before region (body): convert + inline ---
+    Region &bodyRegion = op.getBodyRegion();
+    if (failed(rewriter.convertRegionTypes(&bodyRegion, *getTypeConverter())))
+      return failure();
+
+    // scf.while's before region starts empty (no auto-created blocks).
+    // Inline the body region into before.
+    rewriter.inlineRegionBefore(bodyRegion, whileOp.getBefore(),
+                                whileOp.getBefore().end());
+
+    // Merge the block args: replace converted {memref, index} with
+    // {memref, beforeSP}.
+    Block &beforeBlock = whileOp.getBefore().front();
+    Block *newBeforeBlock = rewriter.createBlock(&whileOp.getBefore());
+    newBeforeBlock->addArgument(indexType, loc);
+    Value beforeSP = newBeforeBlock->getArgument(0);
+    rewriter.mergeBlocks(&beforeBlock, newBeforeBlock, {memref, beforeSP});
+
+    // --- After region (identity): just yield the SP ---
+    Block *afterBlock = rewriter.createBlock(&whileOp.getAfter());
+    afterBlock->addArgument(indexType, loc);
+    Value afterSP = afterBlock->getArgument(0);
+    rewriter.setInsertionPointToStart(afterBlock);
+    rewriter.create<scf::YieldOp>(loc, ValueRange{afterSP});
+
+    // Replace forth.begin_until with {memref, whileOp result}.
+    rewriter.replaceOpWithMultiple(op, {{memref, whileOp.getResult(0)}});
+    return success();
+  }
+};
+
 /// Conversion pass implementation.
 struct ConvertForthToMemRefPass
     : public impl::ConvertForthToMemRefBase<ConvertForthToMemRefPass> {
@@ -710,14 +789,14 @@ struct ConvertForthToMemRefPass
     RewritePatternSet patterns(context);
 
     // Add Forth operation conversion patterns
-    patterns.add<StackOpConversion, LiteralOpConversion, DupOpConversion,
-                 DropOpConversion, SwapOpConversion, OverOpConversion,
-                 RotOpConversion, AddOpConversion, SubOpConversion,
-                 MulOpConversion, DivOpConversion, ModOpConversion,
-                 EqOpConversion, LtOpConversion, GtOpConversion,
-                 ZeroEqOpConversion, ParamRefOpConversion, LoadOpConversion,
-                 StoreOpConversion, IfOpConversion, YieldOpConversion>(
-        typeConverter, context);
+    patterns
+        .add<StackOpConversion, LiteralOpConversion, DupOpConversion,
+             DropOpConversion, SwapOpConversion, OverOpConversion,
+             RotOpConversion, AddOpConversion, SubOpConversion, MulOpConversion,
+             DivOpConversion, ModOpConversion, EqOpConversion, LtOpConversion,
+             GtOpConversion, ZeroEqOpConversion, ParamRefOpConversion,
+             LoadOpConversion, StoreOpConversion, IfOpConversion,
+             BeginUntilOpConversion, YieldOpConversion>(typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,

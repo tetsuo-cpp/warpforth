@@ -361,6 +361,12 @@ ForthParser::parseBody(Value &stack,
         stack = parseIf(stack, tokenLoc);
         if (!stack)
           return failure();
+      } else if (currentToken.text == "BEGIN") {
+        Location tokenLoc = getLoc();
+        consume(); // consume BEGIN
+        stack = parseBeginUntil(stack, tokenLoc);
+        if (!stack)
+          return failure();
       } else {
         Location tokenLoc = getLoc();
         Value newStack = emitOperation(currentToken.text, stack, tokenLoc);
@@ -441,6 +447,42 @@ Value ForthParser::parseIf(Value inputStack, Location loc) {
   // Restore insertion point to after the forth.if op.
   builder.setInsertionPointAfter(ifOp);
   return ifOp.getOutputStack();
+}
+
+//===----------------------------------------------------------------------===//
+// BEGIN / UNTIL parsing.
+//===----------------------------------------------------------------------===//
+
+Value ForthParser::parseBeginUntil(Value inputStack, Location loc) {
+  Type stackType = forth::StackType::get(context);
+
+  // Create forth.begin_until op.
+  auto beginUntilOp =
+      builder.create<forth::BeginUntilOp>(loc, stackType, inputStack);
+
+  auto isUntil = [](StringRef word) { return word == "UNTIL"; };
+
+  // --- Body region ---
+  Block *bodyBlock = new Block();
+  bodyBlock->addArgument(stackType, loc);
+  beginUntilOp.getBodyRegion().push_back(bodyBlock);
+
+  builder.setInsertionPointToStart(bodyBlock);
+  Value bodyStack = bodyBlock->getArgument(0);
+  if (failed(parseBody(bodyStack, isUntil)))
+    return nullptr;
+  builder.create<forth::YieldOp>(getLoc(), bodyStack);
+
+  // Consume UNTIL.
+  if (currentToken.kind != Token::Kind::Word || currentToken.text != "UNTIL") {
+    (void)emitError("expected 'UNTIL'");
+    return nullptr;
+  }
+  consume(); // consume UNTIL
+
+  // Restore insertion point to after the forth.begin_until op.
+  builder.setInsertionPointAfter(beginUntilOp);
+  return beginUntilOp.getOutputStack();
 }
 
 //===----------------------------------------------------------------------===//

@@ -84,6 +84,57 @@ ParseResult IfOp::parse(OpAsmParser &parser, OperationState &result) {
 }
 
 //===----------------------------------------------------------------------===//
+// BeginUntilOp RegionBranchOpInterface.
+//===----------------------------------------------------------------------===//
+
+void BeginUntilOp::getSuccessorRegions(
+    RegionBranchPoint point, SmallVectorImpl<RegionSuccessor> &regions) {
+  if (point.isParent()) {
+    // From parent: enter the body region.
+    regions.push_back(
+        RegionSuccessor(&getBodyRegion(), getBodyRegion().getArguments()));
+    return;
+  }
+  // From body: loop back to body or exit to parent.
+  regions.push_back(
+      RegionSuccessor(&getBodyRegion(), getBodyRegion().getArguments()));
+  regions.push_back(RegionSuccessor(getOperation()->getResults()));
+}
+
+OperandRange BeginUntilOp::getEntrySuccessorOperands(RegionBranchPoint point) {
+  return getOperation()->getOperands();
+}
+
+//===----------------------------------------------------------------------===//
+// BeginUntilOp custom assembly format.
+//===----------------------------------------------------------------------===//
+
+void BeginUntilOp::print(OpAsmPrinter &p) {
+  p << ' ' << getInputStack() << " : " << getInputStack().getType() << " -> "
+    << getOutputStack().getType() << ' ';
+  p.printRegion(getBodyRegion());
+}
+
+ParseResult BeginUntilOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand inputStack;
+  Type inputType, outputType;
+
+  if (parser.parseOperand(inputStack) || parser.parseColon() ||
+      parser.parseType(inputType) || parser.parseArrow() ||
+      parser.parseType(outputType) ||
+      parser.resolveOperand(inputStack, inputType, result.operands))
+    return failure();
+
+  result.addTypes(outputType);
+
+  auto *bodyRegion = result.addRegion();
+  if (parser.parseRegion(*bodyRegion))
+    return failure();
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // Forth dialect.
 //===----------------------------------------------------------------------===//
 

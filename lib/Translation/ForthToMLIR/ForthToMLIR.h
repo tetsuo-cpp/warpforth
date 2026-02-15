@@ -108,6 +108,9 @@ private:
   /// Parse an IF/ELSE/THEN construct, creating a forth.if op.
   Value parseIf(Value inputStack, Location loc);
 
+  /// Parse a BEGIN/UNTIL loop, creating a forth.begin_until op.
+  Value parseBeginUntil(Value inputStack, Location loc);
+
   /// Parse a user-defined word definition.
   LogicalResult parseWordDefinition();
 };
