@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [canon]
+  pull_request:
+    branches: [canon]
+
+env:
+  LLVM_VERSION: "20"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM ${{ env.LLVM_VERSION }} and MLIR
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          sudo add-apt-repository -y "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main"
+          sudo apt-get update
+          sudo apt-get install -y \
+            llvm-${LLVM_VERSION}-dev \
+            libmlir-${LLVM_VERSION}-dev \
+            mlir-${LLVM_VERSION}-tools
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMLIR_DIR=/usr/lib/llvm-${LLVM_VERSION}/lib/cmake/mlir
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: cmake --build build --target check-warpforth
