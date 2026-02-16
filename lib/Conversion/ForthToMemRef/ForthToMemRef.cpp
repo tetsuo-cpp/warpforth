@@ -48,6 +48,15 @@ public:
   }
 };
 
+/// Push an i64 value onto the stack. Returns the new stack pointer.
+static Value pushValue(Location loc, ConversionPatternRewriter &rewriter,
+                       Value memref, Value stackPtr, Value value) {
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
+  rewriter.create<memref::StoreOp>(loc, value, memref, newSP);
+  return newSP;
+}
+
 /// Conversion pattern for forth.stack operation.
 /// Allocates a memref<256xi64> on the stack and initializes SP to 0.
 struct StackOpConversion : public OpConversionPattern<forth::StackOp> {
@@ -88,14 +97,9 @@ struct LiteralOpConversion : public OpConversionPattern<forth::LiteralOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Increment stack pointer
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-
-    // Store literal value at new SP position
     Value literalValue = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getI64Type(), op.getValueAttr());
-    rewriter.create<memref::StoreOp>(loc, literalValue, memref, newSP);
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, literalValue);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
@@ -117,15 +121,9 @@ struct DupOpConversion : public OpConversionPattern<forth::DupOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Load value at current SP
+    // Load value at current SP and push duplicate
     Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Increment SP
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-
-    // Store duplicate at new SP
-    rewriter.create<memref::StoreOp>(loc, topValue, memref, newSP);
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, topValue);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
@@ -202,16 +200,11 @@ struct OverOpConversion : public OpConversionPattern<forth::OverOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Load second element (SP - 1)
+    // Load second element (SP - 1) and push copy
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
     Value secondValue = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
-
-    // Increment SP
-    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-
-    // Store second value at new SP
-    rewriter.create<memref::StoreOp>(loc, secondValue, memref, newSP);
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, secondValue);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
@@ -623,9 +616,7 @@ struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
         loc, rewriter.getI64Type(), ptrIndex);
 
     // Push onto stack
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-    rewriter.create<memref::StoreOp>(loc, ptrI64, memref, newSP);
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, ptrI64);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
@@ -723,18 +714,12 @@ struct IntrinsicOpConversion : public OpConversionPattern<ForthOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Increment stack pointer
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-
-    // Create intrinsic op
+    // Create intrinsic op and push onto stack
     Value intrinsicValue = rewriter.create<forth::IntrinsicOp>(
         loc, rewriter.getIndexType(), rewriter.getStringAttr(intrinsicName));
     Value intrinsicI64 = rewriter.create<arith::IndexCastOp>(
         loc, rewriter.getI64Type(), intrinsicValue);
-
-    // Store at new SP
-    rewriter.create<memref::StoreOp>(loc, intrinsicI64, memref, newSP);
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, intrinsicI64);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
@@ -771,11 +756,7 @@ struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
     Value globalId = rewriter.create<arith::AddIOp>(loc, product, tidX);
     Value globalIdI64 = rewriter.create<arith::IndexCastOp>(
         loc, rewriter.getI64Type(), globalId);
-
-    // Increment SP and store result
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-    rewriter.create<memref::StoreOp>(loc, globalIdI64, memref, newSP);
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, globalIdI64);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
@@ -1100,10 +1081,8 @@ struct LoopIndexOpConversion : public OpConversionPattern<forth::LoopIndexOp> {
     Value ivI64 =
         rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), iv);
 
-    // Push onto stack: SP += 1, store at new SP
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-    rewriter.create<memref::StoreOp>(loc, ivI64, memref, newSP);
+    // Push onto stack
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, ivI64);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();

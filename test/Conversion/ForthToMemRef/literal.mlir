@@ -3,9 +3,9 @@
 // CHECK-LABEL: func.func private @main
 // CHECK: memref.alloca() : memref<256xi64>
 // CHECK: arith.constant 0 : index
+// CHECK: arith.constant 42 : i64
 // CHECK: arith.constant 1 : index
 // CHECK: arith.addi %{{.*}}, %{{.*}} : index
-// CHECK: arith.constant 42 : i64
 // CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<256xi64>
 
 module {
