@@ -103,6 +103,67 @@ def Forth_RotOp : Forth_Op<"rot", [Pure]> {
   }];
 }
 
+def Forth_NipOp : Forth_Op<"nip", [Pure]> {
+  let summary = "Remove second stack element";
+  let description = [{
+    Removes the second element from the stack, keeping the top.
+    Forth semantics: ( a b -- b )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_TuckOp : Forth_Op<"tuck", [Pure]> {
+  let summary = "Copy top element before second";
+  let description = [{
+    Copies the top element and inserts it before the second element.
+    Forth semantics: ( a b -- b a b )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_PickOp : Forth_Op<"pick", [Pure]> {
+  let summary = "Copy nth element to top";
+  let description = [{
+    Pops n from the stack, then copies the nth element to the top.
+    Forth semantics: ( xn ... x0 n -- xn ... x0 xn )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_RollOp : Forth_Op<"roll", [Pure]> {
+  let summary = "Rotate nth element to top";
+  let description = [{
+    Pops n from the stack, then rotates the nth element to the top,
+    shifting elements above it down.
+    Forth semantics: ( xn ... x0 n -- xn-1 ... x0 xn )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Literal operations.
 //===----------------------------------------------------------------------===//
