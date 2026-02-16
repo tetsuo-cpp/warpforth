@@ -347,6 +347,12 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
     return builder.create<forth::LtOp>(loc, stackType, inputStack).getResult();
   } else if (word == ">") {
     return builder.create<forth::GtOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "<>") {
+    return builder.create<forth::NeOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "<=") {
+    return builder.create<forth::LeOp>(loc, stackType, inputStack).getResult();
+  } else if (word == ">=") {
+    return builder.create<forth::GeOp>(loc, stackType, inputStack).getResult();
   } else if (word == "0=") {
     return builder.create<forth::ZeroEqOp>(loc, stackType, inputStack)
         .getResult();
@@ -407,7 +413,10 @@ ForthParser::parseBody(Value &stack,
       } else if (currentToken.text == "BEGIN") {
         Location tokenLoc = getLoc();
         consume(); // consume BEGIN
-        stack = parseBeginUntil(stack, tokenLoc);
+        if (isWhileLoop())
+          stack = parseBeginWhileRepeat(stack, tokenLoc);
+        else
+          stack = parseBeginUntil(stack, tokenLoc);
         if (!stack)
           return failure();
       } else if (currentToken.text == "DO") {
@@ -461,7 +470,7 @@ Value ForthParser::parseIf(Value inputStack, Location loc) {
       builder.create<forth::DropOp>(loc, stackType, thenArg).getResult();
   if (failed(parseBody(thenStack, isElseOrThen)))
     return nullptr;
-  builder.create<forth::YieldOp>(getLoc(), thenStack);
+  builder.create<forth::YieldOp>(getLoc(), thenStack, /*while_cond=*/nullptr);
 
   // --- Else region ---
   Block *elseBlock = new Block();
@@ -476,14 +485,14 @@ Value ForthParser::parseIf(Value inputStack, Location loc) {
         builder.create<forth::DropOp>(loc, stackType, elseArg).getResult();
     if (failed(parseBody(elseStack, isThen)))
       return nullptr;
-    builder.create<forth::YieldOp>(getLoc(), elseStack);
+    builder.create<forth::YieldOp>(getLoc(), elseStack, /*while_cond=*/nullptr);
   } else {
     // No ELSE clause — just drop the flag and yield (identity).
     builder.setInsertionPointToStart(elseBlock);
     Value elseArg = elseBlock->getArgument(0);
     Value elseStack =
         builder.create<forth::DropOp>(loc, stackType, elseArg).getResult();
-    builder.create<forth::YieldOp>(loc, elseStack);
+    builder.create<forth::YieldOp>(loc, elseStack, /*while_cond=*/nullptr);
   }
 
   // Consume THEN.
@@ -520,7 +529,7 @@ Value ForthParser::parseBeginUntil(Value inputStack, Location loc) {
   Value bodyStack = bodyBlock->getArgument(0);
   if (failed(parseBody(bodyStack, isUntil)))
     return nullptr;
-  builder.create<forth::YieldOp>(getLoc(), bodyStack);
+  builder.create<forth::YieldOp>(getLoc(), bodyStack, /*while_cond=*/nullptr);
 
   // Consume UNTIL.
   if (currentToken.kind != Token::Kind::Word || currentToken.text != "UNTIL") {
@@ -532,6 +541,96 @@ Value ForthParser::parseBeginUntil(Value inputStack, Location loc) {
   // Restore insertion point to after the forth.begin_until op.
   builder.setInsertionPointAfter(beginUntilOp);
   return beginUntilOp.getOutputStack();
+}
+
+//===----------------------------------------------------------------------===//
+// BEGIN / WHILE / REPEAT lookahead + parsing.
+//===----------------------------------------------------------------------===//
+
+bool ForthParser::isWhileLoop() {
+  // Save lexer position and current token.
+  const char *savedPos = lexer.getPosition();
+  Token savedToken = currentToken;
+
+  int depth = 0;
+  while (currentToken.kind != Token::Kind::EndOfFile) {
+    if (currentToken.kind == Token::Kind::Word) {
+      if (currentToken.text == "BEGIN" || currentToken.text == "DO")
+        ++depth;
+      else if (depth == 0 && currentToken.text == "UNTIL") {
+        // Found UNTIL at our nesting level → not a WHILE loop.
+        lexer.setPosition(savedPos);
+        currentToken = savedToken;
+        return false;
+      } else if (depth == 0 && currentToken.text == "WHILE") {
+        // Found WHILE at our nesting level → is a WHILE loop.
+        lexer.setPosition(savedPos);
+        currentToken = savedToken;
+        return true;
+      } else if (currentToken.text == "UNTIL" || currentToken.text == "LOOP" ||
+                 currentToken.text == "REPEAT")
+        --depth;
+    }
+    consume();
+  }
+
+  // Reached EOF without finding UNTIL or WHILE — restore and return false.
+  lexer.setPosition(savedPos);
+  currentToken = savedToken;
+  return false;
+}
+
+Value ForthParser::parseBeginWhileRepeat(Value inputStack, Location loc) {
+  Type stackType = forth::StackType::get(context);
+
+  // Create forth.begin_while_repeat op.
+  auto bwrOp =
+      builder.create<forth::BeginWhileRepeatOp>(loc, stackType, inputStack);
+
+  auto isWhile = [](StringRef word) { return word == "WHILE"; };
+  auto isRepeat = [](StringRef word) { return word == "REPEAT"; };
+
+  // --- Condition region ---
+  Block *condBlock = new Block();
+  condBlock->addArgument(stackType, loc);
+  bwrOp.getConditionRegion().push_back(condBlock);
+
+  builder.setInsertionPointToStart(condBlock);
+  Value condStack = condBlock->getArgument(0);
+  if (failed(parseBody(condStack, isWhile)))
+    return nullptr;
+  // Terminate with forth.yield {while_cond} to indicate WHILE semantics.
+  builder.create<forth::YieldOp>(getLoc(), condStack,
+                                 /*while_cond=*/builder.getUnitAttr());
+
+  // Consume WHILE.
+  if (currentToken.kind != Token::Kind::Word || currentToken.text != "WHILE") {
+    (void)emitError("expected 'WHILE'");
+    return nullptr;
+  }
+  consume(); // consume WHILE
+
+  // --- Body region ---
+  Block *bodyBlock = new Block();
+  bodyBlock->addArgument(stackType, loc);
+  bwrOp.getBodyRegion().push_back(bodyBlock);
+
+  builder.setInsertionPointToStart(bodyBlock);
+  Value bodyStack = bodyBlock->getArgument(0);
+  if (failed(parseBody(bodyStack, isRepeat)))
+    return nullptr;
+  builder.create<forth::YieldOp>(getLoc(), bodyStack, /*while_cond=*/nullptr);
+
+  // Consume REPEAT.
+  if (currentToken.kind != Token::Kind::Word || currentToken.text != "REPEAT") {
+    (void)emitError("expected 'REPEAT'");
+    return nullptr;
+  }
+  consume(); // consume REPEAT
+
+  // Restore insertion point to after the forth.begin_while_repeat op.
+  builder.setInsertionPointAfter(bwrOp);
+  return bwrOp.getOutputStack();
 }
 
 //===----------------------------------------------------------------------===//
@@ -559,7 +658,7 @@ Value ForthParser::parseDoLoop(Value inputStack, Location loc) {
     return nullptr;
   }
   --doLoopDepth;
-  builder.create<forth::YieldOp>(getLoc(), bodyStack);
+  builder.create<forth::YieldOp>(getLoc(), bodyStack, /*while_cond=*/nullptr);
 
   // Consume LOOP.
   if (currentToken.kind != Token::Kind::Word || currentToken.text != "LOOP") {

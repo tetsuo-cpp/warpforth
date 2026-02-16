@@ -135,6 +135,76 @@ ParseResult BeginUntilOp::parse(OpAsmParser &parser, OperationState &result) {
 }
 
 //===----------------------------------------------------------------------===//
+// BeginWhileRepeatOp RegionBranchOpInterface.
+//===----------------------------------------------------------------------===//
+
+void BeginWhileRepeatOp::getSuccessorRegions(
+    RegionBranchPoint point, SmallVectorImpl<RegionSuccessor> &regions) {
+  if (point.isParent()) {
+    // From parent: enter the condition region.
+    regions.push_back(RegionSuccessor(&getConditionRegion(),
+                                      getConditionRegion().getArguments()));
+    return;
+  }
+  if (point.getRegionOrNull() == &getConditionRegion()) {
+    // From condition: enter body or exit to parent.
+    regions.push_back(
+        RegionSuccessor(&getBodyRegion(), getBodyRegion().getArguments()));
+    regions.push_back(RegionSuccessor(getOperation()->getResults()));
+    return;
+  }
+  // From body: loop back to condition.
+  regions.push_back(RegionSuccessor(&getConditionRegion(),
+                                    getConditionRegion().getArguments()));
+}
+
+OperandRange
+BeginWhileRepeatOp::getEntrySuccessorOperands(RegionBranchPoint point) {
+  return getOperation()->getOperands();
+}
+
+//===----------------------------------------------------------------------===//
+// BeginWhileRepeatOp custom assembly format.
+//===----------------------------------------------------------------------===//
+
+void BeginWhileRepeatOp::print(OpAsmPrinter &p) {
+  p << ' ' << getInputStack() << " : " << getInputStack().getType() << " -> "
+    << getOutputStack().getType() << ' ';
+  p.printRegion(getConditionRegion());
+  p << " do ";
+  p.printRegion(getBodyRegion());
+}
+
+ParseResult BeginWhileRepeatOp::parse(OpAsmParser &parser,
+                                      OperationState &result) {
+  OpAsmParser::UnresolvedOperand inputStack;
+  Type inputType, outputType;
+
+  if (parser.parseOperand(inputStack) || parser.parseColon() ||
+      parser.parseType(inputType) || parser.parseArrow() ||
+      parser.parseType(outputType) ||
+      parser.resolveOperand(inputStack, inputType, result.operands))
+    return failure();
+
+  result.addTypes(outputType);
+
+  // Parse condition region.
+  auto *condRegion = result.addRegion();
+  if (parser.parseRegion(*condRegion))
+    return failure();
+
+  // Parse "do" keyword and body region.
+  if (parser.parseKeyword("do"))
+    return failure();
+
+  auto *bodyRegion = result.addRegion();
+  if (parser.parseRegion(*bodyRegion))
+    return failure();
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // DoLoopOp RegionBranchOpInterface.
 //===----------------------------------------------------------------------===//
 

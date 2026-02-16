@@ -508,6 +508,12 @@ using LtOpConversion =
     BinaryCmpOpConversion<forth::LtOp, arith::CmpIPredicate::slt>;
 using GtOpConversion =
     BinaryCmpOpConversion<forth::GtOp, arith::CmpIPredicate::sgt>;
+using NeOpConversion =
+    BinaryCmpOpConversion<forth::NeOp, arith::CmpIPredicate::ne>;
+using LeOpConversion =
+    BinaryCmpOpConversion<forth::LeOp, arith::CmpIPredicate::sle>;
+using GeOpConversion =
+    BinaryCmpOpConversion<forth::GeOp, arith::CmpIPredicate::sge>;
 
 /// Conversion pattern for forth.not operation (bitwise NOT).
 /// Unary: pops one value, XORs with -1 (all bits set), pushes result: (a -- ~a)
@@ -801,11 +807,17 @@ struct YieldOpConversion : public OpConversionPattern<forth::YieldOp> {
         Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
         Value spAfterPop = rewriter.create<arith::SubIOp>(loc, sp, one);
 
-        // UNTIL exits on non-zero; scf.while continues on true.
-        // So keep going when flag == 0.
         Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
-        Value keepGoing = rewriter.create<arith::CmpIOp>(
-            loc, arith::CmpIPredicate::eq, flag, zero);
+        Value keepGoing;
+        if (op.getWhileCond()) {
+          // WHILE semantics: continue when flag is non-zero.
+          keepGoing = rewriter.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::ne, flag, zero);
+        } else {
+          // UNTIL semantics: exit on non-zero; keep going when flag == 0.
+          keepGoing = rewriter.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::eq, flag, zero);
+        }
 
         rewriter.replaceOpWithNewOp<scf::ConditionOp>(op, keepGoing,
                                                       ValueRange{spAfterPop});
@@ -931,6 +943,65 @@ struct BeginUntilOpConversion
     rewriter.create<scf::YieldOp>(loc, ValueRange{afterSP});
 
     // Replace forth.begin_until with {memref, whileOp result}.
+    rewriter.replaceOpWithMultiple(op, {{memref, whileOp.getResult(0)}});
+    return success();
+  }
+};
+
+/// Conversion pattern for forth.begin_while_repeat operation.
+/// Creates scf.while with the condition as the `before` region,
+/// and the body as the `after` region.
+struct BeginWhileRepeatOpConversion
+    : public OpConversionPattern<forth::BeginWhileRepeatOp> {
+  BeginWhileRepeatOpConversion(const TypeConverter &typeConverter,
+                               MLIRContext *context)
+      : OpConversionPattern<forth::BeginWhileRepeatOp>(typeConverter, context) {
+  }
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::BeginWhileRepeatOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    auto indexType = rewriter.getIndexType();
+
+    // Create scf.while with index result, stackPtr as iter arg.
+    auto whileOp = rewriter.create<scf::WhileOp>(loc, TypeRange{indexType},
+                                                 ValueRange{stackPtr});
+
+    // --- Before region (condition): convert + inline ---
+    Region &condRegion = op.getConditionRegion();
+    if (failed(rewriter.convertRegionTypes(&condRegion, *getTypeConverter())))
+      return failure();
+
+    rewriter.inlineRegionBefore(condRegion, whileOp.getBefore(),
+                                whileOp.getBefore().end());
+
+    Block &beforeBlock = whileOp.getBefore().front();
+    Block *newBeforeBlock = rewriter.createBlock(&whileOp.getBefore());
+    newBeforeBlock->addArgument(indexType, loc);
+    Value beforeSP = newBeforeBlock->getArgument(0);
+    rewriter.mergeBlocks(&beforeBlock, newBeforeBlock, {memref, beforeSP});
+
+    // --- After region (body): convert + inline ---
+    Region &bodyRegion = op.getBodyRegion();
+    if (failed(rewriter.convertRegionTypes(&bodyRegion, *getTypeConverter())))
+      return failure();
+
+    rewriter.inlineRegionBefore(bodyRegion, whileOp.getAfter(),
+                                whileOp.getAfter().end());
+
+    Block &afterBlock = whileOp.getAfter().front();
+    Block *newAfterBlock = rewriter.createBlock(&whileOp.getAfter());
+    newAfterBlock->addArgument(indexType, loc);
+    Value afterSP = newAfterBlock->getArgument(0);
+    rewriter.mergeBlocks(&afterBlock, newAfterBlock, {memref, afterSP});
+
+    // Replace forth.begin_while_repeat with {memref, whileOp result}.
     rewriter.replaceOpWithMultiple(op, {{memref, whileOp.getResult(0)}});
     return success();
   }
@@ -1090,10 +1161,12 @@ struct ConvertForthToMemRefPass
         AddOpConversion, SubOpConversion, MulOpConversion, DivOpConversion,
         ModOpConversion, AndOpConversion, OrOpConversion, XorOpConversion,
         NotOpConversion, LshiftOpConversion, RshiftOpConversion, EqOpConversion,
-        LtOpConversion, GtOpConversion, ZeroEqOpConversion,
-        ParamRefOpConversion, LoadOpConversion, StoreOpConversion,
-        IfOpConversion, BeginUntilOpConversion, DoLoopOpConversion,
-        LoopIndexOpConversion, YieldOpConversion>(typeConverter, context);
+        LtOpConversion, GtOpConversion, NeOpConversion, LeOpConversion,
+        GeOpConversion, ZeroEqOpConversion, ParamRefOpConversion,
+        LoadOpConversion, StoreOpConversion, IfOpConversion,
+        BeginUntilOpConversion, BeginWhileRepeatOpConversion,
+        DoLoopOpConversion, LoopIndexOpConversion, YieldOpConversion>(
+        typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,
