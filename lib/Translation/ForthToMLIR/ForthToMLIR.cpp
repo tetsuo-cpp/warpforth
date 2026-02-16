@@ -356,12 +356,16 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   } else if (word == "0=") {
     return builder.create<forth::ZeroEqOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "I") {
-    if (doLoopDepth == 0) {
-      (void)emitError("'I' used outside of DO/LOOP");
+  } else if (word == "I" || word == "J" || word == "K") {
+    int64_t depth = (word == "I") ? 0 : (word == "J") ? 1 : 2;
+    if (doLoopDepth < depth + 1) {
+      (void)emitError("'" + word.str() + "' requires " +
+                      std::to_string(depth + 1) + " nested DO/LOOP(s)");
       return nullptr;
     }
-    return builder.create<forth::LoopIndexOp>(loc, stackType, inputStack)
+    return builder
+        .create<forth::LoopIndexOp>(loc, stackType, inputStack,
+                                    builder.getI64IntegerAttr(depth))
         .getResult();
   }
 

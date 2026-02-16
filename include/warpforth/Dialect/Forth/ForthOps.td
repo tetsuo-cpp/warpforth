@@ -529,9 +529,20 @@ def Forth_BeginWhileRepeatOp : Forth_Op<"begin_while_repeat",
   let hasCustomAssemblyFormat = 1;
 }
 
-def Forth_LoopIndexOp : Forth_StackOpBase<"loop_index"> {
-  let summary = "Push loop index onto stack (I word)";
-  let description = [{ Only valid inside a forth.do_loop body. ( -- i ) }];
+def Forth_LoopIndexOp : Forth_Op<"loop_index", [Pure]> {
+  let summary = "Push loop index onto stack (I/J/K words)";
+  let description = [{
+    Pushes the loop index at the given nesting depth onto the stack.
+    depth=0 is I (innermost), depth=1 is J, depth=2 is K.
+    Only valid inside nested forth.do_loop bodies at sufficient depth.
+    ( -- index )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack,
+                       DefaultValuedAttr<I64Attr, "0">:$depth);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
 }
 
 //===----------------------------------------------------------------------===//
