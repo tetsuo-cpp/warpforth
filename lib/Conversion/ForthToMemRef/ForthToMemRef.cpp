@@ -1071,13 +1071,23 @@ struct LoopIndexOpConversion : public OpConversionPattern<forth::LoopIndexOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Find enclosing scf.for
-    auto forOp = op->getParentOfType<scf::ForOp>();
-    if (!forOp)
-      return rewriter.notifyMatchFailure(op, "not inside an scf.for");
+    // Get the depth attribute (default 0 = I)
+    int64_t depth = op.getDepth();
+
+    // Walk up through enclosing scf.for ops
+    Operation *current = op.getOperation();
+    scf::ForOp targetFor;
+    for (int64_t i = 0; i <= depth; ++i) {
+      targetFor = current->getParentOfType<scf::ForOp>();
+      if (!targetFor)
+        return rewriter.notifyMatchFailure(
+            op, "not enough enclosing scf.for ops for depth " +
+                    std::to_string(depth));
+      current = targetFor.getOperation();
+    }
 
     // Get induction variable and cast index to i64
-    Value iv = forOp.getInductionVar();
+    Value iv = targetFor.getInductionVar();
     Value ivI64 =
         rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), iv);
 
