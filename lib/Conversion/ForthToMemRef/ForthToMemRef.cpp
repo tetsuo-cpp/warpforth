@@ -783,8 +783,9 @@ struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
 };
 
 /// Conversion pattern for forth.yield operation.
-/// Context-aware: inside scf.while's `before` region (from BeginUntilOp),
-/// emits flag-pop + scf.condition; otherwise emits scf.yield with SP.
+/// Context-aware: inside scf.while's `before` region (from BeginUntilOp or
+/// BeginWhileRepeatOp), emits flag-pop + scf.condition; otherwise emits
+/// scf.yield with SP.
 struct YieldOpConversion : public OpConversionPattern<forth::YieldOp> {
   YieldOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<forth::YieldOp>(typeConverter, context) {}
