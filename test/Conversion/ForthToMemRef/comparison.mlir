@@ -31,6 +31,27 @@
 // CHECK: arith.extsi %{{.*}} : i1 to i64
 // CHECK: memref.store
 
+// ne: load two values, arith.cmpi ne, extsi to i64, store
+// CHECK: memref.load
+// CHECK: memref.load
+// CHECK: arith.cmpi ne, %{{.*}}, %{{.*}} : i64
+// CHECK: arith.extsi %{{.*}} : i1 to i64
+// CHECK: memref.store
+
+// le: load two values, arith.cmpi sle, extsi to i64, store
+// CHECK: memref.load
+// CHECK: memref.load
+// CHECK: arith.cmpi sle, %{{.*}}, %{{.*}} : i64
+// CHECK: arith.extsi %{{.*}} : i1 to i64
+// CHECK: memref.store
+
+// ge: load two values, arith.cmpi sge, extsi to i64, store
+// CHECK: memref.load
+// CHECK: memref.load
+// CHECK: arith.cmpi sge, %{{.*}}, %{{.*}} : i64
+// CHECK: arith.extsi %{{.*}} : i1 to i64
+// CHECK: memref.store
+
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
@@ -45,6 +66,15 @@ module {
     %9 = forth.gt %8 : !forth.stack -> !forth.stack
     %10 = forth.literal %9 0 : !forth.stack -> !forth.stack
     %11 = forth.zero_eq %10 : !forth.stack -> !forth.stack
+    %12 = forth.literal %11 7 : !forth.stack -> !forth.stack
+    %13 = forth.literal %12 8 : !forth.stack -> !forth.stack
+    %14 = forth.ne %13 : !forth.stack -> !forth.stack
+    %15 = forth.literal %14 9 : !forth.stack -> !forth.stack
+    %16 = forth.literal %15 10 : !forth.stack -> !forth.stack
+    %17 = forth.le %16 : !forth.stack -> !forth.stack
+    %18 = forth.literal %17 11 : !forth.stack -> !forth.stack
+    %19 = forth.literal %18 12 : !forth.stack -> !forth.stack
+    %20 = forth.ge %19 : !forth.stack -> !forth.stack
     return
   }
 }

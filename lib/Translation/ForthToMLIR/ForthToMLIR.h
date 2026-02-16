@@ -47,6 +47,10 @@ public:
   /// Reset lexer to beginning of buffer.
   void reset();
 
+  /// Save/restore lexer position for lookahead.
+  const char *getPosition() const { return curPtr; }
+  void setPosition(const char *pos) { curPtr = pos; }
+
 private:
   llvm::SourceMgr &sourceMgr;
   unsigned bufferID;
@@ -111,6 +115,13 @@ private:
 
   /// Parse a BEGIN/UNTIL loop, creating a forth.begin_until op.
   Value parseBeginUntil(Value inputStack, Location loc);
+
+  /// Parse a BEGIN/WHILE/REPEAT loop, creating a forth.begin_while_repeat op.
+  Value parseBeginWhileRepeat(Value inputStack, Location loc);
+
+  /// Lookahead: is the current BEGIN a WHILE loop (vs UNTIL)?
+  /// Saves and restores lexer position.
+  bool isWhileLoop();
 
   /// Parse a DO/LOOP counted loop, creating a forth.do_loop op.
   Value parseDoLoop(Value inputStack, Location loc);

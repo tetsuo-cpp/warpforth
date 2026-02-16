@@ -640,6 +640,51 @@ def Forth_GtOp : Forth_Op<"gt", [Pure]> {
   }];
 }
 
+def Forth_NeOp : Forth_Op<"ne", [Pure]> {
+  let summary = "Test inequality of top two stack elements";
+  let description = [{
+    Pops two values, pushes -1 (true) if not equal, 0 (false) otherwise.
+    Forth semantics: ( a b -- flag )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_LeOp : Forth_Op<"le", [Pure]> {
+  let summary = "Test less-than-or-equal of top two stack elements";
+  let description = [{
+    Pops two values, pushes -1 (true) if a <= b, 0 (false) otherwise.
+    Forth semantics: ( a b -- flag )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_GeOp : Forth_Op<"ge", [Pure]> {
+  let summary = "Test greater-than-or-equal of top two stack elements";
+  let description = [{
+    Pops two values, pushes -1 (true) if a >= b, 0 (false) otherwise.
+    Forth semantics: ( a b -- flag )
+  }];
+
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
 def Forth_ZeroEqOp : Forth_Op<"zero_eq", [Pure]> {
   let summary = "Test if top of stack is zero";
   let description = [{
@@ -660,15 +705,18 @@ def Forth_ZeroEqOp : Forth_Op<"zero_eq", [Pure]> {
 //===----------------------------------------------------------------------===//
 
 def Forth_YieldOp : Forth_Op<"yield", [Pure, Terminator, ReturnLike,
-    ParentOneOf<["IfOp", "BeginUntilOp", "DoLoopOp"]>]> {
+    ParentOneOf<["IfOp", "BeginUntilOp", "BeginWhileRepeatOp", "DoLoopOp"]>]> {
   let summary = "Yield stack from control flow region";
   let description = [{
     Yields the current stack state from a control flow region back to
     the parent operation. Acts as a region terminator.
+    When the optional `while_cond` attribute is present, the yield acts as
+    a WHILE condition (continue when flag is non-zero) rather than
+    UNTIL (exit when flag is non-zero).
   }];
-  let arguments = (ins Forth_StackType:$result);
+  let arguments = (ins Forth_StackType:$result, OptionalAttr<UnitAttr>:$while_cond);
   let assemblyFormat = [{
-    $result attr-dict `:` type($result)
+    $result (`while_cond` $while_cond^)? attr-dict `:` type($result)
   }];
 }
 
@@ -715,6 +763,24 @@ def Forth_DoLoopOp : Forth_Op<"do_loop", [RecursiveMemoryEffects,
   let arguments = (ins Forth_StackType:$input_stack);
   let results = (outs Forth_StackType:$output_stack);
   let regions = (region SizedRegion<1>:$body_region);
+  let hasCustomAssemblyFormat = 1;
+}
+
+def Forth_BeginWhileRepeatOp : Forth_Op<"begin_while_repeat",
+    [RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface,
+        ["getEntrySuccessorOperands"]>]> {
+  let summary = "Pre-test loop (BEGIN/WHILE/REPEAT)";
+  let description = [{
+    BEGIN/WHILE/REPEAT loop. The condition region runs first, WHILE pops flag.
+    If flag is non-zero, the body region executes and loops back to condition.
+    If flag is zero, the loop exits.
+    Stack effect: ( -- ) with flag consumed each iteration.
+  }];
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack);
+  let regions = (region SizedRegion<1>:$condition_region,
+                        SizedRegion<1>:$body_region);
   let hasCustomAssemblyFormat = 1;
 }
 
