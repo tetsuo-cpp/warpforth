@@ -12,16 +12,16 @@
 
 // Then branch: drop (subi) + literal push + yield
 // CHECK:   arith.subi
-// CHECK:   arith.addi
 // CHECK:   arith.constant 42 : i64
+// CHECK:   arith.addi
 // CHECK:   memref.store
 // CHECK:   scf.yield %{{.*}} : index
 
 // Else branch: drop (subi) + literal push + yield
 // CHECK: } else {
 // CHECK:   arith.subi
-// CHECK:   arith.addi
 // CHECK:   arith.constant 99 : i64
+// CHECK:   arith.addi
 // CHECK:   memref.store
 // CHECK:   scf.yield %{{.*}} : index
 // CHECK: }
