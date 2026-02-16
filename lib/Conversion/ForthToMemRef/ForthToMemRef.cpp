@@ -488,7 +488,7 @@ struct BinaryCmpOpConversion : public OpConversionPattern<ForthOp> {
     // Compare
     Value cmp = rewriter.create<arith::CmpIOp>(loc, predicate, a, b);
 
-    // Extend i1 to i64: true → -1 (all bits set), false → 0
+    // Extend i1 to i64: true = -1 (all bits set), false = 0
     Value result =
         rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), cmp);
 
@@ -570,7 +570,7 @@ struct ZeroEqOpConversion : public OpConversionPattern<forth::ZeroEqOp> {
     Value cmp =
         rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a, zero);
 
-    // Extend i1 to i64: true → -1, false → 0
+    // Extend i1 to i64: true = -1, false = 0
     Value result =
         rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), cmp);
 
@@ -862,7 +862,7 @@ struct IfOpConversion : public OpConversionPattern<forth::IfOp> {
                                             /*addElseBlock=*/true);
 
     // Convert block signatures and inline regions into scf.if.
-    // convertRegionTypes converts !forth.stack block arg → {memref, index}
+    // convertRegionTypes converts !forth.stack block arg to {memref, index}
     // and inserts tracked materializations (unrealized_conversion_cast).
     // We inline into scf.if and mergeBlocks to substitute the converted
     // block args with parent-scope values. The original materialization
@@ -918,7 +918,7 @@ struct BeginUntilOpConversion
     auto whileOp = rewriter.create<scf::WhileOp>(loc, TypeRange{indexType},
                                                  ValueRange{stackPtr});
 
-    // --- Before region (body): convert + inline ---
+    // Before region (body): convert + inline.
     Region &bodyRegion = op.getBodyRegion();
     if (failed(rewriter.convertRegionTypes(&bodyRegion, *getTypeConverter())))
       return failure();
@@ -936,7 +936,7 @@ struct BeginUntilOpConversion
     Value beforeSP = newBeforeBlock->getArgument(0);
     rewriter.mergeBlocks(&beforeBlock, newBeforeBlock, {memref, beforeSP});
 
-    // --- After region (identity): just yield the SP ---
+    // After region (identity): just yield the SP.
     Block *afterBlock = rewriter.createBlock(&whileOp.getAfter());
     afterBlock->addArgument(indexType, loc);
     Value afterSP = afterBlock->getArgument(0);
@@ -974,7 +974,7 @@ struct BeginWhileRepeatOpConversion
     auto whileOp = rewriter.create<scf::WhileOp>(loc, TypeRange{indexType},
                                                  ValueRange{stackPtr});
 
-    // --- Before region (condition): convert + inline ---
+    // Before region (condition): convert + inline.
     Region &condRegion = op.getConditionRegion();
     if (failed(rewriter.convertRegionTypes(&condRegion, *getTypeConverter())))
       return failure();
@@ -988,7 +988,7 @@ struct BeginWhileRepeatOpConversion
     Value beforeSP = newBeforeBlock->getArgument(0);
     rewriter.mergeBlocks(&beforeBlock, newBeforeBlock, {memref, beforeSP});
 
-    // --- After region (body): convert + inline ---
+    // After region (body): convert + inline.
     Region &bodyRegion = op.getBodyRegion();
     if (failed(rewriter.convertRegionTypes(&bodyRegion, *getTypeConverter())))
       return failure();
@@ -1034,7 +1034,7 @@ struct DoLoopOpConversion : public OpConversionPattern<forth::DoLoopOp> {
     Value limitI64 = rewriter.create<memref::LoadOp>(loc, memref, spAfterStart);
     Value spAfterPops = rewriter.create<arith::SubIOp>(loc, spAfterStart, one);
 
-    // Cast i64 → index for scf.for bounds
+    // Cast i64 to index for scf.for bounds
     Value startIdx =
         rewriter.create<arith::IndexCastOp>(loc, indexType, startI64);
     Value limitIdx =
@@ -1095,7 +1095,7 @@ struct LoopIndexOpConversion : public OpConversionPattern<forth::LoopIndexOp> {
     if (!forOp)
       return rewriter.notifyMatchFailure(op, "not inside an scf.for");
 
-    // Get induction variable and cast index → i64
+    // Get induction variable and cast index to i64
     Value iv = forOp.getInductionVar();
     Value ivI64 =
         rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), iv);
