@@ -6,4 +6,8 @@
 \ CHECK: forth.swap %{{.*}} : !forth.stack -> !forth.stack
 \ CHECK: forth.over %{{.*}} : !forth.stack -> !forth.stack
 \ CHECK: forth.rot %{{.*}} : !forth.stack -> !forth.stack
-1 DUP DROP SWAP OVER ROT
+\ CHECK: forth.nip %{{.*}} : !forth.stack -> !forth.stack
+\ CHECK: forth.tuck %{{.*}} : !forth.stack -> !forth.stack
+\ CHECK: forth.pick %{{.*}} : !forth.stack -> !forth.stack
+\ CHECK: forth.roll %{{.*}} : !forth.stack -> !forth.stack
+1 DUP DROP SWAP OVER ROT NIP TUCK PICK ROLL

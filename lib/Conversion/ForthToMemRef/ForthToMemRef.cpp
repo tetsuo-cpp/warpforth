@@ -255,6 +255,160 @@ struct RotOpConversion : public OpConversionPattern<forth::RotOp> {
   }
 };
 
+/// Conversion pattern for forth.nip operation.
+/// Removes the second element: (a b -- b)
+struct NipOpConversion : public OpConversionPattern<forth::NipOp> {
+  NipOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::NipOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::NipOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Load top value (b at SP)
+    Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+
+    // Store b at SP-1 (overwriting a)
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    rewriter.create<memref::StoreOp>(loc, b, memref, spMinus1);
+
+    // Net effect: SP-1 (removed one element)
+    rewriter.replaceOpWithMultiple(op, {{memref, spMinus1}});
+    return success();
+  }
+};
+
+/// Conversion pattern for forth.tuck operation.
+/// Copies top before second: (a b -- b a b)
+struct TuckOpConversion : public OpConversionPattern<forth::TuckOp> {
+  TuckOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::TuckOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::TuckOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    // Load top two values
+    Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    Value a = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
+
+    // Store: b at SP-1, a at SP, b at SP+1
+    rewriter.create<memref::StoreOp>(loc, b, memref, spMinus1);
+    rewriter.create<memref::StoreOp>(loc, a, memref, stackPtr);
+    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
+    rewriter.create<memref::StoreOp>(loc, b, memref, newSP);
+
+    // Net effect: SP+1 (added one element)
+    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
+    return success();
+  }
+};
+
+/// Conversion pattern for forth.pick operation.
+/// Copies nth element to top: ( xn ... x0 n -- xn ... x0 xn )
+struct PickOpConversion : public OpConversionPattern<forth::PickOp> {
+  PickOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::PickOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::PickOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Pop n from stack
+    Value nI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value spAfterPop = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+
+    // Cast n to index
+    Value nIdx =
+        rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), nI64);
+
+    // Compute target address: SP' - n
+    Value targetAddr = rewriter.create<arith::SubIOp>(loc, spAfterPop, nIdx);
+
+    // Load the picked value
+    Value pickedValue =
+        rewriter.create<memref::LoadOp>(loc, memref, targetAddr);
+
+    // Store at SP (where n was), effectively pushing the picked value
+    rewriter.create<memref::StoreOp>(loc, pickedValue, memref, stackPtr);
+
+    // Net effect: SP unchanged (popped n, pushed xn)
+    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
+    return success();
+  }
+};
+
+/// Conversion pattern for forth.roll operation.
+/// Rotates nth element to top: ( xn ... x0 n -- xn-1 ... x0 xn )
+struct RollOpConversion : public OpConversionPattern<forth::RollOp> {
+  RollOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::RollOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::RollOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Pop n from stack
+    Value nI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value spAfterPop = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+
+    // Cast n to index
+    Value nIdx =
+        rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), nI64);
+
+    // Compute address of the element to roll: SP' - n
+    Value rolledAddr = rewriter.create<arith::SubIOp>(loc, spAfterPop, nIdx);
+
+    // Save the value to be rolled to top
+    Value rolledValue =
+        rewriter.create<memref::LoadOp>(loc, memref, rolledAddr);
+
+    // Shift elements down: for i in [rolledAddr, SP') : memref[i] = memref[i+1]
+    auto forOp = rewriter.create<scf::ForOp>(loc, rolledAddr, spAfterPop, one);
+
+    // Insert ops at start of the auto-created body, before the yield
+    rewriter.setInsertionPointToStart(forOp.getBody());
+    Value iv = forOp.getInductionVar();
+    Value iPlusOne = rewriter.create<arith::AddIOp>(loc, iv, one);
+    Value shiftedVal = rewriter.create<memref::LoadOp>(loc, memref, iPlusOne);
+    rewriter.create<memref::StoreOp>(loc, shiftedVal, memref, iv);
+
+    // Store saved value at top (SP')
+    rewriter.setInsertionPointAfter(forOp);
+    rewriter.create<memref::StoreOp>(loc, rolledValue, memref, spAfterPop);
+
+    // Net effect: SP' = SP - 1 (consumed n)
+    rewriter.replaceOpWithMultiple(op, {{memref, spAfterPop}});
+    return success();
+  }
+};
+
 /// Base template for binary arithmetic operations.
 /// Pops two values, applies operation, pushes result: (a b -- result)
 template <typename ForthOp, typename ArithOp>
@@ -929,17 +1083,17 @@ struct ConvertForthToMemRefPass
     RewritePatternSet patterns(context);
 
     // Add Forth operation conversion patterns
-    patterns
-        .add<StackOpConversion, LiteralOpConversion, DupOpConversion,
-             DropOpConversion, SwapOpConversion, OverOpConversion,
-             RotOpConversion, AddOpConversion, SubOpConversion, MulOpConversion,
-             DivOpConversion, ModOpConversion, AndOpConversion, OrOpConversion,
-             XorOpConversion, NotOpConversion, LshiftOpConversion,
-             RshiftOpConversion, EqOpConversion, LtOpConversion, GtOpConversion,
-             ZeroEqOpConversion, ParamRefOpConversion, LoadOpConversion,
-             StoreOpConversion, IfOpConversion, BeginUntilOpConversion,
-             DoLoopOpConversion, LoopIndexOpConversion, YieldOpConversion>(
-            typeConverter, context);
+    patterns.add<
+        StackOpConversion, LiteralOpConversion, DupOpConversion,
+        DropOpConversion, SwapOpConversion, OverOpConversion, RotOpConversion,
+        NipOpConversion, TuckOpConversion, PickOpConversion, RollOpConversion,
+        AddOpConversion, SubOpConversion, MulOpConversion, DivOpConversion,
+        ModOpConversion, AndOpConversion, OrOpConversion, XorOpConversion,
+        NotOpConversion, LshiftOpConversion, RshiftOpConversion, EqOpConversion,
+        LtOpConversion, GtOpConversion, ZeroEqOpConversion,
+        ParamRefOpConversion, LoadOpConversion, StoreOpConversion,
+        IfOpConversion, BeginUntilOpConversion, DoLoopOpConversion,
+        LoopIndexOpConversion, YieldOpConversion>(typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,

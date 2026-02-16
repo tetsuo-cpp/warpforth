@@ -261,6 +261,17 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
         .getResult();
   } else if (word == "ROT") {
     return builder.create<forth::RotOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "NIP") {
+    return builder.create<forth::NipOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "TUCK") {
+    return builder.create<forth::TuckOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "PICK") {
+    return builder.create<forth::PickOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "ROLL") {
+    return builder.create<forth::RollOp>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "+" || word == "ADD") {
     return builder.create<forth::AddOp>(loc, stackType, inputStack).getResult();
   } else if (word == "-" || word == "SUB") {
