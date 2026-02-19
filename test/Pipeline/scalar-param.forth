@@ -5,7 +5,10 @@
 \ CHECK: gpu.binary @warpforth_module
 
 \ Verify scalar becomes i64 arg, array becomes memref
-\ MID: gpu.func @main(%arg0: i64 {forth.param_name = "SCALE"}, %arg1: memref<256xi64> {forth.param_name = "DATA"}) kernel
+\ MID: gpu.func @main(
+\ MID-SAME: i64 {forth.param_name = "SCALE"}
+\ MID-SAME: memref<256xi64> {forth.param_name = "DATA"}
+\ MID-SAME: kernel
 \ MID: gpu.return
 
 \! kernel main
