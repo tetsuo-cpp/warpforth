@@ -203,38 +203,22 @@ LogicalResult ForthParser::parseHeader() {
   const char *bufStart = buffer->getBufferStart();
   const char *bufEnd = buffer->getBufferEnd();
 
-  auto ltrim = [](llvm::StringRef s) {
-    while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
-      s = s.drop_front();
-    return s;
-  };
-  auto rtrim = [](llvm::StringRef s) {
-    while (!s.empty() &&
-           (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
-      s = s.drop_back();
-    return s;
-  };
-  auto trim = [&](llvm::StringRef s) { return rtrim(ltrim(s)); };
+  auto trim = [](llvm::StringRef s) { return s.ltrim(" \t").rtrim(" \t\r"); };
 
   auto splitWS = [](llvm::StringRef s) {
     SmallVector<llvm::StringRef> parts;
-    while (!s.empty()) {
-      while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
-        s = s.drop_front();
-      if (s.empty())
-        break;
-      size_t i = 0;
-      while (i < s.size() && s[i] != ' ' && s[i] != '\t')
-        ++i;
-      parts.push_back(s.substr(0, i));
-      s = s.substr(i);
+    s.split(parts, ' ', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+    // Re-split on tabs: filter empty parts produced by tab-only tokens.
+    SmallVector<llvm::StringRef> result;
+    for (auto part : parts) {
+      SmallVector<llvm::StringRef> sub;
+      part.split(sub, '\t', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+      result.append(sub.begin(), sub.end());
     }
-    return parts;
+    return result;
   };
 
   bool headerEnded = false;
-  bool sawKernel = false;
-  bool sawDirective = false;
   headerEndPtr = bufStart;
 
   const char *lineStart = bufStart;
@@ -272,12 +256,12 @@ LogicalResult ForthParser::parseHeader() {
       }
 
       std::string directive = toUpperCase(tokens[0]);
-      if (!sawDirective && directive != "KERNEL") {
+      if (kernelName.empty() && directive != "KERNEL") {
         return emitErrorAt(lineLoc, "\\! kernel must appear first");
       }
 
       if (directive == "KERNEL") {
-        if (sawKernel) {
+        if (!kernelName.empty()) {
           return emitErrorAt(lineLoc, "duplicate \\! kernel directive");
         }
         if (tokens.size() != 2) {
@@ -285,12 +269,7 @@ LogicalResult ForthParser::parseHeader() {
                              "kernel directive expects: \\! kernel <name>");
         }
         kernelName = tokens[1].str();
-        sawKernel = true;
-        sawDirective = true;
       } else if (directive == "PARAM" || directive == "SHARED") {
-        if (!sawKernel) {
-          return emitErrorAt(lineLoc, "\\! kernel must appear first");
-        }
         if (tokens.size() != 3) {
           return emitErrorAt(lineLoc,
                              "param/shared directive expects: \\! param "
@@ -329,13 +308,9 @@ LogicalResult ForthParser::parseHeader() {
           }
           if (sizeStr.empty())
             return emitErrorAt(lineLoc, "array type requires a size");
-          for (char c : sizeStr) {
-            if (!std::isdigit(static_cast<unsigned char>(c)))
-              return emitErrorAt(lineLoc, "array size must be an integer");
-          }
-          size = std::stoll(sizeStr.str());
-          if (size <= 0)
-            return emitErrorAt(lineLoc, "array size must be positive");
+          if (sizeStr.getAsInteger(10, size) || size <= 0)
+            return emitErrorAt(lineLoc,
+                               "array size must be a positive integer");
           isArray = true;
         } else {
           if (toUpperCase(typeToken) != "I64") {
@@ -357,7 +332,6 @@ LogicalResult ForthParser::parseHeader() {
           decl.size = size;
           sharedDecls.push_back(decl);
         }
-        sawDirective = true;
       } else {
         return emitErrorAt(lineLoc, "unknown header directive: " + directive);
       }
@@ -382,7 +356,7 @@ LogicalResult ForthParser::parseHeader() {
       lineStart = lineEnd + 1;
   }
 
-  if (!sawKernel) {
+  if (kernelName.empty()) {
     auto loc = llvm::SMLoc::getFromPointer(bufStart);
     return emitErrorAt(loc, "\\! kernel <name> is required");
   }
