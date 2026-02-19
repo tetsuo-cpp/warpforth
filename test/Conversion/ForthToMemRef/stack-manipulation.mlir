@@ -55,16 +55,22 @@
 // CHECK: %[[PICK_VAL:.*]] = memref.load %{{.*}}[%[[PICK_ADDR]]] : memref<256xi64>
 // CHECK: memref.store %[[PICK_VAL]]
 
-// roll: load n, index_cast, subi (dynamic), load saved, scf.for with load/store, store saved
+// roll: load n, index_cast, subi (dynamic), load saved, cf loop with load/store, store saved
 // CHECK: %[[ROLL_N:.*]] = memref.load %{{.*}}[%{{.*}}] : memref<256xi64>
 // CHECK: %[[ROLL_SP1:.*]] = arith.subi
 // CHECK: %[[ROLL_NIDX:.*]] = arith.index_cast %[[ROLL_N]]
 // CHECK: %[[ROLL_ADDR:.*]] = arith.subi %[[ROLL_SP1]], %[[ROLL_NIDX]]
 // CHECK: %[[ROLL_SAVED:.*]] = memref.load %{{.*}}[%[[ROLL_ADDR]]] : memref<256xi64>
-// CHECK: scf.for %[[ROLL_IV:.*]] = %[[ROLL_ADDR]] to %[[ROLL_SP1]]
-// CHECK:   %[[ROLL_NEXT:.*]] = arith.addi %[[ROLL_IV]]
-// CHECK:   %[[ROLL_SHIFTED:.*]] = memref.load %{{.*}}[%[[ROLL_NEXT]]] : memref<256xi64>
-// CHECK:   memref.store %[[ROLL_SHIFTED]], %{{.*}}[%[[ROLL_IV]]] : memref<256xi64>
+// CHECK: cf.br ^[[ROLL_HDR:.*]](%[[ROLL_ADDR]] : index)
+// CHECK: ^[[ROLL_HDR]](%[[ROLL_IV:.*]]: index):
+// CHECK: %[[ROLL_CMP:.*]] = arith.cmpi slt, %[[ROLL_IV]], %[[ROLL_SP1]] : index
+// CHECK: cf.cond_br %[[ROLL_CMP]], ^[[ROLL_BODY:.*]](%[[ROLL_IV]] : index), ^[[ROLL_EXIT:.*]]
+// CHECK: ^[[ROLL_BODY]](%[[ROLL_BIV:.*]]: index):
+// CHECK: %[[ROLL_NEXT:.*]] = arith.addi %[[ROLL_BIV]]
+// CHECK: %[[ROLL_SHIFTED:.*]] = memref.load %{{.*}}[%[[ROLL_NEXT]]] : memref<256xi64>
+// CHECK: memref.store %[[ROLL_SHIFTED]], %{{.*}}[%[[ROLL_BIV]]] : memref<256xi64>
+// CHECK: cf.br ^[[ROLL_HDR]](%[[ROLL_NEXT]] : index)
+// CHECK: ^[[ROLL_EXIT]]:
 // CHECK: memref.store %[[ROLL_SAVED]], %{{.*}}[%[[ROLL_SP1]]] : memref<256xi64>
 
 module {

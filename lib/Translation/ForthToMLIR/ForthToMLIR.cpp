@@ -5,7 +5,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "ForthToMLIR.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -358,15 +361,18 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
         .getResult();
   } else if (word == "I" || word == "J" || word == "K") {
     int64_t depth = (word == "I") ? 0 : (word == "J") ? 1 : 2;
-    if (doLoopDepth < depth + 1) {
+    if (static_cast<int64_t>(loopStack.size()) < depth + 1) {
       (void)emitError("'" + word.str() + "' requires " +
                       std::to_string(depth + 1) + " nested DO/LOOP(s)");
       return nullptr;
     }
-    return builder
-        .create<forth::LoopIndexOp>(loc, stackType, inputStack,
-                                    builder.getI64IntegerAttr(depth))
-        .getResult();
+    // Load counter from the appropriate loop context
+    auto &ctx = loopStack[loopStack.size() - 1 - depth];
+    Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
+    Value idx =
+        builder.create<memref::LoadOp>(loc, ctx.counter, ValueRange{c0});
+    return builder.create<forth::PushValueOp>(loc, stackType, inputStack, idx)
+        .getOutputStack();
   }
 
   // Unknown word
@@ -374,21 +380,29 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
 }
 
 //===----------------------------------------------------------------------===//
-// Body parsing — shared by word definitions, main, and control flow regions.
+// Body parsing - shared by word definitions and main.
+// Control flow words are handled inline using cf.br/cf.cond_br.
 //===----------------------------------------------------------------------===//
 
-LogicalResult
-ForthParser::parseBody(Value &stack,
-                       llvm::function_ref<bool(StringRef)> isStopWord) {
+Block *ForthParser::createStackBlock(Region *region, Location loc) {
+  auto *block = new Block();
+  region->push_back(block);
+  block->addArgument(forth::StackType::get(context), loc);
+  return block;
+}
+
+std::pair<Value, Value> ForthParser::emitPopFlag(Location loc, Value stack) {
+  auto popFlag = builder.create<forth::PopFlagOp>(
+      loc, forth::StackType::get(context), builder.getI1Type(), stack);
+  return {popFlag.getOutputStack(), popFlag.getFlag()};
+}
+
+LogicalResult ForthParser::parseBody(Value &stack) {
   Type stackType = forth::StackType::get(context);
 
   while (currentToken.kind != Token::Kind::EndOfFile &&
          currentToken.kind != Token::Kind::Semicolon &&
          currentToken.kind != Token::Kind::Colon) {
-
-    // Check if current word is a stop word.
-    if (currentToken.kind == Token::Kind::Word && isStopWord(currentToken.text))
-      break;
 
     // Skip PARAM declarations at top level.
     if (!inWordDefinition && currentToken.kind == Token::Kind::Word &&
@@ -408,30 +422,220 @@ ForthParser::parseBody(Value &stack,
                   .getResult();
       consume();
     } else if (currentToken.kind == Token::Kind::Word) {
-      if (currentToken.text == "IF") {
-        Location tokenLoc = getLoc();
-        consume(); // consume IF
-        stack = parseIf(stack, tokenLoc);
-        if (!stack)
-          return failure();
-      } else if (currentToken.text == "BEGIN") {
-        Location tokenLoc = getLoc();
-        consume(); // consume BEGIN
-        if (isWhileLoop())
-          stack = parseBeginWhileRepeat(stack, tokenLoc);
-        else
-          stack = parseBeginUntil(stack, tokenLoc);
-        if (!stack)
-          return failure();
-      } else if (currentToken.text == "DO") {
-        Location tokenLoc = getLoc();
-        consume(); // consume DO
-        stack = parseDoLoop(stack, tokenLoc);
-        if (!stack)
-          return failure();
+      Location loc = getLoc();
+      StringRef word = currentToken.text;
+
+      //=== IF ===
+      if (word == "IF") {
+        consume();
+        Region *parentRegion = builder.getInsertionBlock()->getParent();
+
+        auto [s1, flag] = emitPopFlag(loc, stack);
+
+        auto *thenBlock = createStackBlock(parentRegion, loc);
+        auto *joinBlock = createStackBlock(parentRegion, loc);
+
+        // Branch: true -> then, false -> join.
+        builder.create<cf::CondBranchOp>(loc, flag, thenBlock, ValueRange{s1},
+                                         joinBlock, ValueRange{s1});
+
+        // Push join block for THEN/ELSE to pick up.
+        cfStack.push_back({CFTag::Orig, joinBlock});
+
+        // Continue parsing in then block.
+        builder.setInsertionPointToStart(thenBlock);
+        stack = thenBlock->getArgument(0);
+
+        //=== ELSE ===
+      } else if (word == "ELSE") {
+        consume();
+        Region *parentRegion = builder.getInsertionBlock()->getParent();
+
+        auto *mergeBlock = createStackBlock(parentRegion, loc);
+
+        // End of then-body: branch to merge.
+        builder.create<cf::BranchOp>(loc, mergeBlock, ValueRange{stack});
+
+        // Pop the false-path block (from IF) - this becomes else-body start.
+        auto [tag, joinBlock] = cfStack.pop_back_val();
+
+        // Push merge block for THEN to pick up.
+        cfStack.push_back({CFTag::Orig, mergeBlock});
+
+        // Continue parsing in the else (false-path) block.
+        builder.setInsertionPointToStart(joinBlock);
+        stack = joinBlock->getArgument(0);
+
+        //=== THEN ===
+      } else if (word == "THEN") {
+        consume();
+
+        // Pop the join/merge block.
+        auto [tag, joinBlock] = cfStack.pop_back_val();
+
+        // Branch from current block to join.
+        builder.create<cf::BranchOp>(loc, joinBlock, ValueRange{stack});
+
+        // Continue parsing after the join.
+        builder.setInsertionPointToStart(joinBlock);
+        stack = joinBlock->getArgument(0);
+
+        //=== BEGIN ===
+      } else if (word == "BEGIN") {
+        consume();
+        Region *parentRegion = builder.getInsertionBlock()->getParent();
+
+        auto *loopBlock = createStackBlock(parentRegion, loc);
+
+        // Branch to loop header.
+        builder.create<cf::BranchOp>(loc, loopBlock, ValueRange{stack});
+
+        // Push loop header as backward reference.
+        cfStack.push_back({CFTag::Dest, loopBlock});
+
+        // Continue parsing in loop body.
+        builder.setInsertionPointToStart(loopBlock);
+        stack = loopBlock->getArgument(0);
+
+        //=== UNTIL ===
+      } else if (word == "UNTIL") {
+        consume();
+        Region *parentRegion = builder.getInsertionBlock()->getParent();
+
+        auto [s1, flag] = emitPopFlag(loc, stack);
+
+        auto [tag, loopBlock] = cfStack.pop_back_val();
+
+        auto *exitBlock = createStackBlock(parentRegion, loc);
+
+        // true -> exit, false -> loop back.
+        builder.create<cf::CondBranchOp>(loc, flag, exitBlock, ValueRange{s1},
+                                         loopBlock, ValueRange{s1});
+
+        // Continue after exit.
+        builder.setInsertionPointToStart(exitBlock);
+        stack = exitBlock->getArgument(0);
+
+        //=== WHILE ===
+      } else if (word == "WHILE") {
+        consume();
+        Region *parentRegion = builder.getInsertionBlock()->getParent();
+
+        auto [s1, flag] = emitPopFlag(loc, stack);
+
+        auto [tag, loopBlock] = cfStack.pop_back_val();
+
+        auto *bodyBlock = createStackBlock(parentRegion, loc);
+        auto *exitBlock = createStackBlock(parentRegion, loc);
+
+        // true -> body, false -> exit.
+        builder.create<cf::CondBranchOp>(loc, flag, bodyBlock, ValueRange{s1},
+                                         exitBlock, ValueRange{s1});
+
+        // Push exit (forward ref) then loop header (backward ref).
+        cfStack.push_back({CFTag::Orig, exitBlock});
+        cfStack.push_back({CFTag::Dest, loopBlock});
+
+        // Continue parsing in body.
+        builder.setInsertionPointToStart(bodyBlock);
+        stack = bodyBlock->getArgument(0);
+
+        //=== REPEAT ===
+      } else if (word == "REPEAT") {
+        consume();
+
+        // Pop loop header (from WHILE's re-push).
+        auto [destTag, loopBlock] = cfStack.pop_back_val();
+
+        // Branch back to loop header.
+        builder.create<cf::BranchOp>(loc, loopBlock, ValueRange{stack});
+
+        // Pop exit block (from WHILE).
+        auto [origTag, exitBlock] = cfStack.pop_back_val();
+
+        // Continue after exit.
+        builder.setInsertionPointToStart(exitBlock);
+        stack = exitBlock->getArgument(0);
+
+        //=== DO ===
+      } else if (word == "DO") {
+        consume();
+        Region *parentRegion = builder.getInsertionBlock()->getParent();
+        auto i64Type = builder.getI64Type();
+
+        // Pop start and limit from the Forth stack.
+        auto popStart =
+            builder.create<forth::PopOp>(loc, stackType, i64Type, stack);
+        Value s1 = popStart.getOutputStack();
+        Value start = popStart.getValue();
+
+        auto popLimit =
+            builder.create<forth::PopOp>(loc, stackType, i64Type, s1);
+        Value s2 = popLimit.getOutputStack();
+        Value limit = popLimit.getValue();
+
+        // Allocate counter storage.
+        auto counterType = MemRefType::get({1}, i64Type);
+        Value counter = builder.create<memref::AllocaOp>(loc, counterType);
+        Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
+        builder.create<memref::StoreOp>(loc, start, counter, ValueRange{c0});
+
+        // Create check, body, and exit blocks.
+        auto *checkBlock = createStackBlock(parentRegion, loc);
+        auto *bodyBlock = createStackBlock(parentRegion, loc);
+        auto *exitBlock = createStackBlock(parentRegion, loc);
+
+        // Branch to check.
+        builder.create<cf::BranchOp>(loc, checkBlock, ValueRange{s2});
+
+        // --- Check block: load counter, compare < limit ---
+        builder.setInsertionPointToStart(checkBlock);
+        Value checkC0 = builder.create<arith::ConstantIndexOp>(loc, 0);
+        Value idx =
+            builder.create<memref::LoadOp>(loc, counter, ValueRange{checkC0});
+        Value cond = builder.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::slt, idx, limit);
+        builder.create<cf::CondBranchOp>(
+            loc, cond, bodyBlock, ValueRange{checkBlock->getArgument(0)},
+            exitBlock, ValueRange{checkBlock->getArgument(0)});
+
+        // Push loop context for I/J/K.
+        loopStack.push_back({counter, limit, checkBlock, exitBlock});
+
+        // Continue parsing in body.
+        builder.setInsertionPointToStart(bodyBlock);
+        stack = bodyBlock->getArgument(0);
+
+        //=== LOOP ===
+      } else if (word == "LOOP") {
+        consume();
+        auto i64Type = builder.getI64Type();
+
+        if (loopStack.empty()) {
+          return emitError("LOOP without matching DO");
+        }
+
+        auto ctx = loopStack.pop_back_val();
+
+        // Increment counter: load, add 1, store.
+        Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
+        Value idx =
+            builder.create<memref::LoadOp>(loc, ctx.counter, ValueRange{c0});
+        Value one = builder.create<arith::ConstantOp>(
+            loc, i64Type, builder.getI64IntegerAttr(1));
+        Value next = builder.create<arith::AddIOp>(loc, idx, one);
+        builder.create<memref::StoreOp>(loc, next, ctx.counter, ValueRange{c0});
+
+        // Branch back to check.
+        builder.create<cf::BranchOp>(loc, ctx.check, ValueRange{stack});
+
+        // Continue after exit.
+        builder.setInsertionPointToStart(ctx.exit);
+        stack = ctx.exit->getArgument(0);
+
+        //=== Normal word ===
       } else {
-        Location tokenLoc = getLoc();
-        Value newStack = emitOperation(currentToken.text, stack, tokenLoc);
+        Value newStack = emitOperation(currentToken.text, stack, loc);
         if (!newStack)
           return emitError("unknown word: " + currentToken.text);
         stack = newStack;
@@ -443,237 +647,6 @@ ForthParser::parseBody(Value &stack,
   }
 
   return success();
-}
-
-//===----------------------------------------------------------------------===//
-// IF / ELSE / THEN parsing.
-//===----------------------------------------------------------------------===//
-
-Value ForthParser::parseIf(Value inputStack, Location loc) {
-  Type stackType = forth::StackType::get(context);
-
-  // Create forth.if op. inputStack has the flag on top.
-  // Regions capture inputStack from the enclosing scope (no block args).
-  // Each region starts with forth.drop to pop the flag.
-  auto ifOp = builder.create<forth::IfOp>(loc, stackType, inputStack);
-
-  auto isElseOrThen = [](StringRef word) {
-    return word == "ELSE" || word == "THEN";
-  };
-  auto isThen = [](StringRef word) { return word == "THEN"; };
-
-  // --- Then region ---
-  Block *thenBlock = new Block();
-  thenBlock->addArgument(stackType, loc);
-  ifOp.getThenRegion().push_back(thenBlock);
-
-  builder.setInsertionPointToStart(thenBlock);
-  Value thenArg = thenBlock->getArgument(0);
-  // Drop the flag from the block arg.
-  Value thenStack =
-      builder.create<forth::DropOp>(loc, stackType, thenArg).getResult();
-  if (failed(parseBody(thenStack, isElseOrThen)))
-    return nullptr;
-  builder.create<forth::YieldOp>(getLoc(), thenStack, /*while_cond=*/nullptr);
-
-  // --- Else region ---
-  Block *elseBlock = new Block();
-  elseBlock->addArgument(stackType, loc);
-  ifOp.getElseRegion().push_back(elseBlock);
-
-  if (currentToken.kind == Token::Kind::Word && currentToken.text == "ELSE") {
-    consume(); // consume ELSE
-    builder.setInsertionPointToStart(elseBlock);
-    Value elseArg = elseBlock->getArgument(0);
-    Value elseStack =
-        builder.create<forth::DropOp>(loc, stackType, elseArg).getResult();
-    if (failed(parseBody(elseStack, isThen)))
-      return nullptr;
-    builder.create<forth::YieldOp>(getLoc(), elseStack, /*while_cond=*/nullptr);
-  } else {
-    // No ELSE clause — just drop the flag and yield (identity).
-    builder.setInsertionPointToStart(elseBlock);
-    Value elseArg = elseBlock->getArgument(0);
-    Value elseStack =
-        builder.create<forth::DropOp>(loc, stackType, elseArg).getResult();
-    builder.create<forth::YieldOp>(loc, elseStack, /*while_cond=*/nullptr);
-  }
-
-  // Consume THEN.
-  if (currentToken.kind != Token::Kind::Word || currentToken.text != "THEN") {
-    (void)emitError("expected 'THEN'");
-    return nullptr;
-  }
-  consume(); // consume THEN
-
-  // Restore insertion point to after the forth.if op.
-  builder.setInsertionPointAfter(ifOp);
-  return ifOp.getOutputStack();
-}
-
-//===----------------------------------------------------------------------===//
-// BEGIN / UNTIL parsing.
-//===----------------------------------------------------------------------===//
-
-Value ForthParser::parseBeginUntil(Value inputStack, Location loc) {
-  Type stackType = forth::StackType::get(context);
-
-  // Create forth.begin_until op.
-  auto beginUntilOp =
-      builder.create<forth::BeginUntilOp>(loc, stackType, inputStack);
-
-  auto isUntil = [](StringRef word) { return word == "UNTIL"; };
-
-  // --- Body region ---
-  Block *bodyBlock = new Block();
-  bodyBlock->addArgument(stackType, loc);
-  beginUntilOp.getBodyRegion().push_back(bodyBlock);
-
-  builder.setInsertionPointToStart(bodyBlock);
-  Value bodyStack = bodyBlock->getArgument(0);
-  if (failed(parseBody(bodyStack, isUntil)))
-    return nullptr;
-  builder.create<forth::YieldOp>(getLoc(), bodyStack, /*while_cond=*/nullptr);
-
-  // Consume UNTIL.
-  if (currentToken.kind != Token::Kind::Word || currentToken.text != "UNTIL") {
-    (void)emitError("expected 'UNTIL'");
-    return nullptr;
-  }
-  consume(); // consume UNTIL
-
-  // Restore insertion point to after the forth.begin_until op.
-  builder.setInsertionPointAfter(beginUntilOp);
-  return beginUntilOp.getOutputStack();
-}
-
-//===----------------------------------------------------------------------===//
-// BEGIN / WHILE / REPEAT lookahead + parsing.
-//===----------------------------------------------------------------------===//
-
-bool ForthParser::isWhileLoop() {
-  // Save lexer position and current token.
-  const char *savedPos = lexer.getPosition();
-  Token savedToken = currentToken;
-
-  int depth = 0;
-  while (currentToken.kind != Token::Kind::EndOfFile) {
-    if (currentToken.kind == Token::Kind::Word) {
-      if (currentToken.text == "BEGIN" || currentToken.text == "DO")
-        ++depth;
-      else if (depth == 0 && currentToken.text == "UNTIL") {
-        // Found UNTIL at our nesting level → not a WHILE loop.
-        lexer.setPosition(savedPos);
-        currentToken = savedToken;
-        return false;
-      } else if (depth == 0 && currentToken.text == "WHILE") {
-        // Found WHILE at our nesting level → is a WHILE loop.
-        lexer.setPosition(savedPos);
-        currentToken = savedToken;
-        return true;
-      } else if (currentToken.text == "UNTIL" || currentToken.text == "LOOP" ||
-                 currentToken.text == "REPEAT")
-        --depth;
-    }
-    consume();
-  }
-
-  // Reached EOF without finding UNTIL or WHILE — restore and return false.
-  lexer.setPosition(savedPos);
-  currentToken = savedToken;
-  return false;
-}
-
-Value ForthParser::parseBeginWhileRepeat(Value inputStack, Location loc) {
-  Type stackType = forth::StackType::get(context);
-
-  // Create forth.begin_while_repeat op.
-  auto bwrOp =
-      builder.create<forth::BeginWhileRepeatOp>(loc, stackType, inputStack);
-
-  auto isWhile = [](StringRef word) { return word == "WHILE"; };
-  auto isRepeat = [](StringRef word) { return word == "REPEAT"; };
-
-  // --- Condition region ---
-  Block *condBlock = new Block();
-  condBlock->addArgument(stackType, loc);
-  bwrOp.getConditionRegion().push_back(condBlock);
-
-  builder.setInsertionPointToStart(condBlock);
-  Value condStack = condBlock->getArgument(0);
-  if (failed(parseBody(condStack, isWhile)))
-    return nullptr;
-  // Terminate with forth.yield {while_cond} to indicate WHILE semantics.
-  builder.create<forth::YieldOp>(getLoc(), condStack,
-                                 /*while_cond=*/builder.getUnitAttr());
-
-  // Consume WHILE.
-  if (currentToken.kind != Token::Kind::Word || currentToken.text != "WHILE") {
-    (void)emitError("expected 'WHILE'");
-    return nullptr;
-  }
-  consume(); // consume WHILE
-
-  // --- Body region ---
-  Block *bodyBlock = new Block();
-  bodyBlock->addArgument(stackType, loc);
-  bwrOp.getBodyRegion().push_back(bodyBlock);
-
-  builder.setInsertionPointToStart(bodyBlock);
-  Value bodyStack = bodyBlock->getArgument(0);
-  if (failed(parseBody(bodyStack, isRepeat)))
-    return nullptr;
-  builder.create<forth::YieldOp>(getLoc(), bodyStack, /*while_cond=*/nullptr);
-
-  // Consume REPEAT.
-  if (currentToken.kind != Token::Kind::Word || currentToken.text != "REPEAT") {
-    (void)emitError("expected 'REPEAT'");
-    return nullptr;
-  }
-  consume(); // consume REPEAT
-
-  // Restore insertion point to after the forth.begin_while_repeat op.
-  builder.setInsertionPointAfter(bwrOp);
-  return bwrOp.getOutputStack();
-}
-
-//===----------------------------------------------------------------------===//
-// DO / LOOP parsing.
-//===----------------------------------------------------------------------===//
-
-Value ForthParser::parseDoLoop(Value inputStack, Location loc) {
-  Type stackType = forth::StackType::get(context);
-
-  // Create forth.do_loop op.
-  auto doLoopOp = builder.create<forth::DoLoopOp>(loc, stackType, inputStack);
-
-  auto isLoop = [](StringRef word) { return word == "LOOP"; };
-
-  // --- Body region ---
-  Block *bodyBlock = new Block();
-  bodyBlock->addArgument(stackType, loc);
-  doLoopOp.getBodyRegion().push_back(bodyBlock);
-
-  builder.setInsertionPointToStart(bodyBlock);
-  Value bodyStack = bodyBlock->getArgument(0);
-  ++doLoopDepth;
-  if (failed(parseBody(bodyStack, isLoop))) {
-    --doLoopDepth;
-    return nullptr;
-  }
-  --doLoopDepth;
-  builder.create<forth::YieldOp>(getLoc(), bodyStack, /*while_cond=*/nullptr);
-
-  // Consume LOOP.
-  if (currentToken.kind != Token::Kind::Word || currentToken.text != "LOOP") {
-    (void)emitError("expected 'LOOP'");
-    return nullptr;
-  }
-  consume(); // consume LOOP
-
-  // Restore insertion point to after the forth.do_loop op.
-  builder.setInsertionPointAfter(doLoopOp);
-  return doLoopOp.getOutputStack();
 }
 
 //===----------------------------------------------------------------------===//
@@ -706,15 +679,15 @@ LogicalResult ForthParser::parseWordDefinition() {
   builder.setInsertionPointToStart(entryBlock);
 
   // Parse word body until ';'
-  if (failed(parseBody(resultStack, [](StringRef) { return false; })))
+  if (failed(parseBody(resultStack)))
     return failure();
 
   if (currentToken.kind != Token::Kind::Semicolon) {
     return emitError("unterminated word definition: missing ';'");
   }
 
-  // Add return
-  builder.setInsertionPointToEnd(entryBlock);
+  // Add return at current insertion point (may differ from entry block
+  // if the word body contains control flow).
   builder.create<func::ReturnOp>(loc, resultStack);
 
   // Register the word
@@ -751,7 +724,7 @@ LogicalResult ForthParser::parseOperations(Value &stack) {
     }
 
     // parseBody handles numbers, words, and IF/ELSE/THEN.
-    if (failed(parseBody(stack, [](StringRef) { return false; })))
+    if (failed(parseBody(stack)))
       return failure();
   }
 
@@ -826,9 +799,12 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
 
 OwningOpRef<ModuleOp> forth::parseForthSource(llvm::SourceMgr &sourceMgr,
                                               MLIRContext *context) {
-  // Ensure the Forth dialect is loaded
+  // Ensure required dialects are loaded
   context->loadDialect<forth::ForthDialect>();
   context->loadDialect<func::FuncDialect>();
+  context->loadDialect<cf::ControlFlowDialect>();
+  context->loadDialect<arith::ArithDialect>();
+  context->loadDialect<memref::MemRefDialect>();
 
   // Create parser and parse the module
   ForthParser parser(sourceMgr, context);
@@ -843,6 +819,8 @@ void mlir::forth::registerForthToMLIRTranslation() {
         return forth::parseForthSource(sourceMgr, context);
       },
       [](DialectRegistry &registry) {
-        registry.insert<forth::ForthDialect, func::FuncDialect>();
+        registry.insert<forth::ForthDialect, func::FuncDialect,
+                        cf::ControlFlowDialect, arith::ArithDialect,
+                        memref::MemRefDialect>();
       });
 }

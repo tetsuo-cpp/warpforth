@@ -154,6 +154,36 @@ def test_do_loop(kernel_runner: KernelRunner) -> None:
     assert result == [0, 1, 2, 3, 4]
 
 
+def test_multi_while(kernel_runner: KernelRunner) -> None:
+    """Multi-WHILE: two exit conditions from the same loop (interleaved CF).
+
+    20 BEGIN DUP 10 > WHILE DUP 2 MOD 0= WHILE 1 - REPEAT THEN
+    Decrements while >10 AND even. 20→19 (odd, WHILE(2) exit) → result 19.
+    """
+    result = kernel_runner.run(
+        forth_source=(
+            "PARAM DATA 256\n"
+            "20 BEGIN DUP 10 > WHILE DUP 2 MOD 0= WHILE 1 - REPEAT THEN\n"
+            "0 CELLS DATA + !"
+        ),
+    )
+    assert result[0] == 19
+
+
+def test_while_until(kernel_runner: KernelRunner) -> None:
+    """WHILE+UNTIL: two different exit mechanisms from the same loop (interleaved CF).
+
+    10 BEGIN DUP 0 > WHILE 1 - DUP 5 = UNTIL THEN
+    Decrements while >0, stops early at 5. 10→9→…→5 (UNTIL exit) → result 5.
+    """
+    result = kernel_runner.run(
+        forth_source=(
+            "PARAM DATA 256\n10 BEGIN DUP 0 > WHILE 1 - DUP 5 = UNTIL THEN\n0 CELLS DATA + !"
+        ),
+    )
+    assert result[0] == 5
+
+
 # --- GPU Indexing ---
 
 

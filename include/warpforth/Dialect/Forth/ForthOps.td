@@ -8,7 +8,6 @@
 #define FORTH_OPS
 
 include "warpforth/Dialect/Forth/ForthDialect.td"
-include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 //===----------------------------------------------------------------------===//
@@ -446,102 +445,48 @@ def Forth_ZeroEqOp : Forth_StackOpBase<"zero_eq"> {
 }
 
 //===----------------------------------------------------------------------===//
-// Control flow operations.
+// Control flow support operations.
 //===----------------------------------------------------------------------===//
 
-def Forth_YieldOp : Forth_Op<"yield", [Pure, Terminator, ReturnLike,
-    ParentOneOf<["IfOp", "BeginUntilOp", "BeginWhileRepeatOp", "DoLoopOp"]>]> {
-  let summary = "Yield stack from control flow region";
+def Forth_PopFlagOp : Forth_Op<"pop_flag", [Pure]> {
+  let summary = "Pop top of stack as boolean flag";
   let description = [{
-    Yields the current stack state from a control flow region back to
-    the parent operation. Acts as a region terminator.
-    When the optional `while_cond` attribute is present, the yield acts as
-    a WHILE condition (continue when flag is non-zero) rather than
-    UNTIL (exit when flag is non-zero).
+    Pops the top value from the stack and returns it as an i1 flag
+    (non-zero = true, zero = false). Used by IF, UNTIL, WHILE.
+    Forth semantics: ( flag -- )
   }];
-  let arguments = (ins Forth_StackType:$result, OptionalAttr<UnitAttr>:$while_cond);
+  let arguments = (ins Forth_StackType:$input_stack);
+  let results = (outs Forth_StackType:$output_stack, I1:$flag);
   let assemblyFormat = [{
-    $result (`while_cond` $while_cond^)? attr-dict `:` type($result)
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack) `,` type($flag)
   }];
 }
 
-def Forth_IfOp : Forth_Op<"if", [RecursiveMemoryEffects,
-    DeclareOpInterfaceMethods<RegionBranchOpInterface,
-        ["getEntrySuccessorOperands"]>]> {
-  let summary = "Conditional execution";
+def Forth_PopOp : Forth_Op<"pop", [Pure]> {
+  let summary = "Pop top of stack as i64 value";
   let description = [{
-    Conditional execution. If the flag is non-zero, the then region executes;
-    otherwise the else region executes. Each region must yield the resulting
-    stack.
-    Forth semantics: flag IF then-body ELSE else-body THEN
+    Pops the top value from the stack and returns it as an i64.
+    Used by DO to pop start and limit.
+    Forth semantics: ( x -- )
   }];
   let arguments = (ins Forth_StackType:$input_stack);
-  let results = (outs Forth_StackType:$output_stack);
-  let regions = (region SizedRegion<1>:$then_region,
-                        SizedRegion<1>:$else_region);
-  let hasCustomAssemblyFormat = 1;
+  let results = (outs Forth_StackType:$output_stack, I64:$value);
+  let assemblyFormat = [{
+    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack) `,` type($value)
+  }];
 }
 
-def Forth_BeginUntilOp : Forth_Op<"begin_until", [RecursiveMemoryEffects,
-    DeclareOpInterfaceMethods<RegionBranchOpInterface,
-        ["getEntrySuccessorOperands"]>]> {
-  let summary = "Post-test loop (do-while)";
+def Forth_PushValueOp : Forth_Op<"push_value", [Pure]> {
+  let summary = "Push dynamic i64 value onto stack";
   let description = [{
-    BEGIN/UNTIL loop. Executes body, pops flag. If flag is zero, loops back.
-    If non-zero, exits. Stack effect: ( -- ) with flag consumed each iteration.
+    Pushes a dynamic i64 value onto the stack. Used by I/J/K to push
+    the loop counter value.
+    Forth semantics: ( -- x )
   }];
-  let arguments = (ins Forth_StackType:$input_stack);
-  let results = (outs Forth_StackType:$output_stack);
-  let regions = (region SizedRegion<1>:$body_region);
-  let hasCustomAssemblyFormat = 1;
-}
-
-def Forth_DoLoopOp : Forth_Op<"do_loop", [RecursiveMemoryEffects,
-    DeclareOpInterfaceMethods<RegionBranchOpInterface,
-        ["getEntrySuccessorOperands"]>]> {
-  let summary = "Counted loop (DO/LOOP)";
-  let description = [{
-    Pops start and limit from the stack, iterates from start to limit-1.
-    Use forth.loop_index (I word) inside to access the current loop index.
-    Stack effect: ( limit start -- )
-  }];
-  let arguments = (ins Forth_StackType:$input_stack);
-  let results = (outs Forth_StackType:$output_stack);
-  let regions = (region SizedRegion<1>:$body_region);
-  let hasCustomAssemblyFormat = 1;
-}
-
-def Forth_BeginWhileRepeatOp : Forth_Op<"begin_while_repeat",
-    [RecursiveMemoryEffects,
-    DeclareOpInterfaceMethods<RegionBranchOpInterface,
-        ["getEntrySuccessorOperands"]>]> {
-  let summary = "Pre-test loop (BEGIN/WHILE/REPEAT)";
-  let description = [{
-    BEGIN/WHILE/REPEAT loop. The condition region runs first, WHILE pops flag.
-    If flag is non-zero, the body region executes and loops back to condition.
-    If flag is zero, the loop exits.
-    Stack effect: ( -- ) with flag consumed each iteration.
-  }];
-  let arguments = (ins Forth_StackType:$input_stack);
-  let results = (outs Forth_StackType:$output_stack);
-  let regions = (region SizedRegion<1>:$condition_region,
-                        SizedRegion<1>:$body_region);
-  let hasCustomAssemblyFormat = 1;
-}
-
-def Forth_LoopIndexOp : Forth_Op<"loop_index", [Pure]> {
-  let summary = "Push loop index onto stack (I/J/K words)";
-  let description = [{
-    Pushes the loop index at the given nesting depth onto the stack.
-    depth=0 is I (innermost), depth=1 is J, depth=2 is K.
-    Only valid inside nested forth.do_loop bodies at sufficient depth.
-    ( -- index )
-  }];
-  let arguments = (ins Forth_StackType:$input_stack,
-                       DefaultValuedAttr<I64Attr, "0">:$depth);
+  let arguments = (ins Forth_StackType:$input_stack, I64:$value);
   let results = (outs Forth_StackType:$output_stack);
   let assemblyFormat = [{
-    $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+    $input_stack `,` $value attr-dict `:` type($input_stack) `,` type($value) `->` type($output_stack)
   }];
 }
 
