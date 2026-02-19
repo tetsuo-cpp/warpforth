@@ -127,6 +127,11 @@ private:
   /// Parse a sequence of Forth operations, handling control flow inline.
   LogicalResult parseBody(Value &stack);
 
+  /// Emit the common loop-end logic for LOOP and +LOOP:
+  /// load counter, add step, store, branch back to check block.
+  void emitLoopEnd(Location loc, const LoopContext &ctx, Value step,
+                   Value &stack);
+
   /// Parse a user-defined word definition.
   LogicalResult parseWordDefinition();
 };

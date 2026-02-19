@@ -397,6 +397,22 @@ std::pair<Value, Value> ForthParser::emitPopFlag(Location loc, Value stack) {
   return {popFlag.getOutputStack(), popFlag.getFlag()};
 }
 
+void ForthParser::emitLoopEnd(Location loc, const LoopContext &ctx, Value step,
+                              Value &stack) {
+  // Increment counter: load, add step, store.
+  Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
+  Value idx = builder.create<memref::LoadOp>(loc, ctx.counter, ValueRange{c0});
+  Value next = builder.create<arith::AddIOp>(loc, idx, step);
+  builder.create<memref::StoreOp>(loc, next, ctx.counter, ValueRange{c0});
+
+  // Branch back to check.
+  builder.create<cf::BranchOp>(loc, ctx.check, ValueRange{stack});
+
+  // Continue after exit.
+  builder.setInsertionPointToStart(ctx.exit);
+  stack = ctx.exit->getArgument(0);
+}
+
 LogicalResult ForthParser::parseBody(Value &stack) {
   Type stackType = forth::StackType::get(context);
 
@@ -673,29 +689,32 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         //=== LOOP ===
       } else if (word == "LOOP") {
         consume();
-        auto i64Type = builder.getI64Type();
 
         if (loopStack.empty()) {
           return emitError("LOOP without matching DO");
         }
 
         auto ctx = loopStack.pop_back_val();
-
-        // Increment counter: load, add 1, store.
-        Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
-        Value idx =
-            builder.create<memref::LoadOp>(loc, ctx.counter, ValueRange{c0});
         Value one = builder.create<arith::ConstantOp>(
-            loc, i64Type, builder.getI64IntegerAttr(1));
-        Value next = builder.create<arith::AddIOp>(loc, idx, one);
-        builder.create<memref::StoreOp>(loc, next, ctx.counter, ValueRange{c0});
+            loc, builder.getI64Type(), builder.getI64IntegerAttr(1));
+        emitLoopEnd(loc, ctx, one, stack);
 
-        // Branch back to check.
-        builder.create<cf::BranchOp>(loc, ctx.check, ValueRange{stack});
+        //=== +LOOP ===
+      } else if (word == "+LOOP") {
+        consume();
 
-        // Continue after exit.
-        builder.setInsertionPointToStart(ctx.exit);
-        stack = ctx.exit->getArgument(0);
+        if (loopStack.empty()) {
+          return emitError("+LOOP without matching DO");
+        }
+
+        auto ctx = loopStack.pop_back_val();
+
+        // Pop step from data stack.
+        auto popOp = builder.create<forth::PopOp>(
+            loc, forth::StackType::get(context), builder.getI64Type(), stack);
+        stack = popOp.getOutputStack();
+        Value step = popOp.getValue();
+        emitLoopEnd(loc, ctx, step, stack);
 
         //=== Normal word ===
       } else {
