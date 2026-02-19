@@ -284,8 +284,11 @@ def _parse_array_type(type_spec: str) -> int:
     return int(size_str)
 
 
-def _parse_kernel_name(forth_source: str) -> str:
-    """Parse '\\! kernel <name>' from Forth source header."""
+def _iter_header_directives(forth_source: str) -> Generator[tuple[str, list[str]]]:
+    """Yield (keyword, parts) for each \\! directive in the Forth header.
+
+    Strips comments (-- ...) and splits on whitespace. keyword is lowercased.
+    """
     for line in forth_source.splitlines():
         stripped = line.strip()
         if not stripped.startswith("\\!"):
@@ -296,7 +299,14 @@ def _parse_kernel_name(forth_source: str) -> str:
         if not directive:
             continue
         parts = directive.split()
-        if parts and parts[0].lower() == "kernel":
+        if parts:
+            yield parts[0].lower(), parts
+
+
+def _parse_kernel_name(forth_source: str) -> str:
+    """Parse '\\! kernel <name>' from Forth source header."""
+    for keyword, parts in _iter_header_directives(forth_source):
+        if keyword == "kernel":
             if len(parts) < 2:
                 msg = "Invalid header line: expected '\\! kernel <name>'"
                 raise ValueError(msg)
@@ -312,17 +322,8 @@ def _parse_param_declarations(forth_source: str) -> list[tuple[str, int]]:
     Scalar params are not supported by the GPU runner.
     """
     decls = []
-    for line in forth_source.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("\\!"):
-            continue
-        directive = stripped[2:].strip()
-        if "--" in directive:
-            directive = directive.split("--", 1)[0].strip()
-        if not directive:
-            continue
-        parts = directive.split()
-        if not parts or parts[0].lower() != "param":
+    for keyword, parts in _iter_header_directives(forth_source):
+        if keyword != "param":
             continue
         if len(parts) < 3:
             msg = "Invalid header line: expected '\\! param <name> <type>'"
@@ -362,7 +363,7 @@ class KernelRunner:
         kernel_name = _parse_kernel_name(forth_source)
         decls = _parse_param_declarations(forth_source)
         if not decls:
-            msg = "Forth source has no 'param' declarations"
+            msg = "Forth source has no '\\! param' declarations"
             raise ValueError(msg)
 
         params = params or {}

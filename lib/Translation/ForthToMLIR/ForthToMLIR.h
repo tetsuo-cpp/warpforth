@@ -25,6 +25,7 @@ struct ParamDecl {
 };
 
 /// A declared shared memory region: `shared <name> <type>`.
+/// TODO: Not yet consumed — scaffolding for shared memory support.
 struct SharedDecl {
   std::string name;
   bool isArray = false;
