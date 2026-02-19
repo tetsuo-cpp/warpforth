@@ -588,7 +588,38 @@ LogicalResult ForthParser::parseBody(Value &stack) {
           return emitError("UNLOOP without matching DO");
         }
 
-        (void)loopStack.pop_back_val();
+        // No-op: loop control uses CFG blocks and a memref counter, not the
+        // Forth stack, so there is nothing to discard. We keep the loopStack
+        // intact so that LOOP can still find its matching DO.
+
+        //=== EXIT ===
+      } else if (word == "EXIT") {
+        consume();
+
+        if (!inWordDefinition) {
+          return emitError("EXIT outside word definition");
+        }
+
+        Region *parentRegion = builder.getInsertionBlock()->getParent();
+
+        // Create a block that performs the return.
+        auto *returnBlock = createStackBlock(parentRegion, loc);
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPointToStart(returnBlock);
+          builder.create<func::ReturnOp>(loc, returnBlock->getArgument(0));
+        }
+
+        // Use a dummy cond_br to keep the dead block structurally reachable,
+        // matching the pattern used by LEAVE.
+        auto *deadBlock = createStackBlock(parentRegion, loc);
+        Value cond = builder.create<arith::ConstantOp>(
+            loc, builder.getI1Type(), builder.getBoolAttr(true));
+        builder.create<cf::CondBranchOp>(loc, cond, returnBlock,
+                                         ValueRange{stack}, deadBlock,
+                                         ValueRange{stack});
+        builder.setInsertionPointToStart(deadBlock);
+        stack = deadBlock->getArgument(0);
 
         //=== DO ===
       } else if (word == "DO") {
