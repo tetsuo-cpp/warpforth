@@ -557,6 +557,39 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         builder.setInsertionPointToStart(exitBlock);
         stack = exitBlock->getArgument(0);
 
+        //=== LEAVE ===
+      } else if (word == "LEAVE") {
+        consume();
+
+        if (loopStack.empty()) {
+          return emitError("LEAVE without matching DO");
+        }
+
+        Region *parentRegion = builder.getInsertionBlock()->getParent();
+        auto &ctx = loopStack.back();
+
+        // Continue parsing in a dead block to avoid inserting after a
+        // terminator. Use a dummy cond_br to create a reachable dead block that
+        // carries a stack argument, keeping cf->memref type conversion
+        // consistent.
+        auto *deadBlock = createStackBlock(parentRegion, loc);
+        Value cond = builder.create<arith::ConstantOp>(
+            loc, builder.getI1Type(), builder.getBoolAttr(true));
+        builder.create<cf::CondBranchOp>(loc, cond, ctx.exit, ValueRange{stack},
+                                         deadBlock, ValueRange{stack});
+        builder.setInsertionPointToStart(deadBlock);
+        stack = deadBlock->getArgument(0);
+
+        //=== UNLOOP ===
+      } else if (word == "UNLOOP") {
+        consume();
+
+        if (loopStack.empty()) {
+          return emitError("UNLOOP without matching DO");
+        }
+
+        (void)loopStack.pop_back_val();
+
         //=== DO ===
       } else if (word == "DO") {
         consume();
