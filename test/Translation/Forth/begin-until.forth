@@ -14,4 +14,5 @@
 \ CHECK-NEXT:  cf.cond_br %[[FLAG]], ^bb2(%[[PF]] : !forth.stack), ^bb1(%[[PF]] : !forth.stack)
 \ CHECK:     ^bb2(%[[B2:.*]]: !forth.stack):
 \ CHECK-NEXT:  return
+\! kernel main
 10 BEGIN 1 - DUP 0= UNTIL

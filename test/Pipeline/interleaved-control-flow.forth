@@ -22,7 +22,8 @@
 \ MID: cf.cond_br
 \ MID: cf.br
 
-PARAM DATA 4
+\! kernel main
+\! param DATA i64[4]
 : multi-while
   BEGIN DUP 10 > WHILE DUP 2 MOD 0= WHILE 1 - REPEAT DROP THEN ;
 : while-until

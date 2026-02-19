@@ -22,4 +22,5 @@
 \ CHECK: %[[S18:.*]] = forth.literal %[[S17]]
 \ CHECK: %[[S19:.*]] = forth.literal %[[S18]]
 \ CHECK: %{{.*}} = forth.ge %[[S19]]
+\! kernel main
 1 2 = 3 4 < 5 6 > 0 0= 7 8 <> 9 10 <= 11 12 >=

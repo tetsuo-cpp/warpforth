@@ -28,4 +28,5 @@
 \ CHECK-NEXT:  cf.cond_br %[[CROSSED]], ^bb2(%[[PUSH]] : !forth.stack), ^bb1(%[[PUSH]] : !forth.stack)
 \ CHECK:     ^bb2(%[[B2:.*]]: !forth.stack):
 \ CHECK-NEXT:  return
+\! kernel main
 10 0 DO I LOOP

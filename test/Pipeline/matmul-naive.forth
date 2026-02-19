@@ -7,9 +7,10 @@
 \ Verify the kernel signature at the memref+gpu stage.
 \ MID: gpu.func @main(%arg0: memref<8xi64> {forth.param_name = "A"}, %arg1: memref<12xi64> {forth.param_name = "B"}, %arg2: memref<6xi64> {forth.param_name = "C"}) kernel
 
-PARAM A 8
-PARAM B 12
-PARAM C 6
+\! kernel main
+\! param A i64[8]
+\! param B i64[12]
+\! param C i64[6]
 
 \ M=2, N=3, K=4. One thread computes C[row, col] where gid = row*N + col.
 GLOBAL-ID

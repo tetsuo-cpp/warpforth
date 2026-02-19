@@ -15,5 +15,6 @@
 \ CHECK: ^bb[[#RET]](%[[R:.*]]: !forth.stack):
 \ CHECK: return %[[R]] : !forth.stack
 
+\! kernel main
 : FIND-FIVE  10 0 DO I 5 = IF UNLOOP EXIT THEN LOOP 0 ;
 FIND-FIVE

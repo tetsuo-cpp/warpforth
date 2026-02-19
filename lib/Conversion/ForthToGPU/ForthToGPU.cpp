@@ -182,7 +182,7 @@ private:
 
   void convertFuncToGPU(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
                         IRRewriter &rewriter) {
-    bool isKernel = funcOp.getName() == "main";
+    bool isKernel = funcOp->hasAttr("forth.kernel");
 
     if (isKernel) {
       auto gpuFunc = createGPUFunc(funcOp, gpuModule, rewriter);

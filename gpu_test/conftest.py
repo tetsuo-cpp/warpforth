@@ -273,16 +273,66 @@ class VastSession:
         )
 
 
-def _parse_param_declarations(forth_source: str) -> list[tuple[str, int]]:
-    """Parse 'param <name> <size>' declarations from Forth source.
+def _parse_array_type(type_spec: str) -> int:
+    if not type_spec.endswith("]"):
+        msg = f"Invalid array type spec: {type_spec}"
+        raise ValueError(msg)
+    base, size_str = type_spec[:-1].split("[", 1)
+    if base.lower() != "i64":
+        msg = f"Unsupported base type: {base}"
+        raise ValueError(msg)
+    return int(size_str)
 
-    Returns list of (name, size) in declaration order.
+
+def _parse_kernel_name(forth_source: str) -> str:
+    """Parse '\\! kernel <name>' from Forth source header."""
+    for line in forth_source.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("\\!"):
+            continue
+        directive = stripped[2:].strip()
+        if "--" in directive:
+            directive = directive.split("--", 1)[0].strip()
+        if not directive:
+            continue
+        parts = directive.split()
+        if parts and parts[0].lower() == "kernel":
+            if len(parts) < 2:
+                msg = "Invalid header line: expected '\\! kernel <name>'"
+                raise ValueError(msg)
+            return parts[1]
+    msg = "Forth source has no '\\! kernel' declaration"
+    raise ValueError(msg)
+
+
+def _parse_param_declarations(forth_source: str) -> list[tuple[str, int]]:
+    """Parse '\\! param <name> <type>' declarations from Forth source.
+
+    Returns list of (name, size) for array params in declaration order.
+    Scalar params are not supported by the GPU runner.
     """
     decls = []
     for line in forth_source.splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and parts[0].upper() == "PARAM":
-            decls.append((parts[1], int(parts[2])))
+        stripped = line.strip()
+        if not stripped.startswith("\\!"):
+            continue
+        directive = stripped[2:].strip()
+        if "--" in directive:
+            directive = directive.split("--", 1)[0].strip()
+        if not directive:
+            continue
+        parts = directive.split()
+        if not parts or parts[0].lower() != "param":
+            continue
+        if len(parts) < 3:
+            msg = "Invalid header line: expected '\\! param <name> <type>'"
+            raise ValueError(msg)
+        name = parts[1]
+        type_spec = parts[2]
+        if "[" not in type_spec:
+            msg = "Scalar params are not supported by the GPU runner yet"
+            raise ValueError(msg)
+        decls.append((name, _parse_array_type(type_spec)))
     return decls
 
 
@@ -308,7 +358,8 @@ class KernelRunner:
         The params dict maps param names to initial values (padded with zeros to the
         declared size). Params not in the dict are zero-initialized.
         """
-        # Parse param declarations to determine buffer sizes
+        # Parse kernel name and param declarations
+        kernel_name = _parse_kernel_name(forth_source)
         decls = _parse_param_declarations(forth_source)
         if not decls:
             msg = "Forth source has no 'param' declarations"
@@ -330,7 +381,12 @@ class KernelRunner:
             ptx_path.unlink()
 
         # Build remote command
-        cmd_parts = [f"{REMOTE_TMP}/warpforth-runner", f"{REMOTE_TMP}/kernel.ptx"]
+        cmd_parts = [
+            f"{REMOTE_TMP}/warpforth-runner",
+            f"{REMOTE_TMP}/kernel.ptx",
+            "--kernel",
+            kernel_name,
+        ]
 
         for name, size in decls:
             values = params.get(name, [])

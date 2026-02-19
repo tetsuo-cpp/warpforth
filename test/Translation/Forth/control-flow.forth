@@ -13,6 +13,7 @@
 \ CHECK:     ^bb2(%[[B2:.*]]: !forth.stack):
 \ CHECK-NEXT:  %[[L99:.*]] = forth.literal %[[B2]] 99 : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  cf.br ^bb3(%[[L99]] : !forth.stack)
+\! kernel main
 1 IF 42 ELSE 99 THEN
 
 \ Basic IF/THEN (no ELSE - fallthrough on false)

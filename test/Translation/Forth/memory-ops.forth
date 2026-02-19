@@ -9,5 +9,6 @@
 \ Test CELLS produces literal 8 + mul
 \ CHECK: forth.literal %{{.*}} 8
 \ CHECK-NEXT: forth.mul
+\! kernel main
 1 @ 2 3 !
 4 CELLS

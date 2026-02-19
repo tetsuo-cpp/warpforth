@@ -632,14 +632,23 @@ struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
       return rewriter.notifyMatchFailure(
           op, "no function argument with param_name: " + paramName);
 
-    // Extract pointer as index, then cast to i64
-    Value ptrIndex =
-        rewriter.create<memref::ExtractAlignedPointerAsIndexOp>(loc, memrefArg);
-    Value ptrI64 = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getI64Type(), ptrIndex);
+    Value valueToPush;
+    if (auto memrefType = dyn_cast<MemRefType>(memrefArg.getType())) {
+      // Extract pointer as index, then cast to i64
+      Value ptrIndex = rewriter.create<memref::ExtractAlignedPointerAsIndexOp>(
+          loc, memrefArg);
+      valueToPush = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getI64Type(), ptrIndex);
+    } else if (memrefArg.getType().isInteger(64)) {
+      // Scalar param: push value directly.
+      valueToPush = memrefArg;
+    } else {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported param argument type for param_ref");
+    }
 
     // Push onto stack
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, ptrI64);
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, valueToPush);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();

@@ -12,8 +12,9 @@
 \ MID: llvm.store
 \ MID: gpu.return
 
-PARAM INPUT 256
-PARAM OUTPUT 256
+\! kernel main
+\! param INPUT i64[256]
+\! param OUTPUT i64[256]
 GLOBAL-ID CELLS INPUT + @
 2 *
 GLOBAL-ID CELLS OUTPUT + !

@@ -4,6 +4,7 @@
 \ CHECK: func.func private @main(%arg0: memref<256xi64> {forth.param_name = "DATA"}, %arg1: memref<128xi64> {forth.param_name = "WEIGHTS"})
 \ CHECK: forth.param_ref %{{.*}} "DATA"
 \ CHECK: forth.param_ref %{{.*}} "WEIGHTS"
-PARAM DATA 256
-PARAM WEIGHTS 128
+\! kernel main
+\! param DATA i64[256]
+\! param WEIGHTS i64[128]
 DATA WEIGHTS

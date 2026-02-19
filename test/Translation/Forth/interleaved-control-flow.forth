@@ -44,6 +44,7 @@
 \ CHECK-NEXT:  %{{.*}} = forth.drop
 \ CHECK-NEXT:  cf.br ^bb3
 
+\! kernel main
 : multi-while
   BEGIN DUP 10 > WHILE DUP 2 MOD 0= WHILE 1 - REPEAT DROP THEN ;
 

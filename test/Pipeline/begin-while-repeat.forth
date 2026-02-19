@@ -11,5 +11,6 @@
 \ MID: cf.cond_br
 \ MID: gpu.return
 
-PARAM DATA 4
+\! kernel main
+\! param DATA i64[4]
 10 BEGIN DUP 0 > WHILE 1 - REPEAT DATA 0 CELLS + !
