@@ -399,14 +399,28 @@ std::pair<Value, Value> ForthParser::emitPopFlag(Location loc, Value stack) {
 
 void ForthParser::emitLoopEnd(Location loc, const LoopContext &ctx, Value step,
                               Value &stack) {
-  // Increment counter: load, add step, store.
-  Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
-  Value idx = builder.create<memref::LoadOp>(loc, ctx.counter, ValueRange{c0});
-  Value next = builder.create<arith::AddIOp>(loc, idx, step);
-  builder.create<memref::StoreOp>(loc, next, ctx.counter, ValueRange{c0});
+  auto i64Type = builder.getI64Type();
 
-  // Branch back to check.
-  builder.create<cf::BranchOp>(loc, ctx.check, ValueRange{stack});
+  // Load old counter, compute new = old + step, store.
+  Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
+  Value oldIdx =
+      builder.create<memref::LoadOp>(loc, ctx.counter, ValueRange{c0});
+  Value newIdx = builder.create<arith::AddIOp>(loc, oldIdx, step);
+  builder.create<memref::StoreOp>(loc, newIdx, ctx.counter, ValueRange{c0});
+
+  // Crossing test: ((oldIdx - limit) XOR (newIdx - limit)) < 0
+  // This correctly handles both positive and negative step values.
+  Value oldDiff = builder.create<arith::SubIOp>(loc, oldIdx, ctx.limit);
+  Value newDiff = builder.create<arith::SubIOp>(loc, newIdx, ctx.limit);
+  Value xorVal = builder.create<arith::XOrIOp>(loc, oldDiff, newDiff);
+  Value zero = builder.create<arith::ConstantOp>(loc, i64Type,
+                                                 builder.getI64IntegerAttr(0));
+  Value crossed = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
+                                                xorVal, zero);
+
+  // If crossed → exit, otherwise → loop back to body.
+  builder.create<cf::CondBranchOp>(loc, crossed, ctx.exit, ValueRange{stack},
+                                   ctx.body, ValueRange{stack});
 
   // Continue after exit.
   builder.setInsertionPointToStart(ctx.exit);
@@ -660,27 +674,15 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
         builder.create<memref::StoreOp>(loc, start, counter, ValueRange{c0});
 
-        // Create check, body, and exit blocks.
-        auto *checkBlock = createStackBlock(parentRegion, loc);
+        // Create body and exit blocks (post-test loop: always enters once).
         auto *bodyBlock = createStackBlock(parentRegion, loc);
         auto *exitBlock = createStackBlock(parentRegion, loc);
 
-        // Branch to check.
-        builder.create<cf::BranchOp>(loc, checkBlock, ValueRange{s2});
-
-        // --- Check block: load counter, compare < limit ---
-        builder.setInsertionPointToStart(checkBlock);
-        Value checkC0 = builder.create<arith::ConstantIndexOp>(loc, 0);
-        Value idx =
-            builder.create<memref::LoadOp>(loc, counter, ValueRange{checkC0});
-        Value cond = builder.create<arith::CmpIOp>(
-            loc, arith::CmpIPredicate::slt, idx, limit);
-        builder.create<cf::CondBranchOp>(
-            loc, cond, bodyBlock, ValueRange{checkBlock->getArgument(0)},
-            exitBlock, ValueRange{checkBlock->getArgument(0)});
+        // Branch directly to body.
+        builder.create<cf::BranchOp>(loc, bodyBlock, ValueRange{s2});
 
         // Push loop context for I/J/K.
-        loopStack.push_back({counter, limit, checkBlock, exitBlock});
+        loopStack.push_back({counter, limit, bodyBlock, exitBlock});
 
         // Continue parsing in body.
         builder.setInsertionPointToStart(bodyBlock);

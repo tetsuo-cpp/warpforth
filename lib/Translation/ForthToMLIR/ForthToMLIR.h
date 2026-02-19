@@ -92,7 +92,7 @@ private:
   struct LoopContext {
     Value counter; // memref<1xi64> alloca for the loop counter
     Value limit;   // i64 loop limit
-    Block *check;  // condition check block
+    Block *body;   // loop body block
     Block *exit;   // loop exit block
   };
   SmallVector<LoopContext> loopStack;
@@ -128,7 +128,7 @@ private:
   LogicalResult parseBody(Value &stack);
 
   /// Emit the common loop-end logic for LOOP and +LOOP:
-  /// load counter, add step, store, branch back to check block.
+  /// load counter, add step, store, crossing test, cond_br to exit or body.
   void emitLoopEnd(Location loc, const LoopContext &ctx, Value step,
                    Value &stack);
 

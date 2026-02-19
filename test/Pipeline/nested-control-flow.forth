@@ -8,8 +8,7 @@
 \ MID: gpu.module @warpforth_module
 \ MID: gpu.func @main(%arg0: memref<4xi64> {forth.param_name = "DATA"}) kernel
 \ MID: cf.br
-\ MID: cf.cond_br
-\ MID: gpu.return
+\ MID: arith.xori
 
 PARAM DATA 4
 3 0 DO 4 0 DO J I + LOOP LOOP DATA 0 CELLS + !
