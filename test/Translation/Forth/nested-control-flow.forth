@@ -12,6 +12,7 @@
 1 IF 2 IF 3 THEN THEN
 
 \ === IF inside DO ===
+\ After IF/THEN merge, set up DO loop: 10 0 DO
 \ CHECK:     ^bb2(%[[B2:.*]]: !forth.stack):
 \ CHECK-NEXT:  %[[L10:.*]] = forth.literal %[[B2]] 10 : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[L0A:.*]] = forth.literal %[[L10]] 0 : !forth.stack -> !forth.stack
@@ -30,43 +31,35 @@
 \ CHECK:     ^bb4(%[[B4:.*]]: !forth.stack):
 \ CHECK-NEXT:  cf.br ^bb2(%[[B4]] : !forth.stack)
 
-\ DO loop header: check index < limit
+\ DO loop body (post-test: no check block): I 5 > IF I THEN
 \ CHECK:     ^bb5(%[[B5:.*]]: !forth.stack):
-\ CHECK:       arith.cmpi slt
-\ CHECK-NEXT:  cf.cond_br %{{.*}}, ^bb6(%[[B5]] : !forth.stack), ^bb7(%[[B5]] : !forth.stack)
-
-\ DO loop body: I 5 > IF I THEN
-\ CHECK:     ^bb6(%[[B6:.*]]: !forth.stack):
-\ CHECK:       forth.push_value %[[B6]]
+\ CHECK:       forth.push_value %[[B5]]
 \ CHECK:       forth.literal %{{.*}} 5
 \ CHECK-NEXT:  %{{.*}} = forth.gt
 \ CHECK:       forth.pop_flag
-\ CHECK-NEXT:  cf.cond_br %{{.*}}, ^bb8(%{{.*}} : !forth.stack), ^bb9(%{{.*}} : !forth.stack)
+\ CHECK-NEXT:  cf.cond_br %{{[^,]*}}, ^bb7(%{{[^)]*}} : !forth.stack), ^bb8(%{{[^)]*}} : !forth.stack)
 
 \ === Nested DO with J ===
-\ After first DO loop exits: bb7 sets up nested DO (3 0 DO)
-\ CHECK:     ^bb7(%[[B7:.*]]: !forth.stack):
-\ CHECK-NEXT:  %{{.*}} = forth.literal %[[B7]] 3
+\ After first DO loop exits: sets up nested DO (3 0 DO)
+\ CHECK:     ^bb6(%[[B6:.*]]: !forth.stack):
+\ CHECK-NEXT:  %{{.*}} = forth.literal %[[B6]] 3
 3 0 DO 4 0 DO J I + LOOP LOOP
 
 \ IF I true branch: push loop index
-\ CHECK:     ^bb8(%[[B8:.*]]: !forth.stack):
-\ CHECK:       forth.push_value %[[B8]]
-\ CHECK-NEXT:  cf.br ^bb9
+\ CHECK:     ^bb7(%[[B7:.*]]: !forth.stack):
+\ CHECK:       forth.push_value %[[B7]]
+\ CHECK-NEXT:  cf.br ^bb8
 
-\ Loop increment and back-edge
-\ CHECK:     ^bb9(%{{.*}}: !forth.stack):
+\ Loop end with crossing test and back-edge
+\ CHECK:     ^bb8(%{{.*}}: !forth.stack):
 \ CHECK:       arith.addi
 \ CHECK:       memref.store
-\ CHECK:       cf.br ^bb5
-
-\ Outer DO loop (3 0 DO) header
-\ CHECK:     ^bb10(%{{.*}}: !forth.stack):
+\ CHECK:       arith.xori
 \ CHECK:       arith.cmpi slt
 \ CHECK:       cf.cond_br
 
-\ Inner DO setup (4 0 DO)
-\ CHECK:     ^bb11(%{{.*}}: !forth.stack):
+\ Outer DO body (3 0 DO) with inner DO setup (4 0 DO)
+\ CHECK:     ^bb9(%{{.*}}: !forth.stack):
 \ CHECK:       forth.literal %{{.*}} 4
 \ CHECK:       forth.literal %{{.*}} 0
 \ CHECK:       forth.pop
@@ -75,78 +68,75 @@
 
 \ === Triple-nested DO with K ===
 \ After nested DO exits: sets up triple-nested DO (2 0 DO)
-\ CHECK:     ^bb12(%{{.*}}: !forth.stack):
+\ CHECK:     ^bb10(%{{.*}}: !forth.stack):
 \ CHECK:       forth.literal %{{.*}} 2
 2 0 DO 2 0 DO 2 0 DO K J I + + LOOP LOOP LOOP
 
-\ Inner loop of J I + (bb13 header, bb14 body)
-\ CHECK:     ^bb13(%{{.*}}: !forth.stack):
-\ CHECK:       arith.cmpi slt
-\ CHECK:       cf.cond_br
-
-\ J I + body
-\ CHECK:     ^bb14(%{{.*}}: !forth.stack):
+\ Inner loop of J I + (bb11 body)
+\ CHECK:     ^bb11(%{{.*}}: !forth.stack):
 \ CHECK:       forth.push_value
 \ CHECK:       forth.push_value
 \ CHECK:       forth.add
 
-\ Outer loop increment (bb15)
-\ CHECK:     ^bb15(%{{.*}}: !forth.stack):
-\ CHECK:       arith.addi
-\ CHECK:       cf.br ^bb10
-
-\ Triple-nested outer loop header (bb16)
-\ CHECK:     ^bb16(%{{.*}}: !forth.stack):
+\ Inner loop crossing test
+\ CHECK:       arith.xori
 \ CHECK:       arith.cmpi slt
 \ CHECK:       cf.cond_br
 
-\ Triple-nested middle loop setup (bb17)
-\ CHECK:     ^bb17(%{{.*}}: !forth.stack):
+\ Outer loop increment (bb12)
+\ CHECK:     ^bb12(%{{.*}}: !forth.stack):
+\ CHECK:       arith.addi
+\ CHECK:       arith.xori
+\ CHECK:       arith.cmpi slt
+\ CHECK:       cf.cond_br
+
+\ Triple-nested outer loop body (bb13)
+\ CHECK:     ^bb13(%{{.*}}: !forth.stack):
 \ CHECK:       forth.literal %{{.*}} 2
 \ CHECK:       forth.literal %{{.*}} 0
 
 \ === BEGIN/WHILE inside IF ===
 \ After triple-nested exits: 5 IF BEGIN DUP WHILE 1 - REPEAT THEN
-\ CHECK:     ^bb18(%{{.*}}: !forth.stack):
+\ CHECK:     ^bb14(%{{.*}}: !forth.stack):
 \ CHECK:       forth.literal %{{.*}} 5
 \ CHECK:       forth.pop_flag
 \ CHECK-NEXT:  cf.cond_br
 5 IF BEGIN DUP WHILE 1 - REPEAT THEN
 
-\ bb25: IF true branch -> jump to begin/while header
-\ CHECK:     ^bb25(%{{.*}}: !forth.stack):
-\ CHECK-NEXT:  cf.br ^bb27
+\ bb19: IF true branch -> jump to begin/while header
+\ CHECK:     ^bb19(%{{.*}}: !forth.stack):
+\ CHECK-NEXT:  cf.br ^bb21
 
-\ bb26: IF false branch (and WHILE exit) -> jump to BEGIN/UNTIL
-\ CHECK:     ^bb26(%{{.*}}: !forth.stack):
-\ CHECK-NEXT:  cf.br ^bb30
+\ bb20: IF false branch (and WHILE exit) -> jump to BEGIN/UNTIL
+\ CHECK:     ^bb20(%{{.*}}: !forth.stack):
+\ CHECK-NEXT:  cf.br ^bb24
 
 \ WHILE condition: DUP + pop_flag
-\ CHECK:     ^bb27(%{{.*}}: !forth.stack):
+\ CHECK:     ^bb21(%{{.*}}: !forth.stack):
 \ CHECK:       forth.dup
 \ CHECK:       forth.pop_flag
 \ CHECK-NEXT:  cf.cond_br
 
 \ WHILE body: 1 -
-\ CHECK:     ^bb28(%[[B28:.*]]: !forth.stack):
-\ CHECK-NEXT:  %{{.*}} = forth.literal %[[B28]] 1
+\ CHECK:     ^bb22(%[[B22:.*]]: !forth.stack):
+\ CHECK-NEXT:  %{{.*}} = forth.literal %[[B22]] 1
 \ CHECK-NEXT:  %{{.*}} = forth.sub
 
 \ === IF inside BEGIN/UNTIL ===
 \ BEGIN/UNTIL header: DUP 10 <
-\ CHECK:     ^bb30(%{{.*}}: !forth.stack):
+\ CHECK:     ^bb24(%{{.*}}: !forth.stack):
 \ CHECK:       forth.dup
 \ CHECK:       forth.literal %{{.*}} 10
 \ CHECK-NEXT:  %{{.*}} = forth.lt
 BEGIN DUP 10 < IF 1 + THEN DUP 20 = UNTIL
 
 \ IF true branch: 1 +
-\ CHECK:     ^bb31(%[[B31:.*]]: !forth.stack):
-\ CHECK-NEXT:  %{{.*}} = forth.literal %[[B31]] 1
+\ CHECK:     ^bb25(%[[B25:.*]]: !forth.stack):
+\ CHECK-NEXT:  %{{.*}} = forth.literal %[[B25]] 1
 \ CHECK-NEXT:  %{{.*}} = forth.add
 
 \ UNTIL condition: DUP 20 =
-\ CHECK:     ^bb32(%{{.*}}: !forth.stack):
+\ CHECK:     ^bb26(%{{.*}}: !forth.stack):
 \ CHECK:       forth.dup
 \ CHECK:       forth.literal %{{.*}} 20
 \ CHECK-NEXT:  %{{.*}} = forth.eq

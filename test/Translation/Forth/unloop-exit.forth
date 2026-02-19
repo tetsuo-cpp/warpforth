@@ -4,13 +4,11 @@
 
 \ CHECK: func.func private @FIND_FIVE(%{{.*}}: !forth.stack) -> !forth.stack
 \ CHECK: memref.alloca
-\ CHECK: cf.br ^bb[[#CHECK:]]
-\ CHECK: ^bb[[#CHECK]](%{{.*}}: !forth.stack):
-\ CHECK: cf.cond_br %{{.*}}, ^bb[[#BODY:]](%{{.*}}), ^bb[[#EXIT:]](%{{.*}})
+\ CHECK: cf.br ^bb[[#BODY:]]
 \ CHECK: ^bb[[#BODY]](%{{.*}}: !forth.stack):
 \ CHECK: forth.eq
 \ CHECK: cf.cond_br %{{.*}}, ^bb[[#THEN:]](%{{.*}}), ^bb[[#ENDIF:]](%{{.*}})
-\ CHECK: ^bb[[#EXIT]](%{{.*}}: !forth.stack):
+\ CHECK: ^bb[[#EXIT:]](%{{.*}}: !forth.stack):
 \ CHECK: return
 \ CHECK: ^bb[[#THEN]](%[[T:.*]]: !forth.stack):
 \ CHECK: cf.cond_br %true, ^bb[[#RET:]](%[[T]]{{.*}})

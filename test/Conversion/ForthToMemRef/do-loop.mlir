@@ -1,6 +1,6 @@
 // RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
 
-// Test: DO...LOOP with I conversion to memref with CF-based control flow
+// Test: DO...LOOP with I conversion to memref with post-test crossing check
 // Forth: 10 0 DO I LOOP
 
 // CHECK-LABEL: func.func private @main
@@ -23,24 +23,20 @@
 // CHECK: memref.store %{{.*}}, %[[COUNTER]]
 // CHECK: cf.br ^bb1
 
-// Loop header: load counter, compare < limit, cond_br
+// Loop body: push I (load counter, push to stack), crossing test
 // CHECK: ^bb1(%{{.*}}: memref<256xi64>, %{{.*}}: index):
 // CHECK: memref.load %[[COUNTER]]
-// CHECK: arith.cmpi slt
-// CHECK: cf.cond_br %{{.*}}, ^bb2(%{{.*}}: memref<256xi64>, index), ^bb3(%{{.*}}: memref<256xi64>, index)
-
-// Loop body: push I (load counter, push to stack), increment counter
-// CHECK: ^bb2(%{{.*}}: memref<256xi64>, %{{.*}}: index):
-// CHECK: memref.load %[[COUNTER]]
 // CHECK: memref.store
-// CHECK: memref.load %[[COUNTER]]
-// CHECK: arith.constant 1 : i64
 // CHECK: arith.addi
 // CHECK: memref.store %{{.*}}, %[[COUNTER]]
-// CHECK: cf.br ^bb1
+// CHECK: arith.subi
+// CHECK: arith.subi
+// CHECK: arith.xori
+// CHECK: arith.cmpi slt
+// CHECK: cf.cond_br
 
 // Exit block
-// CHECK: ^bb3(%{{.*}}: memref<256xi64>, %{{.*}}: index):
+// CHECK: ^bb2(%{{.*}}: memref<256xi64>, %{{.*}}: index):
 // CHECK: return
 
 module {
@@ -57,19 +53,19 @@ module {
   ^bb1(%3: !forth.stack):
     %c0_2 = arith.constant 0 : index
     %4 = memref.load %alloca[%c0_2] : memref<1xi64>
-    %5 = arith.cmpi slt, %4, %value_1 : i64
-    cf.cond_br %5, ^bb2(%3 : !forth.stack), ^bb3(%3 : !forth.stack)
-  ^bb2(%6: !forth.stack):
-    %c0_3 = arith.constant 0 : index
-    %7 = memref.load %alloca[%c0_3] : memref<1xi64>
-    %8 = forth.push_value %6, %7 : !forth.stack, i64 -> !forth.stack
-    %c0_4 = arith.constant 0 : index
-    %9 = memref.load %alloca[%c0_4] : memref<1xi64>
+    %5 = forth.push_value %3, %4 : !forth.stack, i64 -> !forth.stack
     %c1_i64 = arith.constant 1 : i64
-    %10 = arith.addi %9, %c1_i64 : i64
-    memref.store %10, %alloca[%c0_4] : memref<1xi64>
-    cf.br ^bb1(%8 : !forth.stack)
-  ^bb3(%11: !forth.stack):
+    %c0_3 = arith.constant 0 : index
+    %6 = memref.load %alloca[%c0_3] : memref<1xi64>
+    %7 = arith.addi %6, %c1_i64 : i64
+    memref.store %7, %alloca[%c0_3] : memref<1xi64>
+    %8 = arith.subi %6, %value_1 : i64
+    %9 = arith.subi %7, %value_1 : i64
+    %10 = arith.xori %8, %9 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %11 = arith.cmpi slt, %10, %c0_i64 : i64
+    cf.cond_br %11, ^bb2(%5 : !forth.stack), ^bb1(%5 : !forth.stack)
+  ^bb2(%12: !forth.stack):
     return
   }
 }

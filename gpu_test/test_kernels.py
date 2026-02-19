@@ -154,6 +154,24 @@ def test_do_loop(kernel_runner: KernelRunner) -> None:
     assert result == [0, 1, 2, 3, 4]
 
 
+def test_do_plus_loop(kernel_runner: KernelRunner) -> None:
+    """DO/+LOOP: write I values 0, 2, 4, 6, 8 to DATA[0..4]."""
+    result = kernel_runner.run(
+        forth_source=("PARAM DATA 256\n0\n10 0 DO\n  I OVER CELLS DATA + !\n  1 +\n2 +LOOP\nDROP"),
+        output_count=5,
+    )
+    assert result == [0, 2, 4, 6, 8]
+
+
+def test_do_plus_loop_negative(kernel_runner: KernelRunner) -> None:
+    """DO/+LOOP with negative step: count down from 10 to 1."""
+    result = kernel_runner.run(
+        forth_source=("PARAM DATA 256\n0\n0 10 DO\n  I OVER CELLS DATA + !\n  1 +\n-1 +LOOP\nDROP"),
+        output_count=10,
+    )
+    assert result == [10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
+
+
 def test_multi_while(kernel_runner: KernelRunner) -> None:
     """Multi-WHILE: two exit conditions from the same loop (interleaved CF).
 
