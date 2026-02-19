@@ -8,6 +8,7 @@ import os
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,15 @@ POLL_INTERVAL_S = 10
 POLL_TIMEOUT_S = 300
 INSTANCE_LABEL = "warpforth-test"
 REMOTE_TMP = "/tmp"  # noqa: S108
+
+
+@dataclass
+class ParamDecl:
+    """A parsed kernel parameter declaration."""
+
+    name: str
+    is_array: bool
+    size: int  # 0 for scalars
 
 
 class CompileError(Exception):
@@ -315,13 +325,13 @@ def _parse_kernel_name(forth_source: str) -> str:
     raise ValueError(msg)
 
 
-def _parse_param_declarations(forth_source: str) -> list[tuple[str, int]]:
+def _parse_param_declarations(forth_source: str) -> list[ParamDecl]:
     """Parse '\\! param <name> <type>' declarations from Forth source.
 
-    Returns list of (name, size) for array params in declaration order.
-    Scalar params are not supported by the GPU runner.
+    Returns list of ParamDecl in declaration order. Supports both array
+    params (e.g. i64[256]) and scalar params (e.g. i64).
     """
-    decls = []
+    decls: list[ParamDecl] = []
     for keyword, parts in _iter_header_directives(forth_source):
         if keyword != "param":
             continue
@@ -330,10 +340,14 @@ def _parse_param_declarations(forth_source: str) -> list[tuple[str, int]]:
             raise ValueError(msg)
         name = parts[1]
         type_spec = parts[2]
-        if "[" not in type_spec:
-            msg = "Scalar params are not supported by the GPU runner yet"
-            raise ValueError(msg)
-        decls.append((name, _parse_array_type(type_spec)))
+        if "[" in type_spec:
+            size = _parse_array_type(type_spec)
+            decls.append(ParamDecl(name=name, is_array=True, size=size))
+        else:
+            if type_spec.lower() != "i64":
+                msg = f"Unsupported scalar type: {type_spec}"
+                raise ValueError(msg)
+            decls.append(ParamDecl(name=name, is_array=False, size=0))
     return decls
 
 
@@ -347,7 +361,7 @@ class KernelRunner:
     def run(
         self,
         forth_source: str,
-        params: dict[str, list[int]] | None = None,
+        params: dict[str, list[int] | int] | None = None,
         grid: tuple[int, int, int] = (1, 1, 1),
         block: tuple[int, int, int] = (1, 1, 1),
         output_param: int = 0,
@@ -356,8 +370,10 @@ class KernelRunner:
         """Compile Forth source locally, execute on remote GPU, return output values.
 
         Param buffer sizes are derived from the Forth source's 'param' declarations.
-        The params dict maps param names to initial values (padded with zeros to the
-        declared size). Params not in the dict are zero-initialized.
+        The params dict maps param names to initial values:
+          - Array params: list[int] (padded with zeros to declared size)
+          - Scalar params: int
+        Params not in the dict are zero-initialized.
         """
         # Parse kernel name and param declarations
         kernel_name = _parse_kernel_name(forth_source)
@@ -367,6 +383,12 @@ class KernelRunner:
             raise ValueError(msg)
 
         params = params or {}
+
+        # Validate output_param is not a scalar
+        if output_param < len(decls) and not decls[output_param].is_array:
+            name = decls[output_param].name
+            msg = f"output_param {output_param} ('{name}') is a scalar and cannot be read back"
+            raise ValueError(msg)
 
         # Compile locally
         ptx = self.compiler.compile_source(forth_source)
@@ -389,12 +411,22 @@ class KernelRunner:
             kernel_name,
         ]
 
-        for name, size in decls:
-            values = params.get(name, [])
-            buf = [0] * size
-            for i, v in enumerate(values):
-                buf[i] = v
-            cmd_parts.extend(["--param", ",".join(str(v) for v in buf)])
+        for decl in decls:
+            if decl.is_array:
+                values = params.get(decl.name, [])
+                if not isinstance(values, list):
+                    msg = f"Array param '{decl.name}' expects a list, got {type(values).__name__}"
+                    raise TypeError(msg)
+                buf = [0] * decl.size
+                for i, v in enumerate(values):
+                    buf[i] = v
+                cmd_parts.extend(["--param", f"i64[]:{','.join(str(v) for v in buf)}"])
+            else:
+                value = params.get(decl.name, 0)
+                if isinstance(value, list):
+                    msg = f"Scalar param '{decl.name}' expects an int, got list"
+                    raise TypeError(msg)
+                cmd_parts.extend(["--param", f"i64:{value}"])
 
         cmd_parts.extend(
             [

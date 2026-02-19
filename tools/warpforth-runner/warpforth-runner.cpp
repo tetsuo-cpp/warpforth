@@ -5,7 +5,7 @@
 /// -std=c++17`.
 ///
 /// Usage:
-///   warpforth-runner kernel.ptx --param 1,2,3 --param 0,0,0,0 \
+///   warpforth-runner kernel.ptx --param i64[]:1,2,3 --param i64:42 \
 ///       --grid 4,1,1 --block 64,1,1 --kernel main \
 ///       --output-param 0 --output-count 3
 
@@ -32,7 +32,10 @@
     }                                                                          \
   } while (0)
 
+enum class ParamKind { Array, Scalar };
+
 struct Param {
+  ParamKind kind = ParamKind::Array;
   std::vector<int64_t> values;
 };
 
@@ -51,11 +54,47 @@ static Dims parseDims(const char *s) {
 
 static Param parseParam(const char *s) {
   Param p;
-  std::istringstream iss(s);
+  std::string input(s);
+
+  // Find the type prefix (everything before the first ':')
+  auto colonPos = input.find(':');
+  if (colonPos == std::string::npos) {
+    fprintf(stderr,
+            "Error: --param requires type prefix (e.g. i64:42 or "
+            "i64[]:1,2,3), got: %s\n",
+            s);
+    exit(1);
+  }
+
+  std::string typePrefix = input.substr(0, colonPos);
+  std::string valueStr = input.substr(colonPos + 1);
+
+  // Determine kind from type prefix
+  if (typePrefix == "i64[]") {
+    p.kind = ParamKind::Array;
+  } else if (typePrefix == "i64") {
+    p.kind = ParamKind::Scalar;
+  } else {
+    fprintf(stderr,
+            "Error: unsupported param type '%s' (expected i64 or "
+            "i64[]), got: %s\n",
+            typePrefix.c_str(), s);
+    exit(1);
+  }
+
+  // Parse values
+  std::istringstream iss(valueStr);
   std::string token;
   while (std::getline(iss, token, ',')) {
     p.values.push_back(std::stoll(token));
   }
+
+  if (p.kind == ParamKind::Scalar && p.values.size() != 1) {
+    fprintf(stderr, "Error: scalar param expects exactly one value, got: %s\n",
+            s);
+    exit(1);
+  }
+
   return p;
 }
 
@@ -126,8 +165,8 @@ int main(int argc, char **argv) {
 
   if (!ptxFile) {
     fprintf(stderr, "Usage: warpforth-runner kernel.ptx --kernel NAME "
-                    "[--param V,...] [--grid X,Y,Z] [--block X,Y,Z] "
-                    "[--output-param N] [--output-count N]\n");
+                    "[--param i64[]:V,...] [--param i64:V] [--grid X,Y,Z] "
+                    "[--block X,Y,Z] [--output-param N] [--output-count N]\n");
     return 1;
   }
 
@@ -144,6 +183,12 @@ int main(int argc, char **argv) {
   if (outputParam < 0 || outputParam >= static_cast<int>(params.size())) {
     fprintf(stderr, "Error: output-param %d out of range (have %zu params)\n",
             outputParam, params.size());
+    return 1;
+  }
+
+  if (params[outputParam].kind == ParamKind::Scalar) {
+    fprintf(stderr, "Error: output-param %d is a scalar (cannot read back)\n",
+            outputParam);
     return 1;
   }
 
@@ -166,18 +211,25 @@ int main(int argc, char **argv) {
   CUfunction func;
   CHECK_CU(cuModuleGetFunction(&func, module, kernelName));
 
-  // Allocate device buffers and copy data
-  std::vector<CUdeviceptr> devicePtrs(params.size());
+  // Allocate device buffers (arrays) or store scalar values
+  std::vector<CUdeviceptr> devicePtrs(params.size(), 0);
+  std::vector<int64_t> scalarValues(params.size(), 0);
   for (size_t i = 0; i < params.size(); ++i) {
-    size_t bytes = params[i].values.size() * sizeof(int64_t);
-    CHECK_CU(cuMemAlloc(&devicePtrs[i], bytes));
-    CHECK_CU(cuMemcpyHtoD(devicePtrs[i], params[i].values.data(), bytes));
+    if (params[i].kind == ParamKind::Array) {
+      size_t bytes = params[i].values.size() * sizeof(int64_t);
+      CHECK_CU(cuMemAlloc(&devicePtrs[i], bytes));
+      CHECK_CU(cuMemcpyHtoD(devicePtrs[i], params[i].values.data(), bytes));
+    } else {
+      scalarValues[i] = params[i].values[0];
+    }
   }
 
   // Set up kernel parameters — Driver API expects array of pointers to args
   std::vector<void *> kernelArgs(params.size());
   for (size_t i = 0; i < params.size(); ++i) {
-    kernelArgs[i] = &devicePtrs[i];
+    kernelArgs[i] = (params[i].kind == ParamKind::Array)
+                        ? (void *)&devicePtrs[i]
+                        : (void *)&scalarValues[i];
   }
 
   // Launch kernel
@@ -201,9 +253,10 @@ int main(int argc, char **argv) {
   }
   printf("\n");
 
-  // Cleanup
-  for (auto &ptr : devicePtrs) {
-    cuMemFree(ptr);
+  // Cleanup — only free device memory for array params
+  for (size_t i = 0; i < params.size(); ++i) {
+    if (params[i].kind == ParamKind::Array)
+      cuMemFree(devicePtrs[i]);
   }
   cuModuleUnload(module);
   cuCtxDestroy(ctx);

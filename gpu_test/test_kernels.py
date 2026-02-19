@@ -280,6 +280,26 @@ def test_multi_param(kernel_runner: KernelRunner) -> None:
     assert result == [20, 40, 60, 80]
 
 
+def test_scalar_param(kernel_runner: KernelRunner) -> None:
+    """Scalar + array params: each thread multiplies INPUT[i] by SCALE, writes OUTPUT[i]."""
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n\\! param SCALE i64\n"
+            "\\! param INPUT i64[4]\n"
+            "\\! param OUTPUT i64[4]\n"
+            "GLOBAL-ID\n"
+            "DUP CELLS INPUT + @\n"
+            "SCALE *\n"
+            "SWAP CELLS OUTPUT + !"
+        ),
+        params={"SCALE": 3, "INPUT": [10, 20, 30, 40]},
+        block=(4, 1, 1),
+        output_param=2,
+        output_count=4,
+    )
+    assert result == [30, 60, 90, 120]
+
+
 # --- Matmul ---
 
 
