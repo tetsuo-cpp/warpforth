@@ -234,6 +234,43 @@ def test_multi_param(kernel_runner: KernelRunner) -> None:
     assert result == [20, 40, 60, 80]
 
 
+# --- Matmul ---
+
+
+def test_naive_matmul_i64(kernel_runner: KernelRunner) -> None:
+    """Naive i64 matmul: C = A(2x4) * B(4x3) -> C(2x3)."""
+    # Work partition: one thread per output element.
+    # GLOBAL-ID maps to (row, col) with row = gid / N, col = gid MOD N.
+    result = kernel_runner.run(
+        forth_source=(
+            "PARAM A 8\n"
+            "PARAM B 12\n"
+            "PARAM C 6\n"
+            "GLOBAL-ID\n"
+            "DUP 3 /\n"
+            "SWAP 3 MOD\n"
+            "0\n"
+            "4 0 DO\n"
+            "2 PICK\n"
+            "I SWAP 4 * +\n"
+            "CELLS A + @\n"
+            "I 3 * 3 PICK + CELLS B + @\n"
+            "* +\n"
+            "LOOP\n"
+            "2 PICK 3 * 2 PICK +\n"
+            "CELLS C + !"
+        ),
+        params={
+            "A": [1, 2, 3, 4, 5, 6, 7, 8],
+            "B": [1, 0, 2, 0, 1, 2, 1, 0, 1, 2, 1, 0],
+        },
+        block=(6, 1, 1),
+        output_param=2,
+        output_count=6,
+    )
+    assert result == [12, 6, 9, 28, 14, 29]
+
+
 # --- User-Defined Words ---
 
 
