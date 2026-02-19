@@ -7,5 +7,6 @@
 \ CHECK: }
 \ CHECK: func.func private @main()
 \ CHECK:   call @DOUBLE(%{{.*}}) : (!forth.stack) -> !forth.stack
+\! kernel main
 : DOUBLE DUP + ;
 5 DOUBLE

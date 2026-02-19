@@ -9,5 +9,6 @@
 \ CHECK: ^[[RET]](%[[R:.*]]: !forth.stack):
 \ CHECK:   return %[[R]] : !forth.stack
 
+\! kernel main
 : EARLY-EXIT 1 IF EXIT THEN 42 ;
 EARLY-EXIT

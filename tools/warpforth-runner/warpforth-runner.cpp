@@ -6,7 +6,8 @@
 ///
 /// Usage:
 ///   warpforth-runner kernel.ptx --param 1,2,3 --param 0,0,0,0 \
-///       --grid 4,1,1 --block 64,1,1 --output-param 0 --output-count 3
+///       --grid 4,1,1 --block 64,1,1 --kernel main \
+///       --output-param 0 --output-count 3
 
 #include <cuda.h>
 
@@ -71,6 +72,7 @@ static std::string readFile(const char *path) {
 
 int main(int argc, char **argv) {
   const char *ptxFile = nullptr;
+  const char *kernelName = nullptr;
   std::vector<Param> params;
   Dims grid, block;
   int outputParam = 0;
@@ -108,6 +110,12 @@ int main(int argc, char **argv) {
         return 1;
       }
       outputCount = atoi(argv[i]);
+    } else if (strcmp(argv[i], "--kernel") == 0) {
+      if (++i >= argc) {
+        fprintf(stderr, "Error: --kernel requires a value\n");
+        return 1;
+      }
+      kernelName = argv[i];
     } else if (argv[i][0] == '-') {
       fprintf(stderr, "Error: unknown option %s\n", argv[i]);
       return 1;
@@ -117,9 +125,14 @@ int main(int argc, char **argv) {
   }
 
   if (!ptxFile) {
-    fprintf(stderr, "Usage: warpforth-runner kernel.ptx [--param V,...] "
-                    "[--grid X,Y,Z] [--block X,Y,Z] "
+    fprintf(stderr, "Usage: warpforth-runner kernel.ptx --kernel NAME "
+                    "[--param V,...] [--grid X,Y,Z] [--block X,Y,Z] "
                     "[--output-param N] [--output-count N]\n");
+    return 1;
+  }
+
+  if (!kernelName) {
+    fprintf(stderr, "Error: --kernel NAME is required\n");
     return 1;
   }
 
@@ -151,7 +164,7 @@ int main(int argc, char **argv) {
   CHECK_CU(cuModuleLoadData(&module, ptx.c_str()));
 
   CUfunction func;
-  CHECK_CU(cuModuleGetFunction(&func, module, "main"));
+  CHECK_CU(cuModuleGetFunction(&func, module, kernelName));
 
   // Allocate device buffers and copy data
   std::vector<CUdeviceptr> devicePtrs(params.size());

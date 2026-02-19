@@ -9,6 +9,7 @@
 \ CHECK-NEXT:  %[[L2:.*]] = forth.literal %[[B1]] 2 : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[PF2:.*]], %[[FL2:.*]] = forth.pop_flag %[[L2]] : !forth.stack -> !forth.stack, i1
 \ CHECK-NEXT:  cf.cond_br %[[FL2]], ^bb3(%[[PF2]] : !forth.stack), ^bb4(%[[PF2]] : !forth.stack)
+\! kernel main
 1 IF 2 IF 3 THEN THEN
 
 \ === IF inside DO ===

@@ -28,6 +28,7 @@
 \ CHECK:     ^bb[[DEAD]](%{{.*}}: !forth.stack):
 \ CHECK:       cf.br ^bb[[JOIN]]
 
+\! kernel main
 10 0 DO
   I 5 = IF LEAVE THEN
   1 DROP

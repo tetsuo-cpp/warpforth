@@ -12,4 +12,5 @@
 \ CHECK:     ^bb[[EXIT]](%[[B3:.*]]: !forth.stack):
 \ CHECK-NEXT:  return
 
+\! kernel main
 10 0 DO LEAVE LOOP

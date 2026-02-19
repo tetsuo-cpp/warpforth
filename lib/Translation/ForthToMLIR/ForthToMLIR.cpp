@@ -16,6 +16,7 @@
 #include "warpforth/Dialect/Forth/ForthDialect.h"
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <cctype>
 
@@ -107,6 +108,12 @@ void ForthLexer::reset() {
   endPtr = buffer->getBufferEnd();
 }
 
+void ForthLexer::resetTo(const char *ptr) {
+  auto buffer = sourceMgr.getMemoryBuffer(bufferID);
+  curPtr = ptr;
+  endPtr = buffer->getBufferEnd();
+}
+
 bool ForthLexer::isNumber(const std::string &str) const {
   if (str.empty())
     return false;
@@ -185,26 +192,202 @@ LogicalResult ForthParser::emitError(const llvm::Twine &message) {
   return failure();
 }
 
-void ForthParser::scanParamDeclarations() {
-  lexer.reset();
-  consume();
-  while (currentToken.kind != Token::Kind::EndOfFile) {
-    if (currentToken.kind == Token::Kind::Word &&
-        currentToken.text == "PARAM") {
-      consume(); // consume "PARAM"
-      if (currentToken.kind != Token::Kind::Word)
-        continue;
-      std::string name = currentToken.text;
-      consume(); // consume name
-      if (currentToken.kind != Token::Kind::Number)
-        continue;
-      int64_t size = std::stoll(currentToken.text);
-      consume(); // consume size
-      paramDecls.push_back({name, size});
-    } else {
-      consume();
+LogicalResult ForthParser::emitErrorAt(llvm::SMLoc loc,
+                                       const llvm::Twine &message) {
+  sourceMgr.PrintMessage(loc, llvm::SourceMgr::DK_Error, message);
+  return failure();
+}
+
+LogicalResult ForthParser::parseHeader() {
+  auto buffer = sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID());
+  const char *bufStart = buffer->getBufferStart();
+  const char *bufEnd = buffer->getBufferEnd();
+
+  auto ltrim = [](llvm::StringRef s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
+      s = s.drop_front();
+    return s;
+  };
+  auto rtrim = [](llvm::StringRef s) {
+    while (!s.empty() &&
+           (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+      s = s.drop_back();
+    return s;
+  };
+  auto trim = [&](llvm::StringRef s) { return rtrim(ltrim(s)); };
+
+  auto splitWS = [](llvm::StringRef s) {
+    SmallVector<llvm::StringRef> parts;
+    while (!s.empty()) {
+      while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
+        s = s.drop_front();
+      if (s.empty())
+        break;
+      size_t i = 0;
+      while (i < s.size() && s[i] != ' ' && s[i] != '\t')
+        ++i;
+      parts.push_back(s.substr(0, i));
+      s = s.substr(i);
     }
+    return parts;
+  };
+
+  bool headerEnded = false;
+  bool sawKernel = false;
+  bool sawDirective = false;
+  headerEndPtr = bufStart;
+
+  const char *lineStart = bufStart;
+  while (lineStart <= bufEnd) {
+    const char *lineEnd = lineStart;
+    while (lineEnd < bufEnd && *lineEnd != '\n' && *lineEnd != '\r')
+      ++lineEnd;
+    llvm::StringRef line(lineStart, lineEnd - lineStart);
+    llvm::StringRef trimmed = trim(line);
+
+    auto lineLoc = llvm::SMLoc::getFromPointer(lineStart);
+
+    if (trimmed.empty()) {
+      if (!headerEnded)
+        headerEndPtr = lineEnd < bufEnd ? lineEnd + 1 : lineEnd;
+    } else if (trimmed.starts_with("\\!")) {
+      if (headerEnded) {
+        return emitErrorAt(lineLoc,
+                           "header directive must appear before any code");
+      }
+
+      llvm::StringRef directiveLine = trim(trimmed.drop_front(2));
+      size_t annotPos = directiveLine.find("--");
+      if (annotPos != llvm::StringRef::npos) {
+        directiveLine = trim(directiveLine.substr(0, annotPos));
+      }
+
+      if (directiveLine.empty()) {
+        return emitErrorAt(lineLoc, "empty header directive");
+      }
+
+      auto tokens = splitWS(directiveLine);
+      if (tokens.empty()) {
+        return emitErrorAt(lineLoc, "empty header directive");
+      }
+
+      std::string directive = toUpperCase(tokens[0]);
+      if (!sawDirective && directive != "KERNEL") {
+        return emitErrorAt(lineLoc, "\\! kernel must appear first");
+      }
+
+      if (directive == "KERNEL") {
+        if (sawKernel) {
+          return emitErrorAt(lineLoc, "duplicate \\! kernel directive");
+        }
+        if (tokens.size() != 2) {
+          return emitErrorAt(lineLoc,
+                             "kernel directive expects: \\! kernel <name>");
+        }
+        kernelName = tokens[1].str();
+        sawKernel = true;
+        sawDirective = true;
+      } else if (directive == "PARAM" || directive == "SHARED") {
+        if (!sawKernel) {
+          return emitErrorAt(lineLoc, "\\! kernel must appear first");
+        }
+        if (tokens.size() != 3) {
+          return emitErrorAt(lineLoc,
+                             "param/shared directive expects: \\! param "
+                             "<name> <type>");
+        }
+
+        std::string nameUpper = toUpperCase(tokens[1]);
+        for (const auto &param : paramDecls) {
+          if (param.name == nameUpper) {
+            return emitErrorAt(lineLoc,
+                               "duplicate parameter name: " + nameUpper);
+          }
+        }
+        for (const auto &shared : sharedDecls) {
+          if (shared.name == nameUpper) {
+            return emitErrorAt(lineLoc, "duplicate shared name: " + nameUpper);
+          }
+        }
+
+        llvm::StringRef typeToken = tokens[2];
+        bool isArray = false;
+        int64_t size = 0;
+        size_t lbracket = typeToken.find('[');
+        if (lbracket != llvm::StringRef::npos) {
+          size_t rbracket = typeToken.find(']');
+          if (rbracket == llvm::StringRef::npos ||
+              rbracket != typeToken.size() - 1) {
+            return emitErrorAt(lineLoc,
+                               "array type must use suffix [N], e.g. i64[4]");
+          }
+          llvm::StringRef base = typeToken.substr(0, lbracket);
+          llvm::StringRef sizeStr =
+              typeToken.substr(lbracket + 1, rbracket - lbracket - 1);
+          if (toUpperCase(base) != "I64") {
+            return emitErrorAt(lineLoc, "unsupported base type: " + base.str());
+          }
+          if (sizeStr.empty())
+            return emitErrorAt(lineLoc, "array type requires a size");
+          for (char c : sizeStr) {
+            if (!std::isdigit(static_cast<unsigned char>(c)))
+              return emitErrorAt(lineLoc, "array size must be an integer");
+          }
+          size = std::stoll(sizeStr.str());
+          if (size <= 0)
+            return emitErrorAt(lineLoc, "array size must be positive");
+          isArray = true;
+        } else {
+          if (toUpperCase(typeToken) != "I64") {
+            return emitErrorAt(lineLoc,
+                               "unsupported scalar type: " + typeToken.str());
+          }
+        }
+
+        if (directive == "PARAM") {
+          ParamDecl decl;
+          decl.name = nameUpper;
+          decl.isArray = isArray;
+          decl.size = size;
+          paramDecls.push_back(decl);
+        } else {
+          SharedDecl decl;
+          decl.name = nameUpper;
+          decl.isArray = isArray;
+          decl.size = size;
+          sharedDecls.push_back(decl);
+        }
+        sawDirective = true;
+      } else {
+        return emitErrorAt(lineLoc, "unknown header directive: " + directive);
+      }
+
+      headerEndPtr = lineEnd < bufEnd ? lineEnd + 1 : lineEnd;
+    } else if (trimmed.starts_with("\\")) {
+      if (trimmed.size() == 1 || trimmed[1] == ' ' || trimmed[1] == '\t') {
+        if (!headerEnded)
+          headerEndPtr = lineEnd < bufEnd ? lineEnd + 1 : lineEnd;
+      } else {
+        headerEnded = true;
+      }
+    } else {
+      headerEnded = true;
+    }
+
+    if (lineEnd >= bufEnd)
+      break;
+    if (*lineEnd == '\r' && lineEnd + 1 < bufEnd && lineEnd[1] == '\n')
+      lineStart = lineEnd + 2;
+    else
+      lineStart = lineEnd + 1;
   }
+
+  if (!sawKernel) {
+    auto loc = llvm::SMLoc::getFromPointer(bufStart);
+    return emitErrorAt(loc, "\\! kernel <name> is required");
+  }
+
+  return success();
 }
 
 Value ForthParser::emitOperation(StringRef word, Value inputStack,
@@ -433,15 +616,6 @@ LogicalResult ForthParser::parseBody(Value &stack) {
   while (currentToken.kind != Token::Kind::EndOfFile &&
          currentToken.kind != Token::Kind::Semicolon &&
          currentToken.kind != Token::Kind::Colon) {
-
-    // Skip PARAM declarations at top level.
-    if (!inWordDefinition && currentToken.kind == Token::Kind::Word &&
-        currentToken.text == "PARAM") {
-      consume(); // "PARAM"
-      consume(); // name
-      consume(); // size
-      continue;
-    }
 
     if (currentToken.kind == Token::Kind::Number) {
       Location tokenLoc = getLoc();
@@ -823,11 +997,11 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
 
   builder.setInsertionPointToEnd(module->getBody());
 
-  // Pre-pass: scan for param declarations
-  scanParamDeclarations();
+  if (failed(parseHeader()))
+    return nullptr;
 
   // First pass: parse all word definitions
-  lexer.reset();
+  lexer.resetTo(headerEndPtr);
   consume();
   while (currentToken.kind != Token::Kind::EndOfFile) {
     if (currentToken.kind == Token::Kind::Colon) {
@@ -840,7 +1014,7 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   }
 
   // Reset lexer for second pass
-  lexer.reset();
+  lexer.resetTo(headerEndPtr);
   consume();
 
   // Reset insertion point to end of module for main function
@@ -849,12 +1023,17 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   // Build function argument types from param declarations
   SmallVector<Type> argTypes;
   for (const auto &param : paramDecls) {
-    argTypes.push_back(MemRefType::get({param.size}, builder.getI64Type()));
+    if (param.isArray) {
+      argTypes.push_back(MemRefType::get({param.size}, builder.getI64Type()));
+    } else {
+      argTypes.push_back(builder.getI64Type());
+    }
   }
 
   auto funcType = builder.getFunctionType(argTypes, {});
-  auto funcOp = builder.create<func::FuncOp>(loc, "main", funcType);
+  auto funcOp = builder.create<func::FuncOp>(loc, kernelName, funcType);
   funcOp.setPrivate();
+  funcOp->setAttr("forth.kernel", builder.getUnitAttr());
 
   // Annotate arguments with param names
   for (size_t i = 0; i < paramDecls.size(); ++i) {

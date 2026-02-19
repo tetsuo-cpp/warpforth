@@ -10,5 +10,6 @@
 \ MID: cf.br
 \ MID: arith.xori
 
-PARAM DATA 4
+\! kernel main
+\! param DATA i64[4]
 3 0 DO 4 0 DO J I + LOOP LOOP DATA 0 CELLS + !

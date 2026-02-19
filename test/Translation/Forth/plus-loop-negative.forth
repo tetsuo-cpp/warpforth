@@ -21,4 +21,5 @@
 \ CHECK-NEXT:  cf.cond_br %[[CROSSED]], ^bb2(%[[POP_S]] : !forth.stack), ^bb1(%[[POP_S]] : !forth.stack)
 \ CHECK:     ^bb2(%{{.*}}: !forth.stack):
 \ CHECK-NEXT:  return
+\! kernel main
 0 10 DO -1 +LOOP

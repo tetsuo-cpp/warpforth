@@ -14,7 +14,8 @@
 \ MID: llvm.store
 \ MID: gpu.return
 
-PARAM DATA 256
+\! kernel main
+\! param DATA i64[256]
 GLOBAL-ID CELLS DATA + @
 1 +
 GLOBAL-ID CELLS DATA + !

@@ -19,4 +19,5 @@
 \ CHECK: %[[S15:.*]] = forth.literal %[[S14]]
 \ CHECK: %[[S16:.*]] = forth.literal %[[S15]]
 \ CHECK: %{{.*}} = forth.rshift %[[S16]]
+\! kernel main
 3 5 AND 7 8 OR 15 3 XOR 42 NOT 1 4 LSHIFT 256 2 RSHIFT

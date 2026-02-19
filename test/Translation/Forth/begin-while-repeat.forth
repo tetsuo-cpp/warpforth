@@ -17,4 +17,5 @@
 \ CHECK-NEXT:  cf.br ^bb1(%[[SUB]] : !forth.stack)
 \ CHECK:     ^bb3(%[[B3:.*]]: !forth.stack):
 \ CHECK-NEXT:  return
+\! kernel main
 10 BEGIN DUP 0 > WHILE 1 - REPEAT

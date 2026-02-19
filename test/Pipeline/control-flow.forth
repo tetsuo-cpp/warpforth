@@ -12,5 +12,6 @@
 \ MID: cf.cond_br
 \ MID: gpu.return
 
-PARAM DATA 256
+\! kernel main
+\! param DATA i64[256]
 DATA @ 5 > IF DATA @ 1 + DATA ! THEN

@@ -9,6 +9,7 @@
 \ Leading digit gets underscore prefix
 \ CHECK: func.func private @_2START
 
+\! kernel main
 : MY-WORD 1 ;
 : UNDER_SCORE 2 ;
 : 2START 3 ;

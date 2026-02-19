@@ -17,10 +17,18 @@
 namespace mlir {
 namespace forth {
 
-/// A declared kernel parameter: `param <name> <size>`.
+/// A declared kernel parameter: `param <name> <type>`.
 struct ParamDecl {
   std::string name;
-  int64_t size;
+  bool isArray = false;
+  int64_t size = 0;
+};
+
+/// A declared shared memory region: `shared <name> <type>`.
+struct SharedDecl {
+  std::string name;
+  bool isArray = false;
+  int64_t size = 0;
 };
 
 /// Simple token representing a Forth word or literal.
@@ -46,6 +54,9 @@ public:
 
   /// Reset lexer to beginning of buffer.
   void reset();
+
+  /// Reset lexer to a specific position in the buffer.
+  void resetTo(const char *ptr);
 
 private:
   llvm::SourceMgr &sourceMgr;
@@ -79,6 +90,9 @@ private:
   Token currentToken;
   std::unordered_set<std::string> wordDefs;
   std::vector<ParamDecl> paramDecls;
+  std::vector<SharedDecl> sharedDecls;
+  std::string kernelName;
+  const char *headerEndPtr = nullptr;
   bool inWordDefinition = false;
 
   /// Control flow stack tag: Orig = forward reference (IF->THEN, WHILE->exit),
@@ -97,14 +111,17 @@ private:
   };
   SmallVector<LoopContext> loopStack;
 
-  /// Scan for `param <name> <size>` declarations (pre-pass).
-  void scanParamDeclarations();
+  /// Parse the kernel header (\\! directives) and record metadata.
+  LogicalResult parseHeader();
 
   /// Advance to the next token.
   void consume();
 
   /// Emit an error at the current location.
   LogicalResult emitError(const llvm::Twine &message);
+
+  /// Emit an error at a specific buffer location.
+  LogicalResult emitErrorAt(llvm::SMLoc loc, const llvm::Twine &message);
 
   /// Parse a sequence of Forth operations.
   LogicalResult parseOperations(Value &stack);
