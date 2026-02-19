@@ -158,7 +158,10 @@ private:
     }
 
     // Clone ops from each source block into the corresponding destination
-    // block. Replace func.return with gpu.return.
+    // block, with three transformations:
+    // - func.return → gpu.return
+    // - shared memref.alloca → gpu.func workgroup attribution
+    auto *ctx = funcOp.getContext();
     for (auto [srcBlock, dstBlock] :
          llvm::zip(funcOp.getBody(), gpuFunc.getBody())) {
       rewriter.setInsertionPointToEnd(&dstBlock);
@@ -168,6 +171,17 @@ private:
           for (Value operand : returnOp.getOperands())
             remappedOperands.push_back(mapping.lookup(operand));
           rewriter.create<gpu::ReturnOp>(returnOp.getLoc(), remappedOperands);
+        } else if (auto allocaOp = dyn_cast<memref::AllocaOp>(&op);
+                   allocaOp && allocaOp->hasAttr("forth.shared_name")) {
+          auto origType = cast<MemRefType>(allocaOp.getType());
+          auto addressSpace =
+              gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
+          auto sharedType =
+              MemRefType::get(origType.getShape(), origType.getElementType(),
+                              MemRefLayoutAttrInterface{}, addressSpace);
+          BlockArgument attr =
+              gpuFunc.addWorkgroupAttribution(sharedType, allocaOp.getLoc());
+          mapping.map(allocaOp.getResult(), attr);
         } else {
           rewriter.clone(op, mapping);
         }
