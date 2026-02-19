@@ -976,8 +976,9 @@ struct ConvertForthToMemRefPass
     target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect,
                            LLVM::LLVMDialect, cf::ControlFlowDialect>();
 
-    // Mark IntrinsicOp as legal (to be lowered later)
+    // Mark IntrinsicOp and BarrierOp as legal (to be lowered later)
     target.addLegalOp<forth::IntrinsicOp>();
+    target.addLegalOp<forth::BarrierOp>();
 
     // Use dynamic legality for func operations to ensure they're properly
     // converted
