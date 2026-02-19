@@ -10,6 +10,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/ADT/StringMap.h"
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -92,6 +93,7 @@ private:
   std::unordered_set<std::string> wordDefs;
   std::vector<ParamDecl> paramDecls;
   std::vector<SharedDecl> sharedDecls;
+  llvm::StringMap<Value> sharedAllocs;
   std::string kernelName;
   const char *headerEndPtr = nullptr;
   bool inWordDefinition = false;

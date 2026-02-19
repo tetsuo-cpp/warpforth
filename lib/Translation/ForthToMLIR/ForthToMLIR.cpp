@@ -279,13 +279,14 @@ LogicalResult ForthParser::parseHeader() {
         std::string nameUpper = toUpperCase(tokens[1]);
         for (const auto &param : paramDecls) {
           if (param.name == nameUpper) {
-            return emitErrorAt(lineLoc,
-                               "duplicate parameter name: " + nameUpper);
+            return emitErrorAt(lineLoc, "duplicate name: " + nameUpper +
+                                            " (already declared as param)");
           }
         }
         for (const auto &shared : sharedDecls) {
           if (shared.name == nameUpper) {
-            return emitErrorAt(lineLoc, "duplicate shared name: " + nameUpper);
+            return emitErrorAt(lineLoc, "duplicate name: " + nameUpper +
+                                            " (already declared as shared)");
           }
         }
 
@@ -382,6 +383,30 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
     for (const auto &param : paramDecls) {
       if (word == param.name) {
         (void)emitError("parameter '" + param.name +
+                        "' cannot be referenced inside a word definition; "
+                        "pass the address from the caller instead");
+        return nullptr;
+      }
+    }
+  }
+
+  // Check if word is a shared memory name (only valid outside word definitions)
+  if (!inWordDefinition) {
+    auto it = sharedAllocs.find(word);
+    if (it != sharedAllocs.end()) {
+      Value alloca = it->second;
+      Value ptrIndex =
+          builder.create<memref::ExtractAlignedPointerAsIndexOp>(loc, alloca);
+      Value ptrI64 = builder.create<arith::IndexCastOp>(
+          loc, builder.getI64Type(), ptrIndex);
+      return builder
+          .create<forth::PushValueOp>(loc, stackType, inputStack, ptrI64)
+          .getOutputStack();
+    }
+  } else {
+    for (const auto &shared : sharedDecls) {
+      if (word == shared.name) {
+        (void)emitError("shared memory '" + shared.name +
                         "' cannot be referenced inside a word definition; "
                         "pass the address from the caller instead");
         return nullptr;
@@ -1018,6 +1043,16 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   // Create the entry block with arguments
   Block *entryBlock = funcOp.addEntryBlock();
   builder.setInsertionPointToStart(entryBlock);
+
+  // Emit shared memory allocations at kernel entry
+  for (const auto &shared : sharedDecls) {
+    int64_t size = shared.isArray ? shared.size : 1;
+    auto memrefType = MemRefType::get({size}, builder.getI64Type());
+    Value alloca = builder.create<memref::AllocaOp>(loc, memrefType);
+    alloca.getDefiningOp()->setAttr("forth.shared_name",
+                                    builder.getStringAttr(shared.name));
+    sharedAllocs[shared.name] = alloca;
+  }
 
   // Parse Forth operations
   Value finalStack;
