@@ -384,8 +384,11 @@ class KernelRunner:
 
         params = params or {}
 
-        # Validate output_param is not a scalar
-        if output_param < len(decls) and not decls[output_param].is_array:
+        # Validate output_param
+        if output_param < 0 or output_param >= len(decls):
+            msg = f"output_param {output_param} out of range (have {len(decls)} params)"
+            raise ValueError(msg)
+        if not decls[output_param].is_array:
             name = decls[output_param].name
             msg = f"output_param {output_param} ('{name}') is a scalar and cannot be read back"
             raise ValueError(msg)
