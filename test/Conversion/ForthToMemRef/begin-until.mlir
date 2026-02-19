@@ -1,36 +1,46 @@
 // RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
 
+// Test: BEGIN...UNTIL loop conversion to memref with CF-based control flow
+// Forth: 10 BEGIN 1 - DUP 0= UNTIL
+
 // CHECK-LABEL: func.func private @main
 
-// Verify scf.while with index iter arg:
-// CHECK: scf.while (%{{.*}} = %{{.*}}) : (index) -> index {
+// Stack allocation and literal 10 push:
+// CHECK: %[[ALLOCA:.*]] = memref.alloca() : memref<256xi64>
+// CHECK: %[[C10:.*]] = arith.constant 10 : i64
+// CHECK: memref.store %[[C10]], %[[ALLOCA]]
+// CHECK: cf.br ^bb1
 
-// Body: operations + flag pop + condition
-// CHECK:   arith.subi
-// CHECK:   arith.cmpi eq
-// CHECK:   arith.extsi
-// CHECK:   memref.load
-// CHECK:   arith.subi
-// CHECK:   arith.cmpi eq
-// CHECK:   scf.condition(%{{.*}}) %{{.*}} : index
+// Loop body: push 1, subtract, dup, zero_eq, pop_flag, cond_br
+// CHECK: ^bb1(%{{.*}}: memref<256xi64>, %{{.*}}: index):
+// CHECK: arith.constant 1 : i64
+// CHECK: memref.store
+// CHECK: arith.subi
+// CHECK: memref.store
+// CHECK: memref.store
+// CHECK: arith.cmpi eq
+// CHECK: arith.extsi
+// CHECK: memref.store
+// CHECK: arith.cmpi ne
+// CHECK: cf.cond_br %{{.*}}, ^bb2(%{{.*}}: memref<256xi64>, index), ^bb1(%{{.*}}: memref<256xi64>, index)
 
-// After region: identity yield
-// CHECK: } do {
-// CHECK:   scf.yield %{{.*}} : index
-// CHECK: }
+// Exit block
+// CHECK: ^bb2(%{{.*}}: memref<256xi64>, %{{.*}}: index):
+// CHECK: return
 
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
     %1 = forth.literal %0 10 : !forth.stack -> !forth.stack
-    %2 = forth.begin_until %1 : !forth.stack -> !forth.stack {
-    ^bb0(%arg0: !forth.stack):
-      %3 = forth.literal %arg0 1 : !forth.stack -> !forth.stack
-      %4 = forth.sub %3 : !forth.stack -> !forth.stack
-      %5 = forth.dup %4 : !forth.stack -> !forth.stack
-      %6 = forth.zero_eq %5 : !forth.stack -> !forth.stack
-      forth.yield %6 : !forth.stack
-    }
+    cf.br ^bb1(%1 : !forth.stack)
+  ^bb1(%2: !forth.stack):
+    %3 = forth.literal %2 1 : !forth.stack -> !forth.stack
+    %4 = forth.sub %3 : !forth.stack -> !forth.stack
+    %5 = forth.dup %4 : !forth.stack -> !forth.stack
+    %6 = forth.zero_eq %5 : !forth.stack -> !forth.stack
+    %output_stack, %flag = forth.pop_flag %6 : !forth.stack -> !forth.stack, i1
+    cf.cond_br %flag, ^bb2(%output_stack : !forth.stack), ^bb1(%output_stack : !forth.stack)
+  ^bb2(%7: !forth.stack):
     return
   }
 }

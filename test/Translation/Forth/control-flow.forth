@@ -1,33 +1,28 @@
 \ RUN: %warpforth-translate --forth-to-mlir %s | %FileCheck %s
 
-\ Verify IF/ELSE/THEN parsing produces forth.if with block-arg regions
+\ Verify IF/ELSE/THEN generates pop_flag + cond_br control flow
 
 \ Basic IF/ELSE/THEN
-\ CHECK: %[[S0:.*]] = forth.stack
-\ CHECK: %[[S1:.*]] = forth.literal %[[S0]] 1
-\ CHECK: %[[IF1:.*]] = forth.if %[[S1]]
-\ CHECK:   ^bb0(%[[ARG1:.*]]: !forth.stack):
-\ CHECK:   forth.drop %[[ARG1]]
-\ CHECK:   forth.literal %{{.*}} 42
-\ CHECK:   forth.yield
-\ CHECK: } else {
-\ CHECK:   ^bb0(%[[ARG2:.*]]: !forth.stack):
-\ CHECK:   forth.drop %[[ARG2]]
-\ CHECK:   forth.literal %{{.*}} 99
-\ CHECK:   forth.yield
-\ CHECK: }
+\ CHECK:       %[[S0:.*]] = forth.stack !forth.stack
+\ CHECK-NEXT:  %[[S1:.*]] = forth.literal %[[S0]] 1 : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[PF1:.*]], %[[FLAG1:.*]] = forth.pop_flag %[[S1]] : !forth.stack -> !forth.stack, i1
+\ CHECK-NEXT:  cf.cond_br %[[FLAG1]], ^bb1(%[[PF1]] : !forth.stack), ^bb2(%[[PF1]] : !forth.stack)
+\ CHECK:     ^bb1(%[[B1:.*]]: !forth.stack):
+\ CHECK-NEXT:  %[[L42:.*]] = forth.literal %[[B1]] 42 : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  cf.br ^bb3(%[[L42]] : !forth.stack)
+\ CHECK:     ^bb2(%[[B2:.*]]: !forth.stack):
+\ CHECK-NEXT:  %[[L99:.*]] = forth.literal %[[B2]] 99 : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  cf.br ^bb3(%[[L99]] : !forth.stack)
 1 IF 42 ELSE 99 THEN
 
-\ Basic IF/THEN (no ELSE — identity drop+yield in else region)
-\ CHECK: %[[S2:.*]] = forth.literal %[[IF1]] 0
-\ CHECK: %[[IF2:.*]] = forth.if %[[S2]]
-\ CHECK:   ^bb0(%[[ARG3:.*]]: !forth.stack):
-\ CHECK:   forth.drop %[[ARG3]]
-\ CHECK:   forth.literal %{{.*}} 7
-\ CHECK:   forth.yield
-\ CHECK: } else {
-\ CHECK:   ^bb0(%[[ARG4:.*]]: !forth.stack):
-\ CHECK:   forth.drop %[[ARG4]]
-\ CHECK:   forth.yield
-\ CHECK: }
+\ Basic IF/THEN (no ELSE - fallthrough on false)
+\ CHECK:     ^bb3(%[[B3:.*]]: !forth.stack):
+\ CHECK-NEXT:  %[[S2:.*]] = forth.literal %[[B3]] 0 : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[PF2:.*]], %[[FLAG2:.*]] = forth.pop_flag %[[S2]] : !forth.stack -> !forth.stack, i1
+\ CHECK-NEXT:  cf.cond_br %[[FLAG2]], ^bb4(%[[PF2]] : !forth.stack), ^bb5(%[[PF2]] : !forth.stack)
+\ CHECK:     ^bb4(%[[B4:.*]]: !forth.stack):
+\ CHECK-NEXT:  %[[L7:.*]] = forth.literal %[[B4]] 7 : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  cf.br ^bb5(%[[L7]] : !forth.stack)
+\ CHECK:     ^bb5(%[[B5:.*]]: !forth.stack):
+\ CHECK-NEXT:  return
 0 IF 7 THEN

@@ -10,5 +10,8 @@ add_mlir_library(MLIRForthTranslation
   MLIRSupport
   MLIRTranslateLib
   MLIRForth
+  MLIRArithDialect
+  MLIRControlFlowDialect
   MLIRFuncDialect
+  MLIRMemRefDialect
 )

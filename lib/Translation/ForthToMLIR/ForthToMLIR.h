@@ -47,10 +47,6 @@ public:
   /// Reset lexer to beginning of buffer.
   void reset();
 
-  /// Save/restore lexer position for lookahead.
-  const char *getPosition() const { return curPtr; }
-  void setPosition(const char *pos) { curPtr = pos; }
-
 private:
   llvm::SourceMgr &sourceMgr;
   unsigned bufferID;
@@ -84,7 +80,22 @@ private:
   std::unordered_set<std::string> wordDefs;
   std::vector<ParamDecl> paramDecls;
   bool inWordDefinition = false;
-  int doLoopDepth = 0;
+
+  /// Control flow stack tag: Orig = forward reference (IF->THEN, WHILE->exit),
+  /// Dest = backward reference (BEGIN->loop header).
+  enum class CFTag { Orig, Dest };
+
+  /// Control flow stack for IF/ELSE/THEN, BEGIN/UNTIL, BEGIN/WHILE/REPEAT.
+  SmallVector<std::pair<CFTag, Block *>> cfStack;
+
+  /// Loop context for DO/LOOP with I/J/K support.
+  struct LoopContext {
+    Value counter; // memref<1xi64> alloca for the loop counter
+    Value limit;   // i64 loop limit
+    Block *check;  // condition check block
+    Block *exit;   // loop exit block
+  };
+  SmallVector<LoopContext> loopStack;
 
   /// Scan for `param <name> <size>` declarations (pre-pass).
   void scanParamDeclarations();
@@ -105,26 +116,16 @@ private:
   /// Returns the updated stack value or nullptr on error.
   Value emitOperation(StringRef word, Value inputStack, Location loc);
 
-  /// Parse a sequence of Forth operations until a stop word is hit.
-  /// The stop word is NOT consumed. Returns the final stack value.
-  LogicalResult parseBody(Value &stack,
-                          llvm::function_ref<bool(StringRef)> isStopWord);
+  /// Create a new block with a single !forth.stack argument, appended to
+  /// the given region.
+  Block *createStackBlock(Region *region, Location loc);
 
-  /// Parse an IF/ELSE/THEN construct, creating a forth.if op.
-  Value parseIf(Value inputStack, Location loc);
+  /// Pop a flag from the stack: emits forth.pop_flag and returns
+  /// the updated stack and the i1 flag value.
+  std::pair<Value, Value> emitPopFlag(Location loc, Value stack);
 
-  /// Parse a BEGIN/UNTIL loop, creating a forth.begin_until op.
-  Value parseBeginUntil(Value inputStack, Location loc);
-
-  /// Parse a BEGIN/WHILE/REPEAT loop, creating a forth.begin_while_repeat op.
-  Value parseBeginWhileRepeat(Value inputStack, Location loc);
-
-  /// Lookahead: is the current BEGIN a WHILE loop (vs UNTIL)?
-  /// Saves and restores lexer position.
-  bool isWhileLoop();
-
-  /// Parse a DO/LOOP counted loop, creating a forth.do_loop op.
-  Value parseDoLoop(Value inputStack, Location loc);
+  /// Parse a sequence of Forth operations, handling control flow inline.
+  LogicalResult parseBody(Value &stack);
 
   /// Parse a user-defined word definition.
   LogicalResult parseWordDefinition();

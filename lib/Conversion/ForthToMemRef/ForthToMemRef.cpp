@@ -6,11 +6,11 @@
 
 #include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -32,18 +32,19 @@ constexpr int64_t kStackSize = 256;
 class ForthToMemRefTypeConverter : public TypeConverter {
 public:
   ForthToMemRefTypeConverter() {
+    // Pass-through for all non-stack types (must be registered first)
+    addConversion([](Type type) { return type; });
+
+    // Stack type: !forth.stack -> memref<256xi64> + index
     addConversion(
-        [&](Type type,
+        [&](forth::StackType type,
             SmallVectorImpl<Type> &results) -> std::optional<LogicalResult> {
-          if (auto stackType = dyn_cast<forth::StackType>(type)) {
-            auto memrefType = MemRefType::get(
-                {kStackSize}, IntegerType::get(type.getContext(), 64));
-            auto indexType = IndexType::get(type.getContext());
-            results.push_back(memrefType);
-            results.push_back(indexType);
-            return success();
-          }
-          return std::nullopt;
+          auto memrefType = MemRefType::get(
+              {kStackSize}, IntegerType::get(type.getContext(), 64));
+          auto indexType = IndexType::get(type.getContext());
+          results.push_back(memrefType);
+          results.push_back(indexType);
+          return success();
         });
   }
 };
@@ -353,6 +354,7 @@ struct PickOpConversion : public OpConversionPattern<forth::PickOp> {
 
 /// Conversion pattern for forth.roll operation.
 /// Rotates nth element to top: ( xn ... x0 n -- xn-1 ... x0 xn )
+/// Uses a CF-based loop to shift elements down.
 struct RollOpConversion : public OpConversionPattern<forth::RollOp> {
   RollOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<forth::RollOp>(typeConverter, context) {}
@@ -366,14 +368,15 @@ struct RollOpConversion : public OpConversionPattern<forth::RollOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
+    auto indexType = rewriter.getIndexType();
+
     // Pop n from stack
     Value nI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value spAfterPop = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
 
     // Cast n to index
-    Value nIdx =
-        rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), nI64);
+    Value nIdx = rewriter.create<arith::IndexCastOp>(loc, indexType, nI64);
 
     // Compute address of the element to roll: SP' - n
     Value rolledAddr = rewriter.create<arith::SubIOp>(loc, spAfterPop, nIdx);
@@ -382,18 +385,38 @@ struct RollOpConversion : public OpConversionPattern<forth::RollOp> {
     Value rolledValue =
         rewriter.create<memref::LoadOp>(loc, memref, rolledAddr);
 
-    // Shift elements down: for i in [rolledAddr, SP') : memref[i] = memref[i+1]
-    auto forOp = rewriter.create<scf::ForOp>(loc, rolledAddr, spAfterPop, one);
+    // Split block to create CF-based shift loop.
+    Block *currentBlock = rewriter.getInsertionBlock();
+    Block *continueBlock = rewriter.splitBlock(currentBlock, op->getIterator());
 
-    // Insert ops at start of the auto-created body, before the yield
-    rewriter.setInsertionPointToStart(forOp.getBody());
-    Value iv = forOp.getInductionVar();
-    Value iPlusOne = rewriter.create<arith::AddIOp>(loc, iv, one);
-    Value shiftedVal = rewriter.create<memref::LoadOp>(loc, memref, iPlusOne);
-    rewriter.create<memref::StoreOp>(loc, shiftedVal, memref, iv);
+    // Create loop header and body blocks (inserted before continueBlock).
+    Block *headerBlock = rewriter.createBlock(continueBlock);
+    headerBlock->addArgument(indexType, loc); // induction variable
+    Block *bodyBlock = rewriter.createBlock(continueBlock);
+    bodyBlock->addArgument(indexType, loc); // induction variable
 
-    // Store saved value at top (SP')
-    rewriter.setInsertionPointAfter(forOp);
+    // currentBlock -> headerBlock(rolledAddr)
+    rewriter.setInsertionPointToEnd(currentBlock);
+    rewriter.create<cf::BranchOp>(loc, headerBlock, ValueRange{rolledAddr});
+
+    // headerBlock: check iv < spAfterPop
+    rewriter.setInsertionPointToStart(headerBlock);
+    Value iv = headerBlock->getArgument(0);
+    Value cond = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
+                                                iv, spAfterPop);
+    rewriter.create<cf::CondBranchOp>(loc, cond, bodyBlock, ValueRange{iv},
+                                      continueBlock, ValueRange{});
+
+    // bodyBlock: shift memref[iv] = memref[iv+1], branch back to header
+    rewriter.setInsertionPointToStart(bodyBlock);
+    Value biv = bodyBlock->getArgument(0);
+    Value next = rewriter.create<arith::AddIOp>(loc, biv, one);
+    Value shiftedVal = rewriter.create<memref::LoadOp>(loc, memref, next);
+    rewriter.create<memref::StoreOp>(loc, shiftedVal, memref, biv);
+    rewriter.create<cf::BranchOp>(loc, headerBlock, ValueRange{next});
+
+    // continueBlock: store rolled value at top, then rest of original block
+    rewriter.setInsertionPoint(op);
     rewriter.create<memref::StoreOp>(loc, rolledValue, memref, spAfterPop);
 
     // Net effect: SP' = SP - 1 (consumed n)
@@ -763,338 +786,167 @@ struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
   }
 };
 
-/// Conversion pattern for forth.yield operation.
-/// Context-aware: inside scf.while's `before` region (from BeginUntilOp or
-/// BeginWhileRepeatOp), emits flag-pop + scf.condition; otherwise emits
-/// scf.yield with SP.
-struct YieldOpConversion : public OpConversionPattern<forth::YieldOp> {
-  YieldOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::YieldOp>(typeConverter, context) {}
+/// Conversion pattern for forth.pop_flag operation.
+/// Pops top of stack, compares != 0, returns (memref, newSP, i1 flag).
+struct PopFlagOpConversion : public OpConversionPattern<forth::PopFlagOp> {
+  PopFlagOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::PopFlagOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
-  matchAndRewrite(forth::YieldOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    ValueRange adaptedResult = adaptor.getOperands()[0];
-    Value memref = adaptedResult[0];
-    Value sp = adaptedResult[1]; // index
-
-    // Check if we're inside scf.while's `before` region.
-    auto *parentOp = op->getParentOp();
-    if (auto whileOp = dyn_cast<scf::WhileOp>(parentOp)) {
-      if (op->getParentRegion() == &whileOp.getBefore()) {
-        // Pop flag from stack top.
-        Value flag = rewriter.create<memref::LoadOp>(loc, memref, sp);
-        Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-        Value spAfterPop = rewriter.create<arith::SubIOp>(loc, sp, one);
-
-        Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
-        Value keepGoing;
-        if (op.getWhileCond()) {
-          // WHILE semantics: continue when flag is non-zero.
-          keepGoing = rewriter.create<arith::CmpIOp>(
-              loc, arith::CmpIPredicate::ne, flag, zero);
-        } else {
-          // UNTIL semantics: exit on non-zero; keep going when flag == 0.
-          keepGoing = rewriter.create<arith::CmpIOp>(
-              loc, arith::CmpIPredicate::eq, flag, zero);
-        }
-
-        rewriter.replaceOpWithNewOp<scf::ConditionOp>(op, keepGoing,
-                                                      ValueRange{spAfterPop});
-        return success();
-      }
-    }
-
-    // Default: emit scf.yield with just the SP.
-    rewriter.replaceOpWithNewOp<scf::YieldOp>(op, ValueRange{sp});
-    return success();
-  }
-};
-
-/// Conversion pattern for forth.if operation.
-/// Loads the flag from the stack top, creates scf.if with the condition,
-/// and inlines the region content after converting block args.
-struct IfOpConversion : public OpConversionPattern<forth::IfOp> {
-  IfOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::IfOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
-
-  LogicalResult
-  matchAndRewrite(forth::IfOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(forth::PopFlagOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Load flag from stack top.
-    Value flag = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    // Load top value
+    Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
 
-    // Condition: flag != 0.
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
-    Value cond = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne,
-                                                flag, zero);
-
-    // Create scf.if with index result (SP).
-    auto indexType = rewriter.getIndexType();
-    auto scfIf = rewriter.create<scf::IfOp>(loc, TypeRange{indexType}, cond,
-                                            /*addElseBlock=*/true);
-
-    // Convert block signatures and inline regions into scf.if.
-    // convertRegionTypes converts !forth.stack block arg to {memref, index}
-    // and inserts tracked materializations (unrealized_conversion_cast).
-    // We inline into scf.if and mergeBlocks to substitute the converted
-    // block args with parent-scope values. The original materialization
-    // cast stays intact (tracked by the framework). When the framework
-    // later converts the inlined inner ops, their adaptors unwrap the
-    // cast to get {memref, index}.
-    auto convertRegion = [&](Region &srcRegion,
-                             Region &dstRegion) -> LogicalResult {
-      if (failed(rewriter.convertRegionTypes(&srcRegion, *getTypeConverter())))
-        return failure();
-
-      rewriter.eraseBlock(&dstRegion.front());
-      rewriter.inlineRegionBefore(srcRegion, dstRegion, dstRegion.end());
-
-      Block &blockWithArgs = dstRegion.front();
-      Block *newBlock = rewriter.createBlock(&dstRegion);
-      rewriter.mergeBlocks(&blockWithArgs, newBlock, {memref, stackPtr});
-      return success();
-    };
-
-    if (failed(convertRegion(op.getThenRegion(), scfIf.getThenRegion())))
-      return failure();
-    if (failed(convertRegion(op.getElseRegion(), scfIf.getElseRegion())))
-      return failure();
-
-    // Replace forth.if with {memref, scf.if result SP}.
-    rewriter.replaceOpWithMultiple(op, {{memref, scfIf.getResult(0)}});
-    return success();
-  }
-};
-
-/// Conversion pattern for forth.begin_until operation.
-/// Creates scf.while with the body as the `before` region (condition test),
-/// and an identity `after` region.
-struct BeginUntilOpConversion
-    : public OpConversionPattern<forth::BeginUntilOp> {
-  BeginUntilOpConversion(const TypeConverter &typeConverter,
-                         MLIRContext *context)
-      : OpConversionPattern<forth::BeginUntilOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
-
-  LogicalResult
-  matchAndRewrite(forth::BeginUntilOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
-
-    auto indexType = rewriter.getIndexType();
-
-    // Create scf.while with index result, stackPtr as iter arg.
-    auto whileOp = rewriter.create<scf::WhileOp>(loc, TypeRange{indexType},
-                                                 ValueRange{stackPtr});
-
-    // Before region (body): convert + inline.
-    Region &bodyRegion = op.getBodyRegion();
-    if (failed(rewriter.convertRegionTypes(&bodyRegion, *getTypeConverter())))
-      return failure();
-
-    // scf.while's before region starts empty (no auto-created blocks).
-    // Inline the body region into before.
-    rewriter.inlineRegionBefore(bodyRegion, whileOp.getBefore(),
-                                whileOp.getBefore().end());
-
-    // Merge the block args: replace converted {memref, index} with
-    // {memref, beforeSP}.
-    Block &beforeBlock = whileOp.getBefore().front();
-    Block *newBeforeBlock = rewriter.createBlock(&whileOp.getBefore());
-    newBeforeBlock->addArgument(indexType, loc);
-    Value beforeSP = newBeforeBlock->getArgument(0);
-    rewriter.mergeBlocks(&beforeBlock, newBeforeBlock, {memref, beforeSP});
-
-    // After region (identity): just yield the SP.
-    Block *afterBlock = rewriter.createBlock(&whileOp.getAfter());
-    afterBlock->addArgument(indexType, loc);
-    Value afterSP = afterBlock->getArgument(0);
-    rewriter.setInsertionPointToStart(afterBlock);
-    rewriter.create<scf::YieldOp>(loc, ValueRange{afterSP});
-
-    // Replace forth.begin_until with {memref, whileOp result}.
-    rewriter.replaceOpWithMultiple(op, {{memref, whileOp.getResult(0)}});
-    return success();
-  }
-};
-
-/// Conversion pattern for forth.begin_while_repeat operation.
-/// Creates scf.while with the condition as the `before` region,
-/// and the body as the `after` region.
-struct BeginWhileRepeatOpConversion
-    : public OpConversionPattern<forth::BeginWhileRepeatOp> {
-  BeginWhileRepeatOpConversion(const TypeConverter &typeConverter,
-                               MLIRContext *context)
-      : OpConversionPattern<forth::BeginWhileRepeatOp>(typeConverter, context) {
-  }
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
-
-  LogicalResult
-  matchAndRewrite(forth::BeginWhileRepeatOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
-
-    auto indexType = rewriter.getIndexType();
-
-    // Create scf.while with index result, stackPtr as iter arg.
-    auto whileOp = rewriter.create<scf::WhileOp>(loc, TypeRange{indexType},
-                                                 ValueRange{stackPtr});
-
-    // Before region (condition): convert + inline.
-    Region &condRegion = op.getConditionRegion();
-    if (failed(rewriter.convertRegionTypes(&condRegion, *getTypeConverter())))
-      return failure();
-
-    rewriter.inlineRegionBefore(condRegion, whileOp.getBefore(),
-                                whileOp.getBefore().end());
-
-    Block &beforeBlock = whileOp.getBefore().front();
-    Block *newBeforeBlock = rewriter.createBlock(&whileOp.getBefore());
-    newBeforeBlock->addArgument(indexType, loc);
-    Value beforeSP = newBeforeBlock->getArgument(0);
-    rewriter.mergeBlocks(&beforeBlock, newBeforeBlock, {memref, beforeSP});
-
-    // After region (body): convert + inline.
-    Region &bodyRegion = op.getBodyRegion();
-    if (failed(rewriter.convertRegionTypes(&bodyRegion, *getTypeConverter())))
-      return failure();
-
-    rewriter.inlineRegionBefore(bodyRegion, whileOp.getAfter(),
-                                whileOp.getAfter().end());
-
-    Block &afterBlock = whileOp.getAfter().front();
-    Block *newAfterBlock = rewriter.createBlock(&whileOp.getAfter());
-    newAfterBlock->addArgument(indexType, loc);
-    Value afterSP = newAfterBlock->getArgument(0);
-    rewriter.mergeBlocks(&afterBlock, newAfterBlock, {memref, afterSP});
-
-    // Replace forth.begin_while_repeat with {memref, whileOp result}.
-    rewriter.replaceOpWithMultiple(op, {{memref, whileOp.getResult(0)}});
-    return success();
-  }
-};
-
-/// Conversion pattern for forth.do_loop operation.
-/// Pops start and limit from the stack, creates scf.for from start to limit.
-struct DoLoopOpConversion : public OpConversionPattern<forth::DoLoopOp> {
-  DoLoopOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::DoLoopOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
-
-  LogicalResult
-  matchAndRewrite(forth::DoLoopOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
-
-    auto indexType = rewriter.getIndexType();
+    // Decrement SP
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value newSP = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
 
-    // Pop start (TOS): load memref[SP], SP -= 1
-    Value startI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-    Value spAfterStart = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    // Compare != 0
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
+    Value flag = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne,
+                                                topValue, zero);
 
-    // Pop limit (new TOS): load memref[SP-1], SP -= 1
-    Value limitI64 = rewriter.create<memref::LoadOp>(loc, memref, spAfterStart);
-    Value spAfterPops = rewriter.create<arith::SubIOp>(loc, spAfterStart, one);
-
-    // Cast i64 to index for scf.for bounds
-    Value startIdx =
-        rewriter.create<arith::IndexCastOp>(loc, indexType, startI64);
-    Value limitIdx =
-        rewriter.create<arith::IndexCastOp>(loc, indexType, limitI64);
-    Value stepIdx = one; // step = 1
-
-    // Create scf.for %iv = start to limit step 1 iter_args(%sp = spAfterPops)
-    auto forOp = rewriter.create<scf::ForOp>(loc, startIdx, limitIdx, stepIdx,
-                                             ValueRange{spAfterPops});
-
-    // Convert body region types and inline into scf.for
-    Region &bodyRegion = op.getBodyRegion();
-    if (failed(rewriter.convertRegionTypes(&bodyRegion, *getTypeConverter())))
-      return failure();
-
-    // Erase the auto-created body block of scf.for
-    rewriter.eraseBlock(forOp.getBody());
-
-    // Inline the converted body region into scf.for
-    rewriter.inlineRegionBefore(bodyRegion, forOp.getRegion(),
-                                forOp.getRegion().end());
-
-    // Merge block args: the converted block has {memref, index} args.
-    // Replace with {memref, iter_arg SP}.
-    Block &bodyBlock = forOp.getRegion().front();
-    Block *newBlock = rewriter.createBlock(&forOp.getRegion());
-    // scf.for block has: induction var, then iter args
-    newBlock->addArgument(indexType, loc); // induction variable
-    newBlock->addArgument(indexType, loc); // SP iter arg
-    Value spIterArg = newBlock->getArgument(1);
-    rewriter.mergeBlocks(&bodyBlock, newBlock, {memref, spIterArg});
-
-    // Replace forth.do_loop with {memref, forOp result SP}
-    rewriter.replaceOpWithMultiple(op, {{memref, forOp.getResult(0)}});
+    // Result 0: output_stack -> {memref, newSP}
+    // Result 1: flag -> i1 (passes through unchanged)
+    rewriter.replaceOpWithMultiple(op, {{memref, newSP}, {flag}});
     return success();
   }
 };
 
-/// Conversion pattern for forth.loop_index operation (I word).
-/// Finds the enclosing scf.for and pushes its induction variable onto the
-/// stack.
-struct LoopIndexOpConversion : public OpConversionPattern<forth::LoopIndexOp> {
-  LoopIndexOpConversion(const TypeConverter &typeConverter,
-                        MLIRContext *context)
-      : OpConversionPattern<forth::LoopIndexOp>(typeConverter, context) {}
+/// Conversion pattern for forth.pop operation.
+/// Pops top of stack, returns (memref, newSP, i64 value).
+struct PopOpConversion : public OpConversionPattern<forth::PopOp> {
+  PopOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::PopOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
-  matchAndRewrite(forth::LoopIndexOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(forth::PopOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Get the depth attribute (default 0 = I)
-    int64_t depth = op.getDepth();
+    // Load top value
+    Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
 
-    // Walk up through enclosing scf.for ops
-    Operation *current = op.getOperation();
-    scf::ForOp targetFor;
-    for (int64_t i = 0; i <= depth; ++i) {
-      targetFor = current->getParentOfType<scf::ForOp>();
-      if (!targetFor)
-        return rewriter.notifyMatchFailure(
-            op, "not enough enclosing scf.for ops for depth " +
-                    std::to_string(depth));
-      current = targetFor.getOperation();
-    }
+    // Decrement SP
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value newSP = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
 
-    // Get induction variable and cast index to i64
-    Value iv = targetFor.getInductionVar();
-    Value ivI64 =
-        rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), iv);
+    // Result 0: output_stack -> {memref, newSP}
+    // Result 1: value -> i64 (passes through unchanged)
+    rewriter.replaceOpWithMultiple(op, {{memref, newSP}, {topValue}});
+    return success();
+  }
+};
 
-    // Push onto stack
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, ivI64);
+/// Conversion pattern for forth.push_value operation.
+/// Pushes a dynamic i64 value onto the stack.
+struct PushValueOpConversion : public OpConversionPattern<forth::PushValueOp> {
+  PushValueOpConversion(const TypeConverter &typeConverter,
+                        MLIRContext *context)
+      : OpConversionPattern<forth::PushValueOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::PushValueOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // The value operand (i64) passes through as-is (not a converted type).
+    Value value = adaptor.getOperands()[1][0];
+
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, value);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
+    return success();
+  }
+};
+
+/// Custom FuncOp conversion that calls convertRegionTypes to convert ALL
+/// block args (including non-entry blocks used by CF branch ops).
+/// The built-in pattern only converts the entry block.
+struct FuncOpConversion : public OpConversionPattern<func::FuncOp> {
+  using OpConversionPattern::OpConversionPattern;
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(func::FuncOp funcOp, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto type = funcOp.getFunctionType();
+
+    TypeConverter::SignatureConversion result(type.getNumInputs());
+    SmallVector<Type, 1> newResults;
+    if (failed(getTypeConverter()->convertSignatureArgs(type.getInputs(),
+                                                        result)) ||
+        failed(getTypeConverter()->convertTypes(type.getResults(), newResults)))
+      return failure();
+
+    if (!funcOp.getFunctionBody().empty()) {
+      if (failed(rewriter.convertRegionTypes(&funcOp.getFunctionBody(),
+                                             *getTypeConverter(), &result)))
+        return failure();
+    }
+
+    auto newType = FunctionType::get(rewriter.getContext(),
+                                     result.getConvertedTypes(), newResults);
+    rewriter.modifyOpInPlace(funcOp, [&] { funcOp.setType(newType); });
+    return success();
+  }
+};
+
+/// Conversion pattern for cf::BranchOp with 1:N type conversion.
+/// The built-in populateBranchOpInterfaceTypeConversionPattern uses the old
+/// ArrayRef<Value> signature and crashes on 1:N conversions.
+struct BranchOpConversion : public OpConversionPattern<cf::BranchOp> {
+  using OpConversionPattern::OpConversionPattern;
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(cf::BranchOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Value> newOperands;
+    for (ValueRange vals : adaptor.getOperands())
+      llvm::append_range(newOperands, vals);
+    rewriter.replaceOpWithNewOp<cf::BranchOp>(op, op.getDest(), newOperands);
+    return success();
+  }
+};
+
+/// Conversion pattern for cf::CondBranchOp with 1:N type conversion.
+struct CondBranchOpConversion : public OpConversionPattern<cf::CondBranchOp> {
+  using OpConversionPattern::OpConversionPattern;
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(cf::CondBranchOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Value> trueOperands, falseOperands;
+
+    Value condition = adaptor.getOperands()[0][0];
+
+    unsigned trueCount = op.getTrueDestOperands().size();
+    for (unsigned i = 1; i <= trueCount; ++i)
+      llvm::append_range(trueOperands, adaptor.getOperands()[i]);
+
+    for (unsigned i = 1 + trueCount; i < adaptor.getOperands().size(); ++i)
+      llvm::append_range(falseOperands, adaptor.getOperands()[i]);
+
+    rewriter.replaceOpWithNewOp<cf::CondBranchOp>(
+        op, condition, op.getTrueDest(), trueOperands, op.getFalseDest(),
+        falseOperands);
     return success();
   }
 };
@@ -1111,9 +963,9 @@ struct ConvertForthToMemRefPass
     // Mark Forth dialect as illegal (to be converted)
     target.addIllegalDialect<forth::ForthDialect>();
 
-    // Mark MemRef, Arith, LLVM, and SCF dialects as legal
+    // Mark MemRef, Arith, LLVM, and CF dialects as legal
     target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect,
-                           LLVM::LLVMDialect, scf::SCFDialect>();
+                           LLVM::LLVMDialect, cf::ControlFlowDialect>();
 
     // Mark IntrinsicOp as legal (to be lowered later)
     target.addLegalOp<forth::IntrinsicOp>();
@@ -1121,11 +973,15 @@ struct ConvertForthToMemRefPass
     // Use dynamic legality for func operations to ensure they're properly
     // converted
     target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
-      // Function is legal if its signature doesn't contain forth.stack types
-      return llvm::none_of(op.getFunctionType().getInputs(),
-                           [&](Type t) { return isa<forth::StackType>(t); }) &&
-             llvm::none_of(op.getFunctionType().getResults(),
-                           [&](Type t) { return isa<forth::StackType>(t); });
+      auto isStack = [](Type t) { return isa<forth::StackType>(t); };
+      if (llvm::any_of(op.getFunctionType().getInputs(), isStack) ||
+          llvm::any_of(op.getFunctionType().getResults(), isStack))
+        return false;
+      // Also check non-entry block args (CF control flow)
+      for (Block &block : op.getFunctionBody())
+        if (llvm::any_of(block.getArgumentTypes(), isStack))
+          return false;
+      return true;
     });
 
     target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
@@ -1140,6 +996,13 @@ struct ConvertForthToMemRefPass
                            [&](Type t) { return isa<forth::StackType>(t); });
     });
 
+    // CF ops are legal but need dynamic legality for type-converted block args
+    target.addDynamicallyLegalOp<cf::BranchOp, cf::CondBranchOp>(
+        [&](Operation *op) {
+          return llvm::none_of(op->getOperandTypes(),
+                               [](Type t) { return isa<forth::StackType>(t); });
+        });
+
     ForthToMemRefTypeConverter typeConverter;
     RewritePatternSet patterns(context);
 
@@ -1153,10 +1016,8 @@ struct ConvertForthToMemRefPass
         NotOpConversion, LshiftOpConversion, RshiftOpConversion, EqOpConversion,
         LtOpConversion, GtOpConversion, NeOpConversion, LeOpConversion,
         GeOpConversion, ZeroEqOpConversion, ParamRefOpConversion,
-        LoadOpConversion, StoreOpConversion, IfOpConversion,
-        BeginUntilOpConversion, BeginWhileRepeatOpConversion,
-        DoLoopOpConversion, LoopIndexOpConversion, YieldOpConversion>(
-        typeConverter, context);
+        LoadOpConversion, StoreOpConversion, PopFlagOpConversion,
+        PopOpConversion, PushValueOpConversion>(typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,
@@ -1187,9 +1048,9 @@ struct ConvertForthToMemRefPass
     // GlobalIdOp has custom pattern
     patterns.add<GlobalIdOpConversion>(typeConverter, context);
 
-    // Add built-in function conversion patterns
-    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
-        patterns, typeConverter);
+    // Custom FuncOp + branch patterns for 1:N type conversion
+    patterns.add<FuncOpConversion, BranchOpConversion, CondBranchOpConversion>(
+        typeConverter, context);
     populateCallOpTypeConversionPattern(patterns, typeConverter);
     populateReturnOpTypeConversionPattern(patterns, typeConverter);
 
