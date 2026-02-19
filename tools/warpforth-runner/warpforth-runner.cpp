@@ -11,13 +11,15 @@
 
 #include <cuda.h>
 
+#include <charconv>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #define CHECK_CU(call)                                                         \
@@ -26,8 +28,8 @@
     if (err != CUDA_SUCCESS) {                                                 \
       const char *errStr = nullptr;                                            \
       cuGetErrorString(err, &errStr);                                          \
-      fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__,         \
-              errStr ? errStr : "unknown");                                    \
+      std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": "     \
+                << (errStr ? errStr : "unknown") << "\n";                      \
       exit(1);                                                                 \
     }                                                                          \
   } while (0)
@@ -37,32 +39,60 @@ enum class ParamKind { Array, Scalar };
 struct Param {
   ParamKind kind = ParamKind::Array;
   std::vector<int64_t> values;
+  CUdeviceptr devicePtr = 0;
+  int64_t scalarValue = 0;
 };
 
 struct Dims {
   unsigned x = 1, y = 1, z = 1;
 };
 
-static Dims parseDims(const char *s) {
-  Dims d;
-  if (sscanf(s, "%u,%u,%u", &d.x, &d.y, &d.z) != 3) {
-    fprintf(stderr, "Error: expected 3 comma-separated values, got: %s\n", s);
+static int parseIntArg(std::string_view s, std::string_view optName) {
+  int value = 0;
+  auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
+  if (ec != std::errc{} || ptr != s.data() + s.size()) {
+    std::cerr << "Error: " << optName << " expects an integer, got: " << s
+              << "\n";
     exit(1);
   }
+  return value;
+}
+
+static Dims parseDims(std::string_view s) {
+  Dims d;
+  const char *p = s.data();
+  const char *end = s.data() + s.size();
+
+  auto dimsErr = [&]() {
+    std::cerr << "Error: expected 3 comma-separated values, got: " << s << "\n";
+    exit(1);
+  };
+
+  auto [p1, ec1] = std::from_chars(p, end, d.x);
+  if (ec1 != std::errc{} || p1 == end || *p1 != ',')
+    dimsErr();
+
+  auto [p2, ec2] = std::from_chars(p1 + 1, end, d.y);
+  if (ec2 != std::errc{} || p2 == end || *p2 != ',')
+    dimsErr();
+
+  auto [p3, ec3] = std::from_chars(p2 + 1, end, d.z);
+  if (ec3 != std::errc{} || p3 != end)
+    dimsErr();
+
   return d;
 }
 
-static Param parseParam(const char *s) {
+static Param parseParam(std::string_view s) {
   Param p;
   std::string input(s);
 
   // Find the type prefix (everything before the first ':')
   auto colonPos = input.find(':');
   if (colonPos == std::string::npos) {
-    fprintf(stderr,
-            "Error: --param requires type prefix (e.g. i64:42 or "
-            "i64[]:1,2,3), got: %s\n",
-            s);
+    std::cerr << "Error: --param requires type prefix (e.g. i64:42 or "
+                 "i64[]:1,2,3), got: "
+              << s << "\n";
     exit(1);
   }
 
@@ -70,7 +100,8 @@ static Param parseParam(const char *s) {
   std::string valueStr = input.substr(colonPos + 1);
 
   if (valueStr.empty()) {
-    fprintf(stderr, "Error: --param requires at least one value, got: %s\n", s);
+    std::cerr << "Error: --param requires at least one value, got: " << s
+              << "\n";
     exit(1);
   }
 
@@ -80,33 +111,30 @@ static Param parseParam(const char *s) {
   } else if (typePrefix == "i64") {
     p.kind = ParamKind::Scalar;
   } else {
-    fprintf(stderr,
-            "Error: unsupported param type '%s' (expected i64 or "
-            "i64[]), got: %s\n",
-            typePrefix.c_str(), s);
+    std::cerr << "Error: unsupported param type '" << typePrefix
+              << "' (expected i64 or i64[]), got: " << s << "\n";
     exit(1);
   }
 
   // Parse values
   std::istringstream iss(valueStr);
   std::string token;
-  while (std::getline(iss, token, ',')) {
+  while (std::getline(iss, token, ','))
     p.values.push_back(std::stoll(token));
-  }
 
   if (p.kind == ParamKind::Scalar && p.values.size() != 1) {
-    fprintf(stderr, "Error: scalar param expects exactly one value, got: %s\n",
-            s);
+    std::cerr << "Error: scalar param expects exactly one value, got: " << s
+              << "\n";
     exit(1);
   }
 
   return p;
 }
 
-static std::string readFile(const char *path) {
-  std::ifstream f(path, std::ios::binary);
+static std::string readFile(std::string_view path) {
+  std::ifstream f(std::string(path), std::ios::binary);
   if (!f) {
-    fprintf(stderr, "Error: cannot open %s\n", path);
+    std::cerr << "Error: cannot open " << path << "\n";
     exit(1);
   }
   std::ostringstream ss;
@@ -124,76 +152,65 @@ int main(int argc, char **argv) {
 
   // Parse arguments
   for (int i = 1; i < argc; ++i) {
-    if (strcmp(argv[i], "--param") == 0) {
+    std::string_view arg = argv[i];
+    auto needsValue = [&](std::string_view opt) {
       if (++i >= argc) {
-        fprintf(stderr, "Error: --param requires a value\n");
-        return 1;
+        std::cerr << "Error: " << opt << " requires a value\n";
+        exit(1);
       }
+    };
+    if (arg == "--param") {
+      needsValue("--param");
       params.push_back(parseParam(argv[i]));
-    } else if (strcmp(argv[i], "--grid") == 0) {
-      if (++i >= argc) {
-        fprintf(stderr, "Error: --grid requires a value\n");
-        return 1;
-      }
+    } else if (arg == "--grid") {
+      needsValue("--grid");
       grid = parseDims(argv[i]);
-    } else if (strcmp(argv[i], "--block") == 0) {
-      if (++i >= argc) {
-        fprintf(stderr, "Error: --block requires a value\n");
-        return 1;
-      }
+    } else if (arg == "--block") {
+      needsValue("--block");
       block = parseDims(argv[i]);
-    } else if (strcmp(argv[i], "--output-param") == 0) {
-      if (++i >= argc) {
-        fprintf(stderr, "Error: --output-param requires a value\n");
-        return 1;
-      }
-      outputParam = atoi(argv[i]);
-    } else if (strcmp(argv[i], "--output-count") == 0) {
-      if (++i >= argc) {
-        fprintf(stderr, "Error: --output-count requires a value\n");
-        return 1;
-      }
-      outputCount = atoi(argv[i]);
-    } else if (strcmp(argv[i], "--kernel") == 0) {
-      if (++i >= argc) {
-        fprintf(stderr, "Error: --kernel requires a value\n");
-        return 1;
-      }
+    } else if (arg == "--output-param") {
+      needsValue("--output-param");
+      outputParam = parseIntArg(argv[i], "--output-param");
+    } else if (arg == "--output-count") {
+      needsValue("--output-count");
+      outputCount = parseIntArg(argv[i], "--output-count");
+    } else if (arg == "--kernel") {
+      needsValue("--kernel");
       kernelName = argv[i];
-    } else if (argv[i][0] == '-') {
-      fprintf(stderr, "Error: unknown option %s\n", argv[i]);
-      return 1;
+    } else if (arg[0] == '-') {
+      std::cerr << "Error: unknown option " << arg << "\n";
+      exit(1);
     } else {
       ptxFile = argv[i];
     }
   }
 
   if (!ptxFile) {
-    fprintf(stderr, "Usage: warpforth-runner kernel.ptx --kernel NAME "
-                    "[--param i64[]:V,...] [--param i64:V] [--grid X,Y,Z] "
-                    "[--block X,Y,Z] [--output-param N] [--output-count N]\n");
+    std::cerr << "Usage: warpforth-runner kernel.ptx --kernel NAME "
+                 "[--param i64[]:V,...] [--param i64:V] [--grid X,Y,Z] "
+                 "[--block X,Y,Z] [--output-param N] [--output-count N]\n";
     return 1;
   }
 
   if (!kernelName) {
-    fprintf(stderr, "Error: --kernel NAME is required\n");
+    std::cerr << "Error: --kernel NAME is required\n";
     return 1;
   }
 
   if (params.empty()) {
-    fprintf(stderr, "Error: at least one --param is required\n");
+    std::cerr << "Error: at least one --param is required\n";
     return 1;
   }
 
   if (outputParam < 0 || outputParam >= static_cast<int>(params.size())) {
-    fprintf(stderr, "Error: output-param %d out of range (have %zu params)\n",
-            outputParam, params.size());
+    std::cerr << "Error: output-param " << outputParam << " out of range (have "
+              << params.size() << " params)\n";
     return 1;
   }
 
   if (params[outputParam].kind == ParamKind::Scalar) {
-    fprintf(stderr, "Error: output-param %d is a scalar (cannot read back)\n",
-            outputParam);
+    std::cerr << "Error: output-param " << outputParam
+              << " is a scalar (cannot read back)\n";
     return 1;
   }
 
@@ -217,15 +234,13 @@ int main(int argc, char **argv) {
   CHECK_CU(cuModuleGetFunction(&func, module, kernelName));
 
   // Allocate device buffers (arrays) or store scalar values
-  std::vector<CUdeviceptr> devicePtrs(params.size(), 0);
-  std::vector<int64_t> scalarValues(params.size(), 0);
-  for (size_t i = 0; i < params.size(); ++i) {
-    if (params[i].kind == ParamKind::Array) {
-      size_t bytes = params[i].values.size() * sizeof(int64_t);
-      CHECK_CU(cuMemAlloc(&devicePtrs[i], bytes));
-      CHECK_CU(cuMemcpyHtoD(devicePtrs[i], params[i].values.data(), bytes));
+  for (auto &p : params) {
+    if (p.kind == ParamKind::Array) {
+      size_t bytes = p.values.size() * sizeof(int64_t);
+      CHECK_CU(cuMemAlloc(&p.devicePtr, bytes));
+      CHECK_CU(cuMemcpyHtoD(p.devicePtr, p.values.data(), bytes));
     } else {
-      scalarValues[i] = params[i].values[0];
+      p.scalarValue = p.values[0];
     }
   }
 
@@ -233,8 +248,8 @@ int main(int argc, char **argv) {
   std::vector<void *> kernelArgs(params.size());
   for (size_t i = 0; i < params.size(); ++i) {
     kernelArgs[i] = (params[i].kind == ParamKind::Array)
-                        ? static_cast<void *>(&devicePtrs[i])
-                        : static_cast<void *>(&scalarValues[i]);
+                        ? static_cast<void *>(&params[i].devicePtr)
+                        : static_cast<void *>(&params[i].scalarValue);
   }
 
   // Launch kernel
@@ -246,22 +261,22 @@ int main(int argc, char **argv) {
   // Copy back output param
   size_t outSize = params[outputParam].values.size();
   std::vector<int64_t> output(outSize);
-  CHECK_CU(cuMemcpyDtoH(output.data(), devicePtrs[outputParam],
+  CHECK_CU(cuMemcpyDtoH(output.data(), params[outputParam].devicePtr,
                         outSize * sizeof(int64_t)));
 
   // Print CSV to stdout
   size_t count = outputCount >= 0 ? static_cast<size_t>(outputCount) : outSize;
   for (size_t i = 0; i < count; ++i) {
     if (i > 0)
-      printf(",");
-    printf("%ld", static_cast<long>(output[i]));
+      std::cout << ",";
+    std::cout << output[i];
   }
-  printf("\n");
+  std::cout << "\n";
 
   // Cleanup — only free device memory for array params
-  for (size_t i = 0; i < params.size(); ++i) {
-    if (params[i].kind == ParamKind::Array)
-      cuMemFree(devicePtrs[i]);
+  for (auto &p : params) {
+    if (p.kind == ParamKind::Array)
+      cuMemFree(p.devicePtr);
   }
   cuModuleUnload(module);
   cuCtxDestroy(ctx);
