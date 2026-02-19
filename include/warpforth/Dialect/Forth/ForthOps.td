@@ -385,6 +385,20 @@ def Forth_GlobalIdOp : Forth_StackOpBase<"global_id"> {
 }
 
 //===----------------------------------------------------------------------===//
+// Synchronization operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_BarrierOp : Forth_Op<"barrier", []> {
+  let summary = "GPU thread synchronization barrier";
+  let description = [{
+    Synchronizes all threads in a block.
+    Corresponds to CUDA's __syncthreads().
+    Forth semantics: ( -- )
+  }];
+  let assemblyFormat = "attr-dict";
+}
+
+//===----------------------------------------------------------------------===//
 // Comparison operations.
 //===----------------------------------------------------------------------===//
 

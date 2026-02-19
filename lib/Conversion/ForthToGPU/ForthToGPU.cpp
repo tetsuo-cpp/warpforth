@@ -78,19 +78,32 @@ struct IntrinsicOpConversion : public OpConversionPattern<forth::IntrinsicOp> {
   }
 };
 
+/// Conversion pattern for forth.barrier to gpu.barrier.
+struct BarrierOpConversion : public OpConversionPattern<forth::BarrierOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(forth::BarrierOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<gpu::BarrierOp>(op);
+    return success();
+  }
+};
+
 /// Applies conversion patterns to a function.
 static void applyConversionPatterns(Operation *op, MLIRContext *context) {
   ConversionTarget target(*context);
 
-  // Mark forth.intrinsic as illegal - it must be converted
+  // Mark forth.intrinsic and forth.barrier as illegal - they must be converted
   target.addIllegalOp<forth::IntrinsicOp>();
+  target.addIllegalOp<forth::BarrierOp>();
 
   // GPU, Arith, Memref and LLVM dialect ops are legal
   target.addLegalDialect<gpu::GPUDialect, arith::ArithDialect,
                          memref::MemRefDialect, LLVM::LLVMDialect>();
 
   RewritePatternSet patterns(context);
-  patterns.add<IntrinsicOpConversion>(context);
+  patterns.add<IntrinsicOpConversion, BarrierOpConversion>(context);
 
   if (failed(applyPartialConversion(op, target, std::move(patterns)))) {
     return;

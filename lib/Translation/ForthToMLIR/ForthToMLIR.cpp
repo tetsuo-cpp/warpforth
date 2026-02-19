@@ -526,6 +526,9 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   } else if (word == "GLOBAL-ID") {
     return builder.create<forth::GlobalIdOp>(loc, stackType, inputStack)
         .getResult();
+  } else if (word == "BARRIER") {
+    builder.create<forth::BarrierOp>(loc);
+    return inputStack;
   } else if (word == "=") {
     return builder.create<forth::EqOp>(loc, stackType, inputStack).getResult();
   } else if (word == "<") {
