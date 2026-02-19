@@ -158,9 +158,9 @@ private:
     }
 
     // Clone ops from each source block into the corresponding destination
-    // block, with three transformations:
-    // - func.return → gpu.return
-    // - shared memref.alloca → gpu.func workgroup attribution
+    // block, with two transformations:
+    // - func.return -> gpu.return
+    // - shared memref.alloca -> gpu.func workgroup attribution
     auto *ctx = funcOp.getContext();
     for (auto [srcBlock, dstBlock] :
          llvm::zip(funcOp.getBody(), gpuFunc.getBody())) {
