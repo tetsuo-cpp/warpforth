@@ -69,6 +69,11 @@ static Param parseParam(const char *s) {
   std::string typePrefix = input.substr(0, colonPos);
   std::string valueStr = input.substr(colonPos + 1);
 
+  if (valueStr.empty()) {
+    fprintf(stderr, "Error: --param requires at least one value, got: %s\n", s);
+    exit(1);
+  }
+
   // Determine kind from type prefix
   if (typePrefix == "i64[]") {
     p.kind = ParamKind::Array;
@@ -228,8 +233,8 @@ int main(int argc, char **argv) {
   std::vector<void *> kernelArgs(params.size());
   for (size_t i = 0; i < params.size(); ++i) {
     kernelArgs[i] = (params[i].kind == ParamKind::Array)
-                        ? (void *)&devicePtrs[i]
-                        : (void *)&scalarValues[i];
+                        ? static_cast<void *>(&devicePtrs[i])
+                        : static_cast<void *>(&scalarValues[i]);
   }
 
   // Launch kernel
