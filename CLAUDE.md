@@ -49,7 +49,7 @@ Requires MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in CMake.
   ./build/bin/warpforth-translate --mlir-to-ptx > kernel.ptx
 
 # Execute PTX on GPU
-./warpforth-runner kernel.ptx --param 1,2,3 --param 0,0,0,0 --output-param 1 --output-count 5
+./warpforth-runner kernel.ptx --param i64[]:1,2,3 --param i64:42 --output-param 0 --output-count 3
 ```
 
 ## Adding New Operations
