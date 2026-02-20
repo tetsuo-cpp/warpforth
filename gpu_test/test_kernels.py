@@ -399,6 +399,68 @@ def test_tiled_matmul_i64(kernel_runner: KernelRunner) -> None:
     assert result == expected
 
 
+def test_tiled_matmul_f64(kernel_runner: KernelRunner) -> None:
+    """Tiled f64 matmul with shared memory: C = A(4x4) * B(4x4) -> C(4x4).
+
+    Uses 2x2 tiles, float shared memory for A/B tiles, and BARRIER for sync.
+    Grid: (2,2,1), Block: (2,2,1) — 4 blocks of 4 threads each.
+    """
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n"
+            "\\! param A f64[16]\n"
+            "\\! param B f64[16]\n"
+            "\\! param C f64[16]\n"
+            "\\! shared SA f64[4]\n"
+            "\\! shared SB f64[4]\n"
+            "BID-Y 2 * TID-Y +\n"
+            "BID-X 2 * TID-X +\n"
+            "0.0\n"
+            "2 0 DO\n"
+            "  2 PICK 4 * I 2 * + TID-X + CELLS A + F@\n"
+            "  TID-Y 2 * TID-X + CELLS SA + SF!\n"
+            "  I 2 * TID-Y + 4 * 2 PICK + CELLS B + F@\n"
+            "  TID-Y 2 * TID-X + CELLS SB + SF!\n"
+            "  BARRIER\n"
+            "  2 0 DO\n"
+            "    TID-Y 2 * I + CELLS SA + SF@\n"
+            "    I 2 * TID-X + CELLS SB + SF@\n"
+            "    F* F+\n"
+            "  LOOP\n"
+            "  BARRIER\n"
+            "LOOP\n"
+            "ROT 4 * ROT + CELLS C + F!"
+        ),
+        params={
+            "A": [1.5, 2.0, 0.5, 3.0, 4.0, 1.5, 2.5, 0.5, 0.5, 3.0, 1.0, 2.0, 2.0, 0.5, 3.5, 1.5],
+            "B": [1.0, 0.5, 2.0, 1.5, 3.0, 1.0, 0.5, 2.0, 0.5, 2.5, 1.0, 0.5, 2.0, 1.5, 3.0, 1.0],
+        },
+        grid=(2, 2, 1),
+        block=(2, 2, 1),
+        output_param=2,
+        output_count=16,
+    )
+    expected = [
+        13.75,
+        8.5,
+        13.5,
+        9.5,
+        10.75,
+        10.5,
+        12.75,
+        10.75,
+        14.0,
+        8.75,
+        9.5,
+        9.25,
+        8.25,
+        12.5,
+        12.25,
+        7.25,
+    ]
+    assert result == [pytest.approx(v) for v in expected]
+
+
 # --- User-Defined Words ---
 
 
@@ -410,3 +472,114 @@ def test_user_defined_word(kernel_runner: KernelRunner) -> None:
         ),
     )
     assert result[0] == 10
+
+
+# --- Float Arithmetic ---
+
+
+def test_float_addition(kernel_runner: KernelRunner) -> None:
+    """F+: 1.5 + 2.5 = 4.0."""
+    result = kernel_runner.run(
+        forth_source="\\! kernel main\n\\! param DATA f64[256]\n1.5 2.5 F+\n0 CELLS DATA + F!",
+    )
+    assert result[0] == pytest.approx(4.0)
+
+
+def test_float_subtraction(kernel_runner: KernelRunner) -> None:
+    """F-: 10.0 - 3.5 = 6.5."""
+    result = kernel_runner.run(
+        forth_source="\\! kernel main\n\\! param DATA f64[256]\n10.0 3.5 F-\n0 CELLS DATA + F!",
+    )
+    assert result[0] == pytest.approx(6.5)
+
+
+def test_float_multiplication(kernel_runner: KernelRunner) -> None:
+    """F*: 6.0 * 7.5 = 45.0."""
+    result = kernel_runner.run(
+        forth_source="\\! kernel main\n\\! param DATA f64[256]\n6.0 7.5 F*\n0 CELLS DATA + F!",
+    )
+    assert result[0] == pytest.approx(45.0)
+
+
+def test_float_division(kernel_runner: KernelRunner) -> None:
+    """F/: 42.0 / 6.0 = 7.0."""
+    result = kernel_runner.run(
+        forth_source="\\! kernel main\n\\! param DATA f64[256]\n42.0 6.0 F/\n0 CELLS DATA + F!",
+    )
+    assert result[0] == pytest.approx(7.0)
+
+
+# --- Float Memory ---
+
+
+def test_float_load_store(kernel_runner: KernelRunner) -> None:
+    """F@ and F!: read from DATA[0], multiply by 2, write to DATA[1]."""
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n\\! param DATA f64[256]\n0 CELLS DATA + F@\n2.0 F*\n1 CELLS DATA + F!"
+        ),
+        params={"DATA": [3.14]},
+        output_count=2,
+    )
+    assert result[1] == pytest.approx(6.28)
+
+
+# --- Float Scalar Params ---
+
+
+def test_float_scalar_param(kernel_runner: KernelRunner) -> None:
+    """Scalar f64 param: each thread scales DATA[i] by SCALE."""
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n\\! param DATA f64[256]\n\\! param SCALE f64\n"
+            "GLOBAL-ID\n"
+            "DUP CELLS DATA + F@\n"
+            "SCALE F*\n"
+            "SWAP CELLS DATA + F!"
+        ),
+        params={"DATA": [1.0, 2.0, 3.0, 4.0], "SCALE": 2.5},
+        block=(4, 1, 1),
+        output_count=4,
+    )
+    assert result == [
+        pytest.approx(2.5),
+        pytest.approx(5.0),
+        pytest.approx(7.5),
+        pytest.approx(10.0),
+    ]
+
+
+# --- Float Comparisons ---
+
+
+def test_float_comparisons(kernel_runner: KernelRunner) -> None:
+    """F=, F<, F>: True = -1, False = 0 (pushed as i64 on the stack)."""
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n\\! param DATA i64[256]\n"
+            "3.14 3.14 F=  0 CELLS DATA + !\n"
+            "1.0 2.0 F<    1 CELLS DATA + !\n"
+            "5.0 3.0 F>    2 CELLS DATA + !"
+        ),
+        output_count=3,
+    )
+    assert result == [-1, -1, -1]
+
+
+# --- Float Conversion ---
+
+
+def test_int_to_float_conversion(kernel_runner: KernelRunner) -> None:
+    """S>F: convert int 7 to float, multiply by 1.5, store as f64."""
+    result = kernel_runner.run(
+        forth_source=("\\! kernel main\n\\! param DATA f64[256]\n7 S>F 1.5 F*\n0 CELLS DATA + F!"),
+    )
+    assert result[0] == pytest.approx(10.5)
+
+
+def test_float_to_int_conversion(kernel_runner: KernelRunner) -> None:
+    """F>S: convert float 7.9 to int (truncates to 7), store as i64."""
+    result = kernel_runner.run(
+        forth_source=("\\! kernel main\n\\! param DATA i64[256]\n7.9 F>S\n0 CELLS DATA + !"),
+    )
+    assert result[0] == 7
