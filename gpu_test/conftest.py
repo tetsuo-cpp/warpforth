@@ -39,6 +39,7 @@ class ParamDecl:
     name: str
     is_array: bool
     size: int  # 0 for scalars
+    base_type: str = "i64"  # "i64" or "f64"
 
 
 class CompileError(Exception):
@@ -283,15 +284,17 @@ class VastSession:
         )
 
 
-def _parse_array_type(type_spec: str) -> int:
+def _parse_array_type(type_spec: str) -> tuple[str, int]:
+    """Parse 'i64[256]' or 'f64[256]' into (base_type, size)."""
     if not type_spec.endswith("]"):
         msg = f"Invalid array type spec: {type_spec}"
         raise ValueError(msg)
     base, size_str = type_spec[:-1].split("[", 1)
-    if base.lower() != "i64":
+    base_lower = base.lower()
+    if base_lower not in ("i64", "f64"):
         msg = f"Unsupported base type: {base}"
         raise ValueError(msg)
-    return int(size_str)
+    return base_lower, int(size_str)
 
 
 def _iter_header_directives(forth_source: str) -> Generator[tuple[str, list[str]]]:
@@ -341,13 +344,14 @@ def _parse_param_declarations(forth_source: str) -> list[ParamDecl]:
         name = parts[1]
         type_spec = parts[2]
         if "[" in type_spec:
-            size = _parse_array_type(type_spec)
-            decls.append(ParamDecl(name=name, is_array=True, size=size))
+            base_type, size = _parse_array_type(type_spec)
+            decls.append(ParamDecl(name=name, is_array=True, size=size, base_type=base_type))
         else:
-            if type_spec.lower() != "i64":
+            base_type = type_spec.lower()
+            if base_type not in ("i64", "f64"):
                 msg = f"Unsupported scalar type: {type_spec}"
                 raise ValueError(msg)
-            decls.append(ParamDecl(name=name, is_array=False, size=0))
+            decls.append(ParamDecl(name=name, is_array=False, size=0, base_type=base_type))
     return decls
 
 
@@ -361,18 +365,18 @@ class KernelRunner:
     def run(
         self,
         forth_source: str,
-        params: dict[str, list[int] | int] | None = None,
+        params: dict[str, list[int] | list[float] | int | float] | None = None,
         grid: tuple[int, int, int] = (1, 1, 1),
         block: tuple[int, int, int] = (1, 1, 1),
         output_param: int = 0,
         output_count: int | None = None,
-    ) -> list[int]:
+    ) -> list[int] | list[float]:
         """Compile Forth source locally, execute on remote GPU, return output values.
 
         Param buffer sizes are derived from the Forth source's 'param' declarations.
         The params dict maps param names to initial values:
-          - Array params: list[int] (padded with zeros to declared size)
-          - Scalar params: int
+          - Array params: list of int or float (padded with zeros to declared size)
+          - Scalar params: int or float
         Params not in the dict are zero-initialized.
         """
         # Parse kernel name and param declarations
@@ -420,16 +424,17 @@ class KernelRunner:
                 if not isinstance(values, list):
                     msg = f"Array param '{decl.name}' expects a list, got {type(values).__name__}"
                     raise TypeError(msg)
-                buf = [0] * decl.size
+                zero = 0.0 if decl.base_type == "f64" else 0
+                buf = [zero] * decl.size
                 for i, v in enumerate(values):
                     buf[i] = v
-                cmd_parts.extend(["--param", f"i64[]:{','.join(str(v) for v in buf)}"])
+                cmd_parts.extend(["--param", f"{decl.base_type}[]:{','.join(str(v) for v in buf)}"])
             else:
-                value = params.get(decl.name, 0)
+                value = params.get(decl.name, 0.0 if decl.base_type == "f64" else 0)
                 if isinstance(value, list):
-                    msg = f"Scalar param '{decl.name}' expects an int, got list"
+                    msg = f"Scalar param '{decl.name}' expects a scalar, got list"
                     raise TypeError(msg)
-                cmd_parts.extend(["--param", f"i64:{value}"])
+                cmd_parts.extend(["--param", f"{decl.base_type}:{value}"])
 
         cmd_parts.extend(
             [
@@ -448,8 +453,10 @@ class KernelRunner:
         cmd = " ".join(cmd_parts)
         stdout = self.session.ssh_run(cmd, timeout=120)
 
-        # Parse CSV output
-        return [int(v) for v in stdout.strip().split(",")]
+        # Parse CSV output — type depends on the output param
+        out_type = decls[output_param].base_type
+        parse = float if out_type == "f64" else int
+        return [parse(v) for v in stdout.strip().split(",")]
 
 
 # --- Fixtures ---

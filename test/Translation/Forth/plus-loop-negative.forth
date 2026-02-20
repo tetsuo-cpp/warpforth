@@ -3,13 +3,13 @@
 \ Verify +LOOP with negative step uses crossing test (handles negative direction)
 
 \ CHECK:       %[[S0:.*]] = forth.stack !forth.stack
-\ CHECK-NEXT:  %[[S1:.*]] = forth.literal %[[S0]] 0 : !forth.stack -> !forth.stack
-\ CHECK-NEXT:  %[[S2:.*]] = forth.literal %[[S1]] 10 : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S1:.*]] = forth.constant %[[S0]](0 : i64) : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S2:.*]] = forth.constant %[[S1]](10 : i64) : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[OS:.*]], %[[VAL:.*]] = forth.pop %[[S2]] : !forth.stack -> !forth.stack, i64
 \ CHECK-NEXT:  %[[OS2:.*]], %[[LIM:.*]] = forth.pop %[[OS]] : !forth.stack -> !forth.stack, i64
 \ CHECK:       cf.br ^bb1(%[[OS2]] : !forth.stack)
 \ CHECK:     ^bb1(%[[B1:.*]]: !forth.stack):
-\ CHECK:       %[[STEP_S:.*]] = forth.literal %[[B1]] -1 : !forth.stack -> !forth.stack
+\ CHECK:       %[[STEP_S:.*]] = forth.constant %[[B1]](-1 : i64) : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[POP_S:.*]], %[[STEP:.*]] = forth.pop %[[STEP_S]] : !forth.stack -> !forth.stack, i64
 \ CHECK:       %[[OLD:.*]] = memref.load
 \ CHECK:       %[[NEW:.*]] = arith.addi %[[OLD]], %[[STEP]] : i64

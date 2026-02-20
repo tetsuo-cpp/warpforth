@@ -5,7 +5,7 @@
 /// -std=c++17`.
 ///
 /// Usage:
-///   warpforth-runner kernel.ptx --param i64[]:1,2,3 --param i64:42 \
+///   warpforth-runner kernel.ptx --param i64[]:1,2,3 --param f64:3.14 \
 ///       --grid 4,1,1 --block 64,1,1 --kernel main \
 ///       --output-param 0 --output-count 3
 
@@ -15,11 +15,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #define CHECK_CU(call)                                                         \
@@ -34,14 +37,54 @@
     }                                                                          \
   } while (0)
 
-enum class ParamKind { Array, Scalar };
-
-struct Param {
-  ParamKind kind = ParamKind::Array;
-  std::vector<int64_t> values;
+template <typename T> struct ArrayParam {
+  std::vector<T> values;
   CUdeviceptr devicePtr = 0;
-  int64_t scalarValue = 0;
 };
+
+template <typename T> struct ScalarParam {
+  T value;
+};
+
+using Param = std::variant<ArrayParam<int64_t>, ArrayParam<double>,
+                           ScalarParam<int64_t>, ScalarParam<double>>;
+
+template <typename T> static void allocDevice(ArrayParam<T> &arr) {
+  size_t bytes = arr.values.size() * sizeof(T);
+  CHECK_CU(cuMemAlloc(&arr.devicePtr, bytes));
+  CHECK_CU(cuMemcpyHtoD(arr.devicePtr, arr.values.data(), bytes));
+}
+
+template <typename T>
+static void printOutput(ArrayParam<T> &arr, size_t count) {
+  std::vector<T> output(arr.values.size());
+  CHECK_CU(cuMemcpyDtoH(output.data(), arr.devicePtr,
+                        arr.values.size() * sizeof(T)));
+  for (size_t i = 0; i < count; ++i) {
+    if (i > 0)
+      std::cout << ",";
+    if constexpr (std::is_floating_point_v<T>)
+      std::cout << std::setprecision(17) << output[i];
+    else
+      std::cout << output[i];
+  }
+  std::cout << "\n";
+}
+
+static void *kernelArgPtr(Param &p) {
+  if (auto *a = std::get_if<ArrayParam<int64_t>>(&p))
+    return &a->devicePtr;
+  if (auto *a = std::get_if<ArrayParam<double>>(&p))
+    return &a->devicePtr;
+  if (auto *s = std::get_if<ScalarParam<int64_t>>(&p))
+    return &s->value;
+  return &std::get<ScalarParam<double>>(p).value;
+}
+
+static bool isScalar(const Param &p) {
+  return std::holds_alternative<ScalarParam<int64_t>>(p) ||
+         std::holds_alternative<ScalarParam<double>>(p);
+}
 
 struct Dims {
   unsigned x = 1, y = 1, z = 1;
@@ -84,14 +127,12 @@ static Dims parseDims(std::string_view s) {
 }
 
 static Param parseParam(std::string_view s) {
-  Param p;
   std::string input(s);
 
-  // Find the type prefix (everything before the first ':')
   auto colonPos = input.find(':');
   if (colonPos == std::string::npos) {
     std::cerr << "Error: --param requires type prefix (e.g. i64:42 or "
-                 "i64[]:1,2,3), got: "
+                 "f64[]:1.0,2.0), got: "
               << s << "\n";
     exit(1);
   }
@@ -105,30 +146,40 @@ static Param parseParam(std::string_view s) {
     exit(1);
   }
 
-  // Determine kind from type prefix
-  if (typePrefix == "i64[]") {
-    p.kind = ParamKind::Array;
-  } else if (typePrefix == "i64") {
-    p.kind = ParamKind::Scalar;
-  } else {
-    std::cerr << "Error: unsupported param type '" << typePrefix
-              << "' (expected i64 or i64[]), got: " << s << "\n";
-    exit(1);
-  }
+  // Parse comma-separated values into a typed vector
+  auto parseValues = [&](auto convert) {
+    using T = decltype(convert(std::string{}));
+    std::vector<T> vals;
+    std::istringstream iss(valueStr);
+    std::string token;
+    while (std::getline(iss, token, ','))
+      vals.push_back(convert(token));
+    return vals;
+  };
 
-  // Parse values
-  std::istringstream iss(valueStr);
-  std::string token;
-  while (std::getline(iss, token, ','))
-    p.values.push_back(std::stoll(token));
+  auto toI64 = [](const std::string &s) -> int64_t { return std::stoll(s); };
+  auto toF64 = [](const std::string &s) -> double { return std::stod(s); };
 
-  if (p.kind == ParamKind::Scalar && p.values.size() != 1) {
+  if (typePrefix == "i64[]")
+    return Param{ArrayParam<int64_t>{parseValues(toI64)}};
+  if (typePrefix == "f64[]")
+    return Param{ArrayParam<double>{parseValues(toF64)}};
+
+  // Scalars — must be exactly one value
+  if (valueStr.find(',') != std::string::npos) {
     std::cerr << "Error: scalar param expects exactly one value, got: " << s
               << "\n";
     exit(1);
   }
 
-  return p;
+  if (typePrefix == "i64")
+    return Param{ScalarParam<int64_t>{std::stoll(valueStr)}};
+  if (typePrefix == "f64")
+    return Param{ScalarParam<double>{std::stod(valueStr)}};
+
+  std::cerr << "Error: unsupported param type '" << typePrefix
+            << "' (expected i64, i64[], f64, or f64[]), got: " << s << "\n";
+  exit(1);
 }
 
 static std::string readFile(std::string_view path) {
@@ -187,7 +238,8 @@ int main(int argc, char **argv) {
 
   if (!ptxFile) {
     std::cerr << "Usage: warpforth-runner kernel.ptx --kernel NAME "
-                 "[--param i64[]:V,...] [--param i64:V] [--grid X,Y,Z] "
+                 "[--param i64[]:V,...] [--param f64[]:V,...] "
+                 "[--param i64:V] [--param f64:V] [--grid X,Y,Z] "
                  "[--block X,Y,Z] [--output-param N] [--output-count N]\n";
     return 1;
   }
@@ -208,7 +260,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (params[outputParam].kind == ParamKind::Scalar) {
+  if (isScalar(params[outputParam])) {
     std::cerr << "Error: output-param " << outputParam
               << " is a scalar (cannot read back)\n";
     return 1;
@@ -233,24 +285,18 @@ int main(int argc, char **argv) {
   CUfunction func;
   CHECK_CU(cuModuleGetFunction(&func, module, kernelName));
 
-  // Allocate device buffers (arrays) or store scalar values
+  // Allocate device buffers for array params
   for (auto &p : params) {
-    if (p.kind == ParamKind::Array) {
-      size_t bytes = p.values.size() * sizeof(int64_t);
-      CHECK_CU(cuMemAlloc(&p.devicePtr, bytes));
-      CHECK_CU(cuMemcpyHtoD(p.devicePtr, p.values.data(), bytes));
-    } else {
-      p.scalarValue = p.values[0];
-    }
+    if (auto *a = std::get_if<ArrayParam<int64_t>>(&p))
+      allocDevice(*a);
+    else if (auto *a = std::get_if<ArrayParam<double>>(&p))
+      allocDevice(*a);
   }
 
   // Set up kernel parameters — Driver API expects array of pointers to args
   std::vector<void *> kernelArgs(params.size());
-  for (size_t i = 0; i < params.size(); ++i) {
-    kernelArgs[i] = (params[i].kind == ParamKind::Array)
-                        ? static_cast<void *>(&params[i].devicePtr)
-                        : static_cast<void *>(&params[i].scalarValue);
-  }
+  for (size_t i = 0; i < params.size(); ++i)
+    kernelArgs[i] = kernelArgPtr(params[i]);
 
   // Launch kernel
   CHECK_CU(cuLaunchKernel(func, grid.x, grid.y, grid.z, block.x, block.y,
@@ -258,25 +304,25 @@ int main(int argc, char **argv) {
 
   CHECK_CU(cuCtxSynchronize());
 
-  // Copy back output param
-  size_t outSize = params[outputParam].values.size();
-  std::vector<int64_t> output(outSize);
-  CHECK_CU(cuMemcpyDtoH(output.data(), params[outputParam].devicePtr,
-                        outSize * sizeof(int64_t)));
-
-  // Print CSV to stdout
-  size_t count = outputCount >= 0 ? static_cast<size_t>(outputCount) : outSize;
-  for (size_t i = 0; i < count; ++i) {
-    if (i > 0)
-      std::cout << ",";
-    std::cout << output[i];
+  // Copy back and print output param
+  size_t count = outputCount >= 0 ? static_cast<size_t>(outputCount) : 0;
+  if (auto *iArr = std::get_if<ArrayParam<int64_t>>(&params[outputParam])) {
+    if (outputCount < 0)
+      count = iArr->values.size();
+    printOutput(*iArr, count);
+  } else {
+    auto &fArr = std::get<ArrayParam<double>>(params[outputParam]);
+    if (outputCount < 0)
+      count = fArr.values.size();
+    printOutput(fArr, count);
   }
-  std::cout << "\n";
 
   // Cleanup — only free device memory for array params
   for (auto &p : params) {
-    if (p.kind == ParamKind::Array)
-      cuMemFree(p.devicePtr);
+    if (auto *a = std::get_if<ArrayParam<int64_t>>(&p))
+      cuMemFree(a->devicePtr);
+    else if (auto *a = std::get_if<ArrayParam<double>>(&p))
+      cuMemFree(a->devicePtr);
   }
   cuModuleUnload(module);
   cuCtxDestroy(ctx);

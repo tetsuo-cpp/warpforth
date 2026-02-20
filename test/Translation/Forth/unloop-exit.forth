@@ -6,7 +6,7 @@
 \ CHECK: memref.alloca
 \ CHECK: cf.br ^bb[[#BODY:]]
 \ CHECK: ^bb[[#BODY]](%{{.*}}: !forth.stack):
-\ CHECK: forth.eq
+\ CHECK: forth.eqi
 \ CHECK: cf.cond_br %{{.*}}, ^bb[[#THEN:]](%{{.*}}), ^bb[[#ENDIF:]](%{{.*}})
 \ CHECK: ^bb[[#EXIT:]](%{{.*}}: !forth.stack):
 \ CHECK: return
