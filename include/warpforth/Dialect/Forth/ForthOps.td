@@ -250,6 +250,24 @@ def Forth_StoreOp : Forth_StackOpBase<"store"> {
   }];
 }
 
+def Forth_SharedLoadOp : Forth_StackOpBase<"shared_load"> {
+  let summary = "Load value from shared memory buffer";
+  let description = [{
+    Pops an address from the stack, loads a value from shared/workgroup memory at
+    that address, and pushes the loaded value onto the stack.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_SharedStoreOp : Forth_StackOpBase<"shared_store"> {
+  let summary = "Store value to shared memory buffer";
+  let description = [{
+    Pops an address and value from the stack, stores the value to shared/workgroup
+    memory at the specified address.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
 def Forth_ParamRefOp : Forth_Op<"param_ref", [Pure]> {
   let summary = "Push kernel parameter address onto stack";
   let description = [{

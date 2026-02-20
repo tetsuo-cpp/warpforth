@@ -15,6 +15,14 @@
 // CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr
 // CHECK: llvm.store %{{.*}}, %{{.*}} : i64, !llvm.ptr
 
+// shared load (S@): pop address, inttoptr shared addrspace, llvm.load
+// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<{{[1-9][0-9]*}}>
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<{{[1-9][0-9]*}}> -> i64
+
+// shared store (S!): pop address + value, inttoptr shared addrspace, llvm.store
+// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<{{[1-9][0-9]*}}>
+// CHECK: llvm.store %{{.*}}, %{{.*}} : i64, !llvm.ptr<{{[1-9][0-9]*}}>
+
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
@@ -23,6 +31,11 @@ module {
     %3 = forth.literal %2 42 : !forth.stack -> !forth.stack
     %4 = forth.literal %3 100 : !forth.stack -> !forth.stack
     %5 = forth.store %4 : !forth.stack -> !forth.stack
+    %6 = forth.literal %5 2 : !forth.stack -> !forth.stack
+    %7 = forth.shared_load %6 : !forth.stack -> !forth.stack
+    %8 = forth.literal %7 9 : !forth.stack -> !forth.stack
+    %9 = forth.literal %8 3 : !forth.stack -> !forth.stack
+    %10 = forth.shared_store %9 : !forth.stack -> !forth.stack
     return
   }
 }

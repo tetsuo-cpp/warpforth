@@ -487,6 +487,12 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   } else if (word == "!") {
     return builder.create<forth::StoreOp>(loc, stackType, inputStack)
         .getResult();
+  } else if (word == "S@") {
+    return builder.create<forth::SharedLoadOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "S!") {
+    return builder.create<forth::SharedStoreOp>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "TID-X") {
     return builder.create<forth::ThreadIdXOp>(loc, stackType, inputStack)
         .getResult();
