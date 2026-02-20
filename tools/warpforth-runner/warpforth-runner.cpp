@@ -157,8 +157,24 @@ static Param parseParam(std::string_view s) {
     return vals;
   };
 
-  auto toI64 = [](const std::string &s) -> int64_t { return std::stoll(s); };
-  auto toF64 = [](const std::string &s) -> double { return std::stod(s); };
+  auto toI64 = [&](const std::string &tok) -> int64_t {
+    try {
+      return std::stoll(tok);
+    } catch (const std::exception &) {
+      std::cerr << "Error: invalid integer value '" << tok << "' in --param "
+                << s << "\n";
+      exit(1);
+    }
+  };
+  auto toF64 = [&](const std::string &tok) -> double {
+    try {
+      return std::stod(tok);
+    } catch (const std::exception &) {
+      std::cerr << "Error: invalid float value '" << tok << "' in --param " << s
+                << "\n";
+      exit(1);
+    }
+  };
 
   if (typePrefix == "i64[]")
     return Param{ArrayParam<int64_t>{parseValues(toI64)}};
@@ -173,9 +189,9 @@ static Param parseParam(std::string_view s) {
   }
 
   if (typePrefix == "i64")
-    return Param{ScalarParam<int64_t>{std::stoll(valueStr)}};
+    return Param{ScalarParam<int64_t>{toI64(valueStr)}};
   if (typePrefix == "f64")
-    return Param{ScalarParam<double>{std::stod(valueStr)}};
+    return Param{ScalarParam<double>{toF64(valueStr)}};
 
   std::cerr << "Error: unsupported param type '" << typePrefix
             << "' (expected i64, i64[], f64, or f64[]), got: " << s << "\n";
