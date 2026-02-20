@@ -124,7 +124,7 @@ def Forth_ConstantOp : Forth_Op<"constant", [Pure]> {
     Forth semantics: ( -- n )
   }];
 
-  let arguments = (ins Forth_StackType:$input_stack, AnyAttr:$value);
+  let arguments = (ins Forth_StackType:$input_stack, AnyAttrOf<[I64Attr, F64Attr]>:$value);
   let results = (outs Forth_StackType:$output_stack);
 
   let assemblyFormat = [{
