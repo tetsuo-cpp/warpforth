@@ -337,6 +337,68 @@ def test_naive_matmul_i64(kernel_runner: KernelRunner) -> None:
     assert result == [12, 6, 9, 28, 14, 29]
 
 
+def test_tiled_matmul_i64(kernel_runner: KernelRunner) -> None:
+    """Tiled i64 matmul with shared memory: C = A(4x4) * B(4x4) -> C(4x4).
+
+    Uses 2x2 tiles, shared memory for A/B tiles, and BARRIER for sync.
+    Grid: (2,2,1), Block: (2,2,1) — 4 blocks of 4 threads each.
+    """
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n"
+            "\\! param A i64[16]\n"
+            "\\! param B i64[16]\n"
+            "\\! param C i64[16]\n"
+            "\\! shared SA i64[4]\n"
+            "\\! shared SB i64[4]\n"
+            "BID-Y 2 * TID-Y +\n"
+            "BID-X 2 * TID-X +\n"
+            "0\n"
+            "2 0 DO\n"
+            "  2 PICK 4 * I 2 * + TID-X + CELLS A + @\n"
+            "  TID-Y 2 * TID-X + CELLS SA + S!\n"
+            "  I 2 * TID-Y + 4 * 2 PICK + CELLS B + @\n"
+            "  TID-Y 2 * TID-X + CELLS SB + S!\n"
+            "  BARRIER\n"
+            "  2 0 DO\n"
+            "    TID-Y 2 * I + CELLS SA + S@\n"
+            "    I 2 * TID-X + CELLS SB + S@\n"
+            "    * +\n"
+            "  LOOP\n"
+            "  BARRIER\n"
+            "LOOP\n"
+            "ROT 4 * ROT + CELLS C + !"
+        ),
+        params={
+            "A": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            "B": [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+        },
+        grid=(2, 2, 1),
+        block=(2, 2, 1),
+        output_param=2,
+        output_count=16,
+    )
+    expected = [
+        250,
+        260,
+        270,
+        280,
+        618,
+        644,
+        670,
+        696,
+        986,
+        1028,
+        1070,
+        1112,
+        1354,
+        1412,
+        1470,
+        1528,
+    ]
+    assert result == expected
+
+
 # --- User-Defined Words ---
 
 
