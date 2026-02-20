@@ -87,9 +87,9 @@ uv run ruff format gpu_test/
 
 - **Stack Type**: `!forth.stack` - untyped stack, programmer ensures type safety
 - **Operations**: All take stack as input and produce stack as output (except `forth.stack`)
-- **Supported Words**: literals, `DUP DROP SWAP OVER ROT NIP TUCK PICK ROLL`, `+ - * / MOD`, `AND OR XOR NOT LSHIFT RSHIFT`, `= < > <> <= >= 0=`, `@ !`, `CELLS`, `IF ELSE THEN`, `BEGIN UNTIL`, `BEGIN WHILE REPEAT`, `DO LOOP +LOOP I J K`, `LEAVE UNLOOP EXIT`, `TID-X/Y/Z BID-X/Y/Z BDIM-X/Y/Z GDIM-X/Y/Z GLOBAL-ID` (GPU indexing).
+- **Supported Words**: literals, `DUP DROP SWAP OVER ROT NIP TUCK PICK ROLL`, `+ - * / MOD`, `AND OR XOR NOT LSHIFT RSHIFT`, `= < > <> <= >= 0=`, `@ !` (global memory), `S@ S!` (shared memory), `CELLS`, `IF ELSE THEN`, `BEGIN UNTIL`, `BEGIN WHILE REPEAT`, `DO LOOP +LOOP I J K`, `LEAVE UNLOOP EXIT`, `TID-X/Y/Z BID-X/Y/Z BDIM-X/Y/Z GDIM-X/Y/Z GLOBAL-ID` (GPU indexing).
 - **Kernel Parameters**: Declared in the `\!` header. `\! kernel <name>` is required and must appear first. `\! param <name> i64[<N>]` becomes a `memref<Nxi64>` argument; `\! param <name> i64` becomes an `i64` argument. Using a param name in code emits `forth.param_ref` (arrays push address; scalars push value).
-- **Shared Memory**: `\! shared <name> i64[<N>]` declares GPU shared (workgroup) memory. Emits a tagged `memref.alloca` at kernel entry; ForthToGPU converts it to a `gpu.func` workgroup attribution (`memref<Nxi64, #gpu.address_space<workgroup>>`). Using the shared name in code pushes its base address onto the stack. Cannot be referenced inside word definitions.
+- **Shared Memory**: `\! shared <name> i64[<N>]` declares GPU shared (workgroup) memory. Emits a tagged `memref.alloca` at kernel entry; ForthToGPU converts it to a `gpu.func` workgroup attribution (`memref<Nxi64, #gpu.address_space<workgroup>>`). Using the shared name in code pushes its base address onto the stack. Use `S@`/`S!` for shared accesses. Cannot be referenced inside word definitions.
 - **Conversion**: `!forth.stack` → `memref<256xi64>` with explicit stack pointer
 - **GPU**: Functions wrapped in `gpu.module`, `main` gets `gpu.kernel` attribute, configured with bare pointers for NVVM conversion
 - **User-defined Words**: Modeled as `func.func` with signature `(!forth.stack) -> !forth.stack`, called via `func.call`

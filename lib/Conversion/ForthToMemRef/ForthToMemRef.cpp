@@ -9,6 +9,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -27,6 +28,8 @@ namespace {
 
 // Stack configuration constants
 constexpr int64_t kStackSize = 256;
+constexpr unsigned kWorkgroupAddressSpace =
+    static_cast<unsigned>(gpu::AddressSpace::Workgroup);
 
 /// Type converter for forth.stack -> memref + index
 class ForthToMemRefTypeConverter : public TypeConverter {
@@ -725,6 +728,83 @@ struct StoreOpConversion : public OpConversionPattern<forth::StoreOp> {
   }
 };
 
+/// Conversion pattern for forth.shared_load operation (S@).
+/// Pops address from stack, loads value via shared/workgroup pointer, pushes
+/// value: ( addr -- value )
+struct SharedLoadOpConversion
+    : public OpConversionPattern<forth::SharedLoadOp> {
+  SharedLoadOpConversion(const TypeConverter &typeConverter,
+                         MLIRContext *context)
+      : OpConversionPattern<forth::SharedLoadOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::SharedLoadOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    auto i64Type = rewriter.getI64Type();
+    auto ptrType = LLVM::LLVMPointerType::get(rewriter.getContext(),
+                                              kWorkgroupAddressSpace);
+
+    // Load address from stack.
+    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+
+    // Load value from shared memory via address-space-qualified pointer.
+    Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
+    Value loadedValue = rewriter.create<LLVM::LoadOp>(loc, i64Type, ptr);
+
+    // Store loaded value back at same position (replaces address).
+    rewriter.create<memref::StoreOp>(loc, loadedValue, memref, stackPtr);
+
+    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
+    return success();
+  }
+};
+
+/// Conversion pattern for forth.shared_store operation (S!).
+/// Pops address and value from stack, stores value via shared/workgroup
+/// pointer: ( x addr -- )
+struct SharedStoreOpConversion
+    : public OpConversionPattern<forth::SharedStoreOp> {
+  SharedStoreOpConversion(const TypeConverter &typeConverter,
+                          MLIRContext *context)
+      : OpConversionPattern<forth::SharedStoreOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::SharedStoreOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    auto ptrType = LLVM::LLVMPointerType::get(rewriter.getContext(),
+                                              kWorkgroupAddressSpace);
+
+    // Pop address from stack.
+    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+
+    // Pop value from stack.
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    Value value = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
+
+    // Store value to shared memory via address-space-qualified pointer.
+    Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
+    rewriter.create<LLVM::StoreOp>(loc, value, ptr);
+
+    // New stack pointer is SP-2 (popped both address and value).
+    Value spMinus2 = rewriter.create<arith::SubIOp>(loc, spMinus1, one);
+    rewriter.replaceOpWithMultiple(op, {{memref, spMinus2}});
+    return success();
+  }
+};
+
 /// Template for converting GPU indexing ops to intrinsic ops.
 /// Creates an intrinsic op with the specified name and pushes the value onto
 /// the stack.
@@ -1026,8 +1106,9 @@ struct ConvertForthToMemRefPass
         NotOpConversion, LshiftOpConversion, RshiftOpConversion, EqOpConversion,
         LtOpConversion, GtOpConversion, NeOpConversion, LeOpConversion,
         GeOpConversion, ZeroEqOpConversion, ParamRefOpConversion,
-        LoadOpConversion, StoreOpConversion, PopFlagOpConversion,
-        PopOpConversion, PushValueOpConversion>(typeConverter, context);
+        LoadOpConversion, StoreOpConversion, SharedLoadOpConversion,
+        SharedStoreOpConversion, PopFlagOpConversion, PopOpConversion,
+        PushValueOpConversion>(typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,
