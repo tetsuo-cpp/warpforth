@@ -11,6 +11,7 @@
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -28,8 +29,9 @@ namespace {
 
 // Stack configuration constants
 constexpr int64_t kStackSize = 256;
+// NVPTX shared memory address space for LLVM ptr types.
 constexpr unsigned kWorkgroupAddressSpace =
-    static_cast<unsigned>(gpu::AddressSpace::Workgroup);
+    static_cast<unsigned>(NVVM::kSharedMemorySpace);
 
 /// Type converter for forth.stack -> memref + index
 class ForthToMemRefTypeConverter : public TypeConverter {

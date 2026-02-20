@@ -16,12 +16,12 @@
 // CHECK: llvm.store %{{.*}}, %{{.*}} : i64, !llvm.ptr
 
 // shared load (S@): pop address, inttoptr shared addrspace, llvm.load
-// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<{{[1-9][0-9]*}}>
-// CHECK: llvm.load %{{.*}} : !llvm.ptr<{{[1-9][0-9]*}}> -> i64
+// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<3>
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<3> -> i64
 
 // shared store (S!): pop address + value, inttoptr shared addrspace, llvm.store
-// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<{{[1-9][0-9]*}}>
-// CHECK: llvm.store %{{.*}}, %{{.*}} : i64, !llvm.ptr<{{[1-9][0-9]*}}>
+// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<3>
+// CHECK: llvm.store %{{.*}}, %{{.*}} : i64, !llvm.ptr<3>
 
 module {
   func.func private @main() {
