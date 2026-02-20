@@ -76,9 +76,9 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.literal %0 1 : !forth.stack -> !forth.stack
-    %2 = forth.literal %1 2 : !forth.stack -> !forth.stack
-    %3 = forth.literal %2 3 : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(1 : i64) : !forth.stack -> !forth.stack
+    %2 = forth.constant %1(2 : i64) : !forth.stack -> !forth.stack
+    %3 = forth.constant %2(3 : i64) : !forth.stack -> !forth.stack
     %4 = forth.dup %3 : !forth.stack -> !forth.stack
     %5 = forth.drop %4 : !forth.stack -> !forth.stack
     %6 = forth.swap %5 : !forth.stack -> !forth.stack
@@ -86,9 +86,9 @@ module {
     %8 = forth.rot %7 : !forth.stack -> !forth.stack
     %9 = forth.nip %8 : !forth.stack -> !forth.stack
     %10 = forth.tuck %9 : !forth.stack -> !forth.stack
-    %11 = forth.literal %10 2 : !forth.stack -> !forth.stack
+    %11 = forth.constant %10(2 : i64) : !forth.stack -> !forth.stack
     %12 = forth.pick %11 : !forth.stack -> !forth.stack
-    %13 = forth.literal %12 2 : !forth.stack -> !forth.stack
+    %13 = forth.constant %12(2 : i64) : !forth.stack -> !forth.stack
     %14 = forth.roll %13 : !forth.stack -> !forth.stack
     return
   }

@@ -133,6 +133,26 @@ bool ForthLexer::isNumber(const std::string &str) const {
   return true;
 }
 
+bool ForthLexer::isFloat(const std::string &str) const {
+  if (str.empty())
+    return false;
+
+  // Try to parse as a double. A valid float must contain a '.' or 'e'/'E'.
+  bool hasDotOrExp = false;
+  for (char c : str) {
+    if (c == '.' || c == 'e' || c == 'E') {
+      hasDotOrExp = true;
+      break;
+    }
+  }
+  if (!hasDotOrExp)
+    return false;
+
+  char *end = nullptr;
+  std::strtod(str.c_str(), &end);
+  return end == str.c_str() + str.size();
+}
+
 Token ForthLexer::nextToken() {
   skipWhitespace();
 
@@ -158,9 +178,16 @@ Token ForthLexer::nextToken() {
   }
 
   std::string text(tokenStart, curPtr - tokenStart);
-  Token::Kind kind = isNumber(text) ? Token::Kind::Number : Token::Kind::Word;
-  if (kind == Token::Kind::Word)
+  Token::Kind kind;
+  if (isFloat(text)) {
+    kind = Token::Kind::Float;
+    // Don't uppercase float tokens (preserve original text for strtod)
+  } else if (isNumber(text)) {
+    kind = Token::Kind::Number;
+  } else {
+    kind = Token::Kind::Word;
     text = toUpperCase(text);
+  }
 
   return Token(kind, text, loc);
 }
@@ -293,6 +320,7 @@ LogicalResult ForthParser::parseHeader() {
         llvm::StringRef typeToken = tokens[2];
         bool isArray = false;
         int64_t size = 0;
+        BaseType baseType = BaseType::I64;
         size_t lbracket = typeToken.find('[');
         if (lbracket != llvm::StringRef::npos) {
           size_t rbracket = typeToken.find(']');
@@ -304,7 +332,12 @@ LogicalResult ForthParser::parseHeader() {
           llvm::StringRef base = typeToken.substr(0, lbracket);
           llvm::StringRef sizeStr =
               typeToken.substr(lbracket + 1, rbracket - lbracket - 1);
-          if (toUpperCase(base) != "I64") {
+          std::string baseUpper = toUpperCase(base);
+          if (baseUpper == "I64") {
+            baseType = BaseType::I64;
+          } else if (baseUpper == "F64") {
+            baseType = BaseType::F64;
+          } else {
             return emitErrorAt(lineLoc, "unsupported base type: " + base.str());
           }
           if (sizeStr.empty())
@@ -314,7 +347,12 @@ LogicalResult ForthParser::parseHeader() {
                                "array size must be a positive integer");
           isArray = true;
         } else {
-          if (toUpperCase(typeToken) != "I64") {
+          std::string typeUpper = toUpperCase(typeToken);
+          if (typeUpper == "I64") {
+            baseType = BaseType::I64;
+          } else if (typeUpper == "F64") {
+            baseType = BaseType::F64;
+          } else {
             return emitErrorAt(lineLoc,
                                "unsupported scalar type: " + typeToken.str());
           }
@@ -325,12 +363,14 @@ LogicalResult ForthParser::parseHeader() {
           decl.name = nameUpper;
           decl.isArray = isArray;
           decl.size = size;
+          decl.baseType = baseType;
           paramDecls.push_back(decl);
         } else {
           SharedDecl decl;
           decl.name = nameUpper;
           decl.isArray = isArray;
           decl.size = size;
+          decl.baseType = baseType;
           sharedDecls.push_back(decl);
         }
       } else {
@@ -423,13 +463,13 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
         .getResult(0);
   }
 
-  // CELLS: multiply by 8 (sizeof i64) for byte addressing
+  // CELLS: multiply by 8 (sizeof i64 = sizeof f64) for byte addressing
   if (word == "CELLS") {
     Value lit8 = builder
-                     .create<forth::LiteralOp>(loc, stackType, inputStack,
-                                               builder.getI64IntegerAttr(8))
+                     .create<forth::ConstantOp>(loc, stackType, inputStack,
+                                                builder.getI64IntegerAttr(8))
                      .getResult();
-    return builder.create<forth::MulOp>(loc, stackType, lit8).getResult();
+    return builder.create<forth::MulIOp>(loc, stackType, lit8).getResult();
   }
 
   // Built-in operations
@@ -458,13 +498,29 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
     return builder.create<forth::RollOp>(loc, stackType, inputStack)
         .getResult();
   } else if (word == "+" || word == "ADD") {
-    return builder.create<forth::AddOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::AddIOp>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "-" || word == "SUB") {
-    return builder.create<forth::SubOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::SubIOp>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "*" || word == "MUL") {
-    return builder.create<forth::MulOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::MulIOp>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "/" || word == "DIV") {
-    return builder.create<forth::DivOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::DivIOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "F+") {
+    return builder.create<forth::AddFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "F-") {
+    return builder.create<forth::SubFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "F*") {
+    return builder.create<forth::MulFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "F/") {
+    return builder.create<forth::DivFOp>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "MOD") {
     return builder.create<forth::ModOp>(loc, stackType, inputStack).getResult();
   } else if (word == "AND") {
@@ -482,16 +538,28 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
     return builder.create<forth::RshiftOp>(loc, stackType, inputStack)
         .getResult();
   } else if (word == "@") {
-    return builder.create<forth::LoadOp>(loc, stackType, inputStack)
+    return builder.create<forth::LoadIOp>(loc, stackType, inputStack)
         .getResult();
   } else if (word == "!") {
-    return builder.create<forth::StoreOp>(loc, stackType, inputStack)
+    return builder.create<forth::StoreIOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "F@") {
+    return builder.create<forth::LoadFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "F!") {
+    return builder.create<forth::StoreFOp>(loc, stackType, inputStack)
         .getResult();
   } else if (word == "S@") {
-    return builder.create<forth::SharedLoadOp>(loc, stackType, inputStack)
+    return builder.create<forth::SharedLoadIOp>(loc, stackType, inputStack)
         .getResult();
   } else if (word == "S!") {
-    return builder.create<forth::SharedStoreOp>(loc, stackType, inputStack)
+    return builder.create<forth::SharedStoreIOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SF@") {
+    return builder.create<forth::SharedLoadFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SF!") {
+    return builder.create<forth::SharedStoreFOp>(loc, stackType, inputStack)
         .getResult();
   } else if (word == "TID-X") {
     return builder.create<forth::ThreadIdXOp>(loc, stackType, inputStack)
@@ -536,17 +604,35 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
     builder.create<forth::BarrierOp>(loc);
     return inputStack;
   } else if (word == "=") {
-    return builder.create<forth::EqOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::EqIOp>(loc, stackType, inputStack).getResult();
   } else if (word == "<") {
-    return builder.create<forth::LtOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::LtIOp>(loc, stackType, inputStack).getResult();
   } else if (word == ">") {
-    return builder.create<forth::GtOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::GtIOp>(loc, stackType, inputStack).getResult();
   } else if (word == "<>") {
-    return builder.create<forth::NeOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::NeIOp>(loc, stackType, inputStack).getResult();
   } else if (word == "<=") {
-    return builder.create<forth::LeOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::LeIOp>(loc, stackType, inputStack).getResult();
   } else if (word == ">=") {
-    return builder.create<forth::GeOp>(loc, stackType, inputStack).getResult();
+    return builder.create<forth::GeIOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "F=") {
+    return builder.create<forth::EqFOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "F<") {
+    return builder.create<forth::LtFOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "F>") {
+    return builder.create<forth::GtFOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "F<>") {
+    return builder.create<forth::NeFOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "F<=") {
+    return builder.create<forth::LeFOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "F>=") {
+    return builder.create<forth::GeFOp>(loc, stackType, inputStack).getResult();
+  } else if (word == "S>F") {
+    return builder.create<forth::IToFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "F>S") {
+    return builder.create<forth::FToIOp>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "0=") {
     return builder.create<forth::ZeroEqOp>(loc, stackType, inputStack)
         .getResult();
@@ -629,8 +715,16 @@ LogicalResult ForthParser::parseBody(Value &stack) {
       Location tokenLoc = getLoc();
       int64_t value = std::stoll(currentToken.text);
       stack = builder
-                  .create<forth::LiteralOp>(tokenLoc, stackType, stack,
-                                            builder.getI64IntegerAttr(value))
+                  .create<forth::ConstantOp>(tokenLoc, stackType, stack,
+                                             builder.getI64IntegerAttr(value))
+                  .getResult();
+      consume();
+    } else if (currentToken.kind == Token::Kind::Float) {
+      Location tokenLoc = getLoc();
+      double value = std::stod(currentToken.text);
+      stack = builder
+                  .create<forth::ConstantOp>(tokenLoc, stackType, stack,
+                                             builder.getF64FloatAttr(value))
                   .getResult();
       consume();
     } else if (currentToken.kind == Token::Kind::Word) {
@@ -1031,10 +1125,13 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   // Build function argument types from param declarations
   SmallVector<Type> argTypes;
   for (const auto &param : paramDecls) {
+    Type elemType = param.baseType == BaseType::F64
+                        ? Type(builder.getF64Type())
+                        : Type(builder.getI64Type());
     if (param.isArray) {
-      argTypes.push_back(MemRefType::get({param.size}, builder.getI64Type()));
+      argTypes.push_back(MemRefType::get({param.size}, elemType));
     } else {
-      argTypes.push_back(builder.getI64Type());
+      argTypes.push_back(elemType);
     }
   }
 
@@ -1056,7 +1153,10 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   // Emit shared memory allocations at kernel entry
   for (const auto &shared : sharedDecls) {
     int64_t size = shared.isArray ? shared.size : 1;
-    auto memrefType = MemRefType::get({size}, builder.getI64Type());
+    Type elemType = shared.baseType == BaseType::F64
+                        ? Type(builder.getF64Type())
+                        : Type(builder.getI64Type());
+    auto memrefType = MemRefType::get({size}, elemType);
     Value alloca = builder.create<memref::AllocaOp>(loc, memrefType);
     alloca.getDefiningOp()->setAttr("forth.shared_name",
                                     builder.getStringAttr(shared.name));

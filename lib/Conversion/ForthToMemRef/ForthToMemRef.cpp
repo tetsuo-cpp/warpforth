@@ -86,24 +86,35 @@ struct StackOpConversion : public OpConversionPattern<forth::StackOp> {
   }
 };
 
-/// Conversion pattern for forth.literal operation.
-/// Increments SP and stores the literal value at the new SP position.
-struct LiteralOpConversion : public OpConversionPattern<forth::LiteralOp> {
-  LiteralOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::LiteralOp>(typeConverter, context) {}
+/// Conversion pattern for forth.constant operation.
+/// Handles both integer and float constants.
+struct ConstantOpConversion : public OpConversionPattern<forth::ConstantOp> {
+  ConstantOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::ConstantOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
-  matchAndRewrite(forth::LiteralOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(forth::ConstantOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    Value literalValue = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64Type(), op.getValueAttr());
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, literalValue);
+    Value valueToPush;
+    auto typedValue = cast<TypedAttr>(op.getValueAttr());
+    if (isa<FloatAttr>(typedValue)) {
+      // Float: create f64 constant, bitcast to i64
+      Value f64Value = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getF64Type(), typedValue);
+      valueToPush = rewriter.create<arith::BitcastOp>(
+          loc, rewriter.getI64Type(), f64Value);
+    } else {
+      // Integer: create i64 constant directly
+      valueToPush = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getI64Type(), typedValue);
+    }
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, valueToPush);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
@@ -430,7 +441,8 @@ struct RollOpConversion : public OpConversionPattern<forth::RollOp> {
 
 /// Base template for binary arithmetic operations.
 /// Pops two values, applies operation, pushes result: (a b -- result)
-template <typename ForthOp, typename ArithOp>
+/// When IsFloat=true, bitcasts i64->f64 before the op and f64->i64 after.
+template <typename ForthOp, typename ArithOp, bool IsFloat = false>
 struct BinaryArithOpConversion : public OpConversionPattern<ForthOp> {
   BinaryArithOpConversion(const TypeConverter &typeConverter,
                           MLIRContext *context)
@@ -453,8 +465,19 @@ struct BinaryArithOpConversion : public OpConversionPattern<ForthOp> {
     Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
     Value a = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
 
-    // Perform arithmetic operation
-    Value result = rewriter.create<ArithOp>(loc, a, b);
+    Value result;
+    if constexpr (IsFloat) {
+      // Bitcast i64 -> f64
+      auto f64Type = rewriter.getF64Type();
+      Value aF = rewriter.create<arith::BitcastOp>(loc, f64Type, a);
+      Value bF = rewriter.create<arith::BitcastOp>(loc, f64Type, b);
+      Value resF = rewriter.create<ArithOp>(loc, aF, bF);
+      // Bitcast f64 -> i64
+      result =
+          rewriter.create<arith::BitcastOp>(loc, rewriter.getI64Type(), resF);
+    } else {
+      result = rewriter.create<ArithOp>(loc, a, b);
+    }
 
     // Store result at SP-1 (effectively popping both and pushing result)
     rewriter.create<memref::StoreOp>(loc, result, memref, spMinus1);
@@ -465,11 +488,11 @@ struct BinaryArithOpConversion : public OpConversionPattern<ForthOp> {
   }
 };
 
-// Instantiate arithmetic operation conversions
-using AddOpConversion = BinaryArithOpConversion<forth::AddOp, arith::AddIOp>;
-using SubOpConversion = BinaryArithOpConversion<forth::SubOp, arith::SubIOp>;
-using MulOpConversion = BinaryArithOpConversion<forth::MulOp, arith::MulIOp>;
-using DivOpConversion = BinaryArithOpConversion<forth::DivOp, arith::DivSIOp>;
+// Integer arithmetic
+using AddIOpConversion = BinaryArithOpConversion<forth::AddIOp, arith::AddIOp>;
+using SubIOpConversion = BinaryArithOpConversion<forth::SubIOp, arith::SubIOp>;
+using MulIOpConversion = BinaryArithOpConversion<forth::MulIOp, arith::MulIOp>;
+using DivIOpConversion = BinaryArithOpConversion<forth::DivIOp, arith::DivSIOp>;
 using ModOpConversion = BinaryArithOpConversion<forth::ModOp, arith::RemSIOp>;
 using AndOpConversion = BinaryArithOpConversion<forth::AndOp, arith::AndIOp>;
 using OrOpConversion = BinaryArithOpConversion<forth::OrOp, arith::OrIOp>;
@@ -479,9 +502,21 @@ using LshiftOpConversion =
 using RshiftOpConversion =
     BinaryArithOpConversion<forth::RshiftOp, arith::ShRUIOp>;
 
+// Float arithmetic
+using AddFOpConversion =
+    BinaryArithOpConversion<forth::AddFOp, arith::AddFOp, true>;
+using SubFOpConversion =
+    BinaryArithOpConversion<forth::SubFOp, arith::SubFOp, true>;
+using MulFOpConversion =
+    BinaryArithOpConversion<forth::MulFOp, arith::MulFOp, true>;
+using DivFOpConversion =
+    BinaryArithOpConversion<forth::DivFOp, arith::DivFOp, true>;
+
 /// Base template for binary comparison operations.
 /// Pops two values, compares, pushes -1 (true) or 0 (false): (a b -- flag)
-template <typename ForthOp, arith::CmpIPredicate predicate>
+/// When IsFloat=true, bitcasts i64->f64 before comparing.
+template <typename ForthOp, typename CmpOp, auto Predicate,
+          bool IsFloat = false>
 struct BinaryCmpOpConversion : public OpConversionPattern<ForthOp> {
   BinaryCmpOpConversion(const TypeConverter &typeConverter,
                         MLIRContext *context)
@@ -504,8 +539,15 @@ struct BinaryCmpOpConversion : public OpConversionPattern<ForthOp> {
     Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
     Value a = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
 
-    // Compare
-    Value cmp = rewriter.create<arith::CmpIOp>(loc, predicate, a, b);
+    Value cmp;
+    if constexpr (IsFloat) {
+      auto f64Type = rewriter.getF64Type();
+      Value aF = rewriter.create<arith::BitcastOp>(loc, f64Type, a);
+      Value bF = rewriter.create<arith::BitcastOp>(loc, f64Type, b);
+      cmp = rewriter.create<CmpOp>(loc, Predicate, aF, bF);
+    } else {
+      cmp = rewriter.create<CmpOp>(loc, Predicate, a, b);
+    }
 
     // Extend i1 to i64: true = -1 (all bits set), false = 0
     Value result =
@@ -520,19 +562,33 @@ struct BinaryCmpOpConversion : public OpConversionPattern<ForthOp> {
   }
 };
 
-// Instantiate comparison operation conversions
-using EqOpConversion =
-    BinaryCmpOpConversion<forth::EqOp, arith::CmpIPredicate::eq>;
-using LtOpConversion =
-    BinaryCmpOpConversion<forth::LtOp, arith::CmpIPredicate::slt>;
-using GtOpConversion =
-    BinaryCmpOpConversion<forth::GtOp, arith::CmpIPredicate::sgt>;
-using NeOpConversion =
-    BinaryCmpOpConversion<forth::NeOp, arith::CmpIPredicate::ne>;
-using LeOpConversion =
-    BinaryCmpOpConversion<forth::LeOp, arith::CmpIPredicate::sle>;
-using GeOpConversion =
-    BinaryCmpOpConversion<forth::GeOp, arith::CmpIPredicate::sge>;
+// Integer comparisons
+using EqIOpConversion = BinaryCmpOpConversion<forth::EqIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::eq>;
+using LtIOpConversion = BinaryCmpOpConversion<forth::LtIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::slt>;
+using GtIOpConversion = BinaryCmpOpConversion<forth::GtIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::sgt>;
+using NeIOpConversion = BinaryCmpOpConversion<forth::NeIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::ne>;
+using LeIOpConversion = BinaryCmpOpConversion<forth::LeIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::sle>;
+using GeIOpConversion = BinaryCmpOpConversion<forth::GeIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::sge>;
+
+// Float comparisons (ordered predicates)
+using EqFOpConversion = BinaryCmpOpConversion<forth::EqFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OEQ, true>;
+using LtFOpConversion = BinaryCmpOpConversion<forth::LtFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OLT, true>;
+using GtFOpConversion = BinaryCmpOpConversion<forth::GtFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OGT, true>;
+using NeFOpConversion = BinaryCmpOpConversion<forth::NeFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::ONE, true>;
+using LeFOpConversion = BinaryCmpOpConversion<forth::LeFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OLE, true>;
+using GeFOpConversion = BinaryCmpOpConversion<forth::GeFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OGE, true>;
 
 /// Conversion pattern for forth.not operation (bitwise NOT).
 /// Unary: pops one value, XORs with -1 (all bits set), pushes result: (a -- ~a)
@@ -643,8 +699,12 @@ struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
       valueToPush = rewriter.create<arith::IndexCastOp>(
           loc, rewriter.getI64Type(), ptrIndex);
     } else if (memrefArg.getType().isInteger(64)) {
-      // Scalar param: push value directly.
+      // Scalar i64 param: push value directly.
       valueToPush = memrefArg;
+    } else if (memrefArg.getType().isF64()) {
+      // Scalar f64 param: bitcast to i64 for stack storage.
+      valueToPush = rewriter.create<arith::BitcastOp>(
+          loc, rewriter.getI64Type(), memrefArg);
     } else {
       return rewriter.notifyMatchFailure(
           op, "unsupported param argument type for param_ref");
@@ -658,56 +718,84 @@ struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
   }
 };
 
-/// Conversion pattern for forth.load operation (@).
-/// Pops address from stack, loads value via pointer, pushes value: ( addr --
-/// value )
-struct LoadOpConversion : public OpConversionPattern<forth::LoadOp> {
-  LoadOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::LoadOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+/// Generalized memory load template.
+/// Pops address from stack, loads value via pointer, pushes value.
+/// When IsFloat=true, loads f64 from memory and bitcasts to i64 for stack.
+/// AddressSpace selects global (0) or workgroup memory.
+template <typename ForthOp, bool IsFloat = false, unsigned AddressSpace = 0>
+struct MemoryLoadOpConversion : public OpConversionPattern<ForthOp> {
+  MemoryLoadOpConversion(const TypeConverter &typeConverter,
+                         MLIRContext *context)
+      : OpConversionPattern<ForthOp>(typeConverter, context) {}
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
 
   LogicalResult
-  matchAndRewrite(forth::LoadOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    auto i64Type = rewriter.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(rewriter.getContext());
+    auto ptrType =
+        LLVM::LLVMPointerType::get(rewriter.getContext(), AddressSpace);
 
     // Load address from stack
     Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
 
     // Load value from memory via pointer
     Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
-    Value loadedValue = rewriter.create<LLVM::LoadOp>(loc, i64Type, ptr);
+
+    Value valueToPush;
+    if constexpr (IsFloat) {
+      // Load f64 from memory, then bitcast to i64 for stack storage
+      Value loadedF64 =
+          rewriter.create<LLVM::LoadOp>(loc, rewriter.getF64Type(), ptr);
+      valueToPush = rewriter.create<arith::BitcastOp>(
+          loc, rewriter.getI64Type(), loadedF64);
+    } else {
+      valueToPush =
+          rewriter.create<LLVM::LoadOp>(loc, rewriter.getI64Type(), ptr);
+    }
 
     // Store loaded value back at same position (replaces address)
-    rewriter.create<memref::StoreOp>(loc, loadedValue, memref, stackPtr);
+    rewriter.create<memref::StoreOp>(loc, valueToPush, memref, stackPtr);
 
     rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
     return success();
   }
 };
 
-/// Conversion pattern for forth.store operation (!).
-/// Pops address and value from stack, stores value to memory: ( x addr -- )
-struct StoreOpConversion : public OpConversionPattern<forth::StoreOp> {
-  StoreOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::StoreOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+// Memory load instantiations
+using LoadIOpConversion = MemoryLoadOpConversion<forth::LoadIOp>;
+using LoadFOpConversion = MemoryLoadOpConversion<forth::LoadFOp, true>;
+using SharedLoadIOpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadIOp, false, kWorkgroupAddressSpace>;
+using SharedLoadFOpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadFOp, true, kWorkgroupAddressSpace>;
+
+/// Generalized memory store template.
+/// Pops address and value from stack, stores value to memory.
+/// When IsFloat=true, bitcasts i64->f64 before storing.
+template <typename ForthOp, bool IsFloat = false, unsigned AddressSpace = 0>
+struct MemoryStoreOpConversion : public OpConversionPattern<ForthOp> {
+  MemoryStoreOpConversion(const TypeConverter &typeConverter,
+                          MLIRContext *context)
+      : OpConversionPattern<ForthOp>(typeConverter, context) {}
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
 
   LogicalResult
-  matchAndRewrite(forth::StoreOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    auto ptrType = LLVM::LLVMPointerType::get(rewriter.getContext());
+    auto ptrType =
+        LLVM::LLVMPointerType::get(rewriter.getContext(), AddressSpace);
 
     // Pop address from stack
     Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
@@ -719,7 +807,15 @@ struct StoreOpConversion : public OpConversionPattern<forth::StoreOp> {
 
     // Store value to memory via pointer
     Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
-    rewriter.create<LLVM::StoreOp>(loc, value, ptr);
+
+    if constexpr (IsFloat) {
+      // Bitcast i64 -> f64 before storing
+      Value f64Value =
+          rewriter.create<arith::BitcastOp>(loc, rewriter.getF64Type(), value);
+      rewriter.create<LLVM::StoreOp>(loc, f64Value, ptr);
+    } else {
+      rewriter.create<LLVM::StoreOp>(loc, value, ptr);
+    }
 
     // New stack pointer is SP-2 (popped both address and value)
     Value spMinus2 = rewriter.create<arith::SubIOp>(loc, spMinus1, one);
@@ -728,79 +824,80 @@ struct StoreOpConversion : public OpConversionPattern<forth::StoreOp> {
   }
 };
 
-/// Conversion pattern for forth.shared_load operation (S@).
-/// Pops address from stack, loads value via shared/workgroup pointer, pushes
-/// value: ( addr -- value )
-struct SharedLoadOpConversion
-    : public OpConversionPattern<forth::SharedLoadOp> {
-  SharedLoadOpConversion(const TypeConverter &typeConverter,
-                         MLIRContext *context)
-      : OpConversionPattern<forth::SharedLoadOp>(typeConverter, context) {}
+// Memory store instantiations
+using StoreIOpConversion = MemoryStoreOpConversion<forth::StoreIOp>;
+using StoreFOpConversion = MemoryStoreOpConversion<forth::StoreFOp, true>;
+using SharedStoreIOpConversion =
+    MemoryStoreOpConversion<forth::SharedStoreIOp, false,
+                            kWorkgroupAddressSpace>;
+using SharedStoreFOpConversion =
+    MemoryStoreOpConversion<forth::SharedStoreFOp, true,
+                            kWorkgroupAddressSpace>;
+
+/// Conversion pattern for forth.itof (S>F).
+/// Pops i64, converts to f64 via sitofp, bitcasts back to i64, pushes.
+struct IToFOpConversion : public OpConversionPattern<forth::IToFOp> {
+  IToFOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::IToFOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
-  matchAndRewrite(forth::SharedLoadOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(forth::IToFOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    auto i64Type = rewriter.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(rewriter.getContext(),
-                                              kWorkgroupAddressSpace);
+    // Load i64 value from top of stack
+    Value i64Value = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
 
-    // Load address from stack.
-    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    // Convert i64 -> f64 via SIToFPOp
+    Value f64Value =
+        rewriter.create<arith::SIToFPOp>(loc, rewriter.getF64Type(), i64Value);
 
-    // Load value from shared memory via address-space-qualified pointer.
-    Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
-    Value loadedValue = rewriter.create<LLVM::LoadOp>(loc, i64Type, ptr);
+    // Bitcast f64 -> i64 for stack storage
+    Value result =
+        rewriter.create<arith::BitcastOp>(loc, rewriter.getI64Type(), f64Value);
 
-    // Store loaded value back at same position (replaces address).
-    rewriter.create<memref::StoreOp>(loc, loadedValue, memref, stackPtr);
+    // Store result (SP unchanged — unary op)
+    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
 
     rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
     return success();
   }
 };
 
-/// Conversion pattern for forth.shared_store operation (S!).
-/// Pops address and value from stack, stores value via shared/workgroup
-/// pointer: ( x addr -- )
-struct SharedStoreOpConversion
-    : public OpConversionPattern<forth::SharedStoreOp> {
-  SharedStoreOpConversion(const TypeConverter &typeConverter,
-                          MLIRContext *context)
-      : OpConversionPattern<forth::SharedStoreOp>(typeConverter, context) {}
+/// Conversion pattern for forth.ftoi (F>S).
+/// Pops i64 (f64 bits), bitcasts to f64, converts to i64 via fptosi, pushes.
+struct FToIOpConversion : public OpConversionPattern<forth::FToIOp> {
+  FToIOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::FToIOp>(typeConverter, context) {}
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
 
   LogicalResult
-  matchAndRewrite(forth::SharedStoreOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(forth::FToIOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    auto ptrType = LLVM::LLVMPointerType::get(rewriter.getContext(),
-                                              kWorkgroupAddressSpace);
+    // Load i64 (f64 bit pattern) from top of stack
+    Value i64Bits = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
 
-    // Pop address from stack.
-    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    // Bitcast i64 -> f64
+    Value f64Value =
+        rewriter.create<arith::BitcastOp>(loc, rewriter.getF64Type(), i64Bits);
 
-    // Pop value from stack.
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value value = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
+    // Convert f64 -> i64 via FPToSIOp
+    Value result =
+        rewriter.create<arith::FPToSIOp>(loc, rewriter.getI64Type(), f64Value);
 
-    // Store value to shared memory via address-space-qualified pointer.
-    Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
-    rewriter.create<LLVM::StoreOp>(loc, value, ptr);
+    // Store result (SP unchanged — unary op)
+    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
 
-    // New stack pointer is SP-2 (popped both address and value).
-    Value spMinus2 = rewriter.create<arith::SubIOp>(loc, spMinus1, one);
-    rewriter.replaceOpWithMultiple(op, {{memref, spMinus2}});
+    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
     return success();
   }
 };
@@ -1098,17 +1195,34 @@ struct ConvertForthToMemRefPass
 
     // Add Forth operation conversion patterns
     patterns.add<
-        StackOpConversion, LiteralOpConversion, DupOpConversion,
+        StackOpConversion, ConstantOpConversion, DupOpConversion,
         DropOpConversion, SwapOpConversion, OverOpConversion, RotOpConversion,
         NipOpConversion, TuckOpConversion, PickOpConversion, RollOpConversion,
-        AddOpConversion, SubOpConversion, MulOpConversion, DivOpConversion,
-        ModOpConversion, AndOpConversion, OrOpConversion, XorOpConversion,
-        NotOpConversion, LshiftOpConversion, RshiftOpConversion, EqOpConversion,
-        LtOpConversion, GtOpConversion, NeOpConversion, LeOpConversion,
-        GeOpConversion, ZeroEqOpConversion, ParamRefOpConversion,
-        LoadOpConversion, StoreOpConversion, SharedLoadOpConversion,
-        SharedStoreOpConversion, PopFlagOpConversion, PopOpConversion,
-        PushValueOpConversion>(typeConverter, context);
+        // Integer arithmetic
+        AddIOpConversion, SubIOpConversion, MulIOpConversion, DivIOpConversion,
+        ModOpConversion,
+        // Float arithmetic
+        AddFOpConversion, SubFOpConversion, MulFOpConversion, DivFOpConversion,
+        // Bitwise
+        AndOpConversion, OrOpConversion, XorOpConversion, NotOpConversion,
+        LshiftOpConversion, RshiftOpConversion,
+        // Integer comparisons
+        EqIOpConversion, LtIOpConversion, GtIOpConversion, NeIOpConversion,
+        LeIOpConversion, GeIOpConversion,
+        // Float comparisons
+        EqFOpConversion, LtFOpConversion, GtFOpConversion, NeFOpConversion,
+        LeFOpConversion, GeFOpConversion,
+        // Other
+        ZeroEqOpConversion, ParamRefOpConversion,
+        // Memory ops (int + float, global + shared)
+        LoadIOpConversion, StoreIOpConversion, LoadFOpConversion,
+        StoreFOpConversion, SharedLoadIOpConversion, SharedStoreIOpConversion,
+        SharedLoadFOpConversion, SharedStoreFOpConversion,
+        // Type conversions
+        IToFOpConversion, FToIOpConversion,
+        // Control flow
+        PopFlagOpConversion, PopOpConversion, PushValueOpConversion>(
+        typeConverter, context);
 
     // Add GPU indexing op conversion patterns
     patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,

@@ -11,7 +11,7 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.literal %0 42 : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(42 : i64) : !forth.stack -> !forth.stack
     return
   }
 }

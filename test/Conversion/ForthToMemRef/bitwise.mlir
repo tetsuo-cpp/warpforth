@@ -42,22 +42,22 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.literal %0 3 : !forth.stack -> !forth.stack
-    %2 = forth.literal %1 5 : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(3 : i64) : !forth.stack -> !forth.stack
+    %2 = forth.constant %1(5 : i64) : !forth.stack -> !forth.stack
     %3 = forth.and %2 : !forth.stack -> !forth.stack
-    %4 = forth.literal %3 7 : !forth.stack -> !forth.stack
-    %5 = forth.literal %4 8 : !forth.stack -> !forth.stack
+    %4 = forth.constant %3(7 : i64) : !forth.stack -> !forth.stack
+    %5 = forth.constant %4(8 : i64) : !forth.stack -> !forth.stack
     %6 = forth.or %5 : !forth.stack -> !forth.stack
-    %7 = forth.literal %6 15 : !forth.stack -> !forth.stack
-    %8 = forth.literal %7 3 : !forth.stack -> !forth.stack
+    %7 = forth.constant %6(15 : i64) : !forth.stack -> !forth.stack
+    %8 = forth.constant %7(3 : i64) : !forth.stack -> !forth.stack
     %9 = forth.xor %8 : !forth.stack -> !forth.stack
-    %10 = forth.literal %9 42 : !forth.stack -> !forth.stack
+    %10 = forth.constant %9(42 : i64) : !forth.stack -> !forth.stack
     %11 = forth.not %10 : !forth.stack -> !forth.stack
-    %12 = forth.literal %11 1 : !forth.stack -> !forth.stack
-    %13 = forth.literal %12 4 : !forth.stack -> !forth.stack
+    %12 = forth.constant %11(1 : i64) : !forth.stack -> !forth.stack
+    %13 = forth.constant %12(4 : i64) : !forth.stack -> !forth.stack
     %14 = forth.lshift %13 : !forth.stack -> !forth.stack
-    %15 = forth.literal %14 256 : !forth.stack -> !forth.stack
-    %16 = forth.literal %15 2 : !forth.stack -> !forth.stack
+    %15 = forth.constant %14(256 : i64) : !forth.stack -> !forth.stack
+    %16 = forth.constant %15(2 : i64) : !forth.stack -> !forth.stack
     %17 = forth.rshift %16 : !forth.stack -> !forth.stack
     return
   }

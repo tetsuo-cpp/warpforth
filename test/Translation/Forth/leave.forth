@@ -3,8 +3,8 @@
 \ Verify LEAVE branches to the loop exit block.
 
 \ CHECK:       %[[S0:.*]] = forth.stack !forth.stack
-\ CHECK-NEXT:  %[[S1:.*]] = forth.literal %[[S0]] 10 : !forth.stack -> !forth.stack
-\ CHECK-NEXT:  %[[S2:.*]] = forth.literal %[[S1]] 0 : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S1:.*]] = forth.constant %[[S0]](10 : i64) : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S2:.*]] = forth.constant %[[S1]](0 : i64) : !forth.stack -> !forth.stack
 \ CHECK:       cf.br ^bb1(%{{.*}} : !forth.stack)
 \ CHECK:     ^bb1(%[[B1:.*]]: !forth.stack):
 \ CHECK-NEXT:  %[[TRUE:.*]] = arith.constant true

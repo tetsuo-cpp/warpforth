@@ -3,8 +3,8 @@
 \ Verify DO/LOOP generates post-test loop with crossing test
 
 \ CHECK:       %[[S0:.*]] = forth.stack !forth.stack
-\ CHECK-NEXT:  %[[S1:.*]] = forth.literal %[[S0]] 10 : !forth.stack -> !forth.stack
-\ CHECK-NEXT:  %[[S2:.*]] = forth.literal %[[S1]] 0 : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S1:.*]] = forth.constant %[[S0]](10 : i64) : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S2:.*]] = forth.constant %[[S1]](0 : i64) : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[OS:.*]], %[[VAL:.*]] = forth.pop %[[S2]] : !forth.stack -> !forth.stack, i64
 \ CHECK-NEXT:  %[[OS2:.*]], %[[LIM:.*]] = forth.pop %[[OS]] : !forth.stack -> !forth.stack, i64
 \ CHECK-NEXT:  %[[ALLOCA:.*]] = memref.alloca() : memref<1xi64>

@@ -160,24 +160,24 @@
 
 module {
   func.func private @TEST__NESTED__IF(%arg0: !forth.stack) -> !forth.stack {
-    %0 = forth.literal %arg0 1 : !forth.stack -> !forth.stack
+    %0 = forth.constant %arg0(1 : i64) : !forth.stack -> !forth.stack
     %output_stack, %flag = forth.pop_flag %0 : !forth.stack -> !forth.stack, i1
     cf.cond_br %flag, ^bb1(%output_stack : !forth.stack), ^bb2(%output_stack : !forth.stack)
   ^bb1(%1: !forth.stack):
-    %2 = forth.literal %1 2 : !forth.stack -> !forth.stack
+    %2 = forth.constant %1(2 : i64) : !forth.stack -> !forth.stack
     %output_stack_0, %flag_1 = forth.pop_flag %2 : !forth.stack -> !forth.stack, i1
     cf.cond_br %flag_1, ^bb3(%output_stack_0 : !forth.stack), ^bb4(%output_stack_0 : !forth.stack)
   ^bb2(%3: !forth.stack):
     return %3 : !forth.stack
   ^bb3(%4: !forth.stack):
-    %5 = forth.literal %4 3 : !forth.stack -> !forth.stack
+    %5 = forth.constant %4(3 : i64) : !forth.stack -> !forth.stack
     cf.br ^bb4(%5 : !forth.stack)
   ^bb4(%6: !forth.stack):
     cf.br ^bb2(%6 : !forth.stack)
   }
   func.func private @TEST__IF__INSIDE__DO(%arg0: !forth.stack) -> !forth.stack {
-    %0 = forth.literal %arg0 10 : !forth.stack -> !forth.stack
-    %1 = forth.literal %0 0 : !forth.stack -> !forth.stack
+    %0 = forth.constant %arg0(10 : i64) : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(0 : i64) : !forth.stack -> !forth.stack
     %output_stack, %value = forth.pop %1 : !forth.stack -> !forth.stack, i64
     %output_stack_0, %value_1 = forth.pop %output_stack : !forth.stack -> !forth.stack, i64
     %alloca = memref.alloca() : memref<1xi64>
@@ -193,8 +193,8 @@ module {
     %c0_3 = arith.constant 0 : index
     %6 = memref.load %alloca[%c0_3] : memref<1xi64>
     %7 = forth.push_value %5, %6 : !forth.stack, i64 -> !forth.stack
-    %8 = forth.literal %7 5 : !forth.stack -> !forth.stack
-    %9 = forth.gt %8 : !forth.stack -> !forth.stack
+    %8 = forth.constant %7(5 : i64) : !forth.stack -> !forth.stack
+    %9 = forth.gti %8 : !forth.stack -> !forth.stack
     %output_stack_4, %flag = forth.pop_flag %9 : !forth.stack -> !forth.stack, i1
     cf.cond_br %flag, ^bb4(%output_stack_4 : !forth.stack), ^bb5(%output_stack_4 : !forth.stack)
   ^bb3(%10: !forth.stack):
@@ -213,8 +213,8 @@ module {
     cf.br ^bb1(%14 : !forth.stack)
   }
   func.func private @TEST__NESTED__DO__J(%arg0: !forth.stack) -> !forth.stack {
-    %0 = forth.literal %arg0 3 : !forth.stack -> !forth.stack
-    %1 = forth.literal %0 0 : !forth.stack -> !forth.stack
+    %0 = forth.constant %arg0(3 : i64) : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(0 : i64) : !forth.stack -> !forth.stack
     %output_stack, %value = forth.pop %1 : !forth.stack -> !forth.stack, i64
     %output_stack_0, %value_1 = forth.pop %output_stack : !forth.stack -> !forth.stack, i64
     %alloca = memref.alloca() : memref<1xi64>
@@ -227,8 +227,8 @@ module {
     %4 = arith.cmpi slt, %3, %value_1 : i64
     cf.cond_br %4, ^bb2(%2 : !forth.stack), ^bb3(%2 : !forth.stack)
   ^bb2(%5: !forth.stack):
-    %6 = forth.literal %5 4 : !forth.stack -> !forth.stack
-    %7 = forth.literal %6 0 : !forth.stack -> !forth.stack
+    %6 = forth.constant %5(4 : i64) : !forth.stack -> !forth.stack
+    %7 = forth.constant %6(0 : i64) : !forth.stack -> !forth.stack
     %output_stack_3, %value_4 = forth.pop %7 : !forth.stack -> !forth.stack, i64
     %output_stack_5, %value_6 = forth.pop %output_stack_3 : !forth.stack -> !forth.stack, i64
     %alloca_7 = memref.alloca() : memref<1xi64>
@@ -249,7 +249,7 @@ module {
     %c0_11 = arith.constant 0 : index
     %15 = memref.load %alloca_7[%c0_11] : memref<1xi64>
     %16 = forth.push_value %14, %15 : !forth.stack, i64 -> !forth.stack
-    %17 = forth.add %16 : !forth.stack -> !forth.stack
+    %17 = forth.addi %16 : !forth.stack -> !forth.stack
     %c0_12 = arith.constant 0 : index
     %18 = memref.load %alloca_7[%c0_12] : memref<1xi64>
     %c1_i64 = arith.constant 1 : i64
@@ -265,7 +265,7 @@ module {
     cf.br ^bb1(%20 : !forth.stack)
   }
   func.func private @TEST__WHILE__INSIDE__IF(%arg0: !forth.stack) -> !forth.stack {
-    %0 = forth.literal %arg0 5 : !forth.stack -> !forth.stack
+    %0 = forth.constant %arg0(5 : i64) : !forth.stack -> !forth.stack
     %output_stack, %flag = forth.pop_flag %0 : !forth.stack -> !forth.stack, i1
     cf.cond_br %flag, ^bb1(%output_stack : !forth.stack), ^bb2(%output_stack : !forth.stack)
   ^bb1(%1: !forth.stack):
@@ -277,8 +277,8 @@ module {
     %output_stack_0, %flag_1 = forth.pop_flag %4 : !forth.stack -> !forth.stack, i1
     cf.cond_br %flag_1, ^bb4(%output_stack_0 : !forth.stack), ^bb5(%output_stack_0 : !forth.stack)
   ^bb4(%5: !forth.stack):
-    %6 = forth.literal %5 1 : !forth.stack -> !forth.stack
-    %7 = forth.sub %6 : !forth.stack -> !forth.stack
+    %6 = forth.constant %5(1 : i64) : !forth.stack -> !forth.stack
+    %7 = forth.subi %6 : !forth.stack -> !forth.stack
     cf.br ^bb3(%7 : !forth.stack)
   ^bb5(%8: !forth.stack):
     cf.br ^bb2(%8 : !forth.stack)

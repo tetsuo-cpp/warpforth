@@ -55,26 +55,26 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.literal %0 1 : !forth.stack -> !forth.stack
-    %2 = forth.literal %1 2 : !forth.stack -> !forth.stack
-    %3 = forth.eq %2 : !forth.stack -> !forth.stack
-    %4 = forth.literal %3 3 : !forth.stack -> !forth.stack
-    %5 = forth.literal %4 4 : !forth.stack -> !forth.stack
-    %6 = forth.lt %5 : !forth.stack -> !forth.stack
-    %7 = forth.literal %6 5 : !forth.stack -> !forth.stack
-    %8 = forth.literal %7 6 : !forth.stack -> !forth.stack
-    %9 = forth.gt %8 : !forth.stack -> !forth.stack
-    %10 = forth.literal %9 0 : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(1 : i64) : !forth.stack -> !forth.stack
+    %2 = forth.constant %1(2 : i64) : !forth.stack -> !forth.stack
+    %3 = forth.eqi %2 : !forth.stack -> !forth.stack
+    %4 = forth.constant %3(3 : i64) : !forth.stack -> !forth.stack
+    %5 = forth.constant %4(4 : i64) : !forth.stack -> !forth.stack
+    %6 = forth.lti %5 : !forth.stack -> !forth.stack
+    %7 = forth.constant %6(5 : i64) : !forth.stack -> !forth.stack
+    %8 = forth.constant %7(6 : i64) : !forth.stack -> !forth.stack
+    %9 = forth.gti %8 : !forth.stack -> !forth.stack
+    %10 = forth.constant %9(0 : i64) : !forth.stack -> !forth.stack
     %11 = forth.zero_eq %10 : !forth.stack -> !forth.stack
-    %12 = forth.literal %11 7 : !forth.stack -> !forth.stack
-    %13 = forth.literal %12 8 : !forth.stack -> !forth.stack
-    %14 = forth.ne %13 : !forth.stack -> !forth.stack
-    %15 = forth.literal %14 9 : !forth.stack -> !forth.stack
-    %16 = forth.literal %15 10 : !forth.stack -> !forth.stack
-    %17 = forth.le %16 : !forth.stack -> !forth.stack
-    %18 = forth.literal %17 11 : !forth.stack -> !forth.stack
-    %19 = forth.literal %18 12 : !forth.stack -> !forth.stack
-    %20 = forth.ge %19 : !forth.stack -> !forth.stack
+    %12 = forth.constant %11(7 : i64) : !forth.stack -> !forth.stack
+    %13 = forth.constant %12(8 : i64) : !forth.stack -> !forth.stack
+    %14 = forth.nei %13 : !forth.stack -> !forth.stack
+    %15 = forth.constant %14(9 : i64) : !forth.stack -> !forth.stack
+    %16 = forth.constant %15(10 : i64) : !forth.stack -> !forth.stack
+    %17 = forth.lei %16 : !forth.stack -> !forth.stack
+    %18 = forth.constant %17(11 : i64) : !forth.stack -> !forth.stack
+    %19 = forth.constant %18(12 : i64) : !forth.stack -> !forth.stack
+    %20 = forth.gei %19 : !forth.stack -> !forth.stack
     return
   }
 }

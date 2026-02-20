@@ -38,17 +38,17 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.literal %0 10 : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(10 : i64) : !forth.stack -> !forth.stack
     cf.br ^bb1(%1 : !forth.stack)
   ^bb1(%2: !forth.stack):
     %3 = forth.dup %2 : !forth.stack -> !forth.stack
-    %4 = forth.literal %3 0 : !forth.stack -> !forth.stack
-    %5 = forth.gt %4 : !forth.stack -> !forth.stack
+    %4 = forth.constant %3(0 : i64) : !forth.stack -> !forth.stack
+    %5 = forth.gti %4 : !forth.stack -> !forth.stack
     %output_stack, %flag = forth.pop_flag %5 : !forth.stack -> !forth.stack, i1
     cf.cond_br %flag, ^bb2(%output_stack : !forth.stack), ^bb3(%output_stack : !forth.stack)
   ^bb2(%6: !forth.stack):
-    %7 = forth.literal %6 1 : !forth.stack -> !forth.stack
-    %8 = forth.sub %7 : !forth.stack -> !forth.stack
+    %7 = forth.constant %6(1 : i64) : !forth.stack -> !forth.stack
+    %8 = forth.subi %7 : !forth.stack -> !forth.stack
     cf.br ^bb1(%8 : !forth.stack)
   ^bb3(%9: !forth.stack):
     return

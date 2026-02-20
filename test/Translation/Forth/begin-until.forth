@@ -3,11 +3,11 @@
 \ Verify BEGIN/UNTIL generates loop with pop_flag + cond_br
 
 \ CHECK:       %[[S0:.*]] = forth.stack !forth.stack
-\ CHECK-NEXT:  %[[S1:.*]] = forth.literal %[[S0]] 10 : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S1:.*]] = forth.constant %[[S0]](10 : i64) : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  cf.br ^bb1(%[[S1]] : !forth.stack)
 \ CHECK:     ^bb1(%[[B1:.*]]: !forth.stack):
-\ CHECK-NEXT:  %[[L1:.*]] = forth.literal %[[B1]] 1 : !forth.stack -> !forth.stack
-\ CHECK-NEXT:  %[[SUB:.*]] = forth.sub %[[L1]] : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[L1:.*]] = forth.constant %[[B1]](1 : i64) : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[SUB:.*]] = forth.subi %[[L1]] : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[DUP:.*]] = forth.dup %[[SUB]] : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[ZEQ:.*]] = forth.zero_eq %[[DUP]] : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[PF:.*]], %[[FLAG:.*]] = forth.pop_flag %[[ZEQ]] : !forth.stack -> !forth.stack, i1

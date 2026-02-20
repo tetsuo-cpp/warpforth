@@ -4,6 +4,6 @@
 \ CHECK: forth.dup
 \ CHECK: forth.drop
 \ CHECK: forth.swap
-\ CHECK: forth.add
+\ CHECK: forth.addi
 \! kernel main
 1 Dup DROP swap duP +

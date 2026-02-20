@@ -26,16 +26,16 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.literal %0 1 : !forth.stack -> !forth.stack
-    %2 = forth.load %1 : !forth.stack -> !forth.stack
-    %3 = forth.literal %2 42 : !forth.stack -> !forth.stack
-    %4 = forth.literal %3 100 : !forth.stack -> !forth.stack
-    %5 = forth.store %4 : !forth.stack -> !forth.stack
-    %6 = forth.literal %5 2 : !forth.stack -> !forth.stack
-    %7 = forth.shared_load %6 : !forth.stack -> !forth.stack
-    %8 = forth.literal %7 9 : !forth.stack -> !forth.stack
-    %9 = forth.literal %8 3 : !forth.stack -> !forth.stack
-    %10 = forth.shared_store %9 : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(1 : i64) : !forth.stack -> !forth.stack
+    %2 = forth.loadi %1 : !forth.stack -> !forth.stack
+    %3 = forth.constant %2(42 : i64) : !forth.stack -> !forth.stack
+    %4 = forth.constant %3(100 : i64) : !forth.stack -> !forth.stack
+    %5 = forth.storei %4 : !forth.stack -> !forth.stack
+    %6 = forth.constant %5(2 : i64) : !forth.stack -> !forth.stack
+    %7 = forth.shared_loadi %6 : !forth.stack -> !forth.stack
+    %8 = forth.constant %7(9 : i64) : !forth.stack -> !forth.stack
+    %9 = forth.constant %8(3 : i64) : !forth.stack -> !forth.stack
+    %10 = forth.shared_storei %9 : !forth.stack -> !forth.stack
     return
   }
 }

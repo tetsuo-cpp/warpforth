@@ -18,11 +18,15 @@
 namespace mlir {
 namespace forth {
 
+/// Base element type for param/shared declarations.
+enum class BaseType { I64, F64 };
+
 /// A declared kernel parameter: `param <name> <type>`.
 struct ParamDecl {
   std::string name;
   bool isArray = false;
   int64_t size = 0;
+  BaseType baseType = BaseType::I64;
 };
 
 /// A declared shared memory region: `shared <name> <type>`.
@@ -30,11 +34,12 @@ struct SharedDecl {
   std::string name;
   bool isArray = false;
   int64_t size = 0;
+  BaseType baseType = BaseType::I64;
 };
 
 /// Simple token representing a Forth word or literal.
 struct Token {
-  enum class Kind { Number, Word, Colon, Semicolon, EndOfFile };
+  enum class Kind { Number, Float, Word, Colon, Semicolon, EndOfFile };
 
   Kind kind;
   std::string text;
@@ -73,6 +78,9 @@ private:
 
   /// Check if a string is a number.
   bool isNumber(const std::string &str) const;
+
+  /// Check if a string is a floating-point number.
+  bool isFloat(const std::string &str) const;
 };
 
 /// Parser and translator for Forth source code to MLIR.

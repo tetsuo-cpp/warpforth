@@ -2,7 +2,7 @@
 
 \ CHECK: func.func private @DOUBLE(%arg0: !forth.stack) -> !forth.stack {
 \ CHECK:   forth.dup
-\ CHECK:   forth.add
+\ CHECK:   forth.addi
 \ CHECK:   return %{{.*}} : !forth.stack
 \ CHECK: }
 \ CHECK: func.func private @main()

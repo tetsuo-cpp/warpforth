@@ -36,16 +36,16 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.literal %0 10 : !forth.stack -> !forth.stack
-    %2 = forth.literal %1 20 : !forth.stack -> !forth.stack
-    %3 = forth.add %2 : !forth.stack -> !forth.stack
-    %4 = forth.literal %3 3 : !forth.stack -> !forth.stack
-    %5 = forth.sub %4 : !forth.stack -> !forth.stack
-    %6 = forth.literal %5 4 : !forth.stack -> !forth.stack
-    %7 = forth.mul %6 : !forth.stack -> !forth.stack
-    %8 = forth.literal %7 2 : !forth.stack -> !forth.stack
-    %9 = forth.div %8 : !forth.stack -> !forth.stack
-    %10 = forth.literal %9 5 : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(10 : i64) : !forth.stack -> !forth.stack
+    %2 = forth.constant %1(20 : i64) : !forth.stack -> !forth.stack
+    %3 = forth.addi %2 : !forth.stack -> !forth.stack
+    %4 = forth.constant %3(3 : i64) : !forth.stack -> !forth.stack
+    %5 = forth.subi %4 : !forth.stack -> !forth.stack
+    %6 = forth.constant %5(4 : i64) : !forth.stack -> !forth.stack
+    %7 = forth.muli %6 : !forth.stack -> !forth.stack
+    %8 = forth.constant %7(2 : i64) : !forth.stack -> !forth.stack
+    %9 = forth.divi %8 : !forth.stack -> !forth.stack
+    %10 = forth.constant %9(5 : i64) : !forth.stack -> !forth.stack
     %11 = forth.mod %10 : !forth.stack -> !forth.stack
     return
   }

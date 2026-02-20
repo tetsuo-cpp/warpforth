@@ -31,11 +31,11 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.literal %0 10 : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(10 : i64) : !forth.stack -> !forth.stack
     cf.br ^bb1(%1 : !forth.stack)
   ^bb1(%2: !forth.stack):
-    %3 = forth.literal %2 1 : !forth.stack -> !forth.stack
-    %4 = forth.sub %3 : !forth.stack -> !forth.stack
+    %3 = forth.constant %2(1 : i64) : !forth.stack -> !forth.stack
+    %4 = forth.subi %3 : !forth.stack -> !forth.stack
     %5 = forth.dup %4 : !forth.stack -> !forth.stack
     %6 = forth.zero_eq %5 : !forth.stack -> !forth.stack
     %output_stack, %flag = forth.pop_flag %6 : !forth.stack -> !forth.stack, i1

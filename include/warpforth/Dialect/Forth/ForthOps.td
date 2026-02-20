@@ -114,54 +114,54 @@ def Forth_RollOp : Forth_StackOpBase<"roll"> {
 }
 
 //===----------------------------------------------------------------------===//
-// Literal operations.
+// Constant operations.
 //===----------------------------------------------------------------------===//
 
-def Forth_LiteralOp : Forth_Op<"literal", [Pure]> {
-  let summary = "Push a literal value onto the stack";
+def Forth_ConstantOp : Forth_Op<"constant", [Pure]> {
+  let summary = "Push a constant value onto the stack";
   let description = [{
-    Pushes a literal integer value onto the stack.
+    Pushes a constant value onto the stack.
     Forth semantics: ( -- n )
   }];
 
-  let arguments = (ins Forth_StackType:$input_stack, I64Attr:$value);
+  let arguments = (ins Forth_StackType:$input_stack, AnyAttr:$value);
   let results = (outs Forth_StackType:$output_stack);
 
   let assemblyFormat = [{
-    $input_stack $value attr-dict `:` type($input_stack) `->` type($output_stack)
+    $input_stack `(` $value `)` attr-dict `:` type($input_stack) `->` type($output_stack)
   }];
 }
 
 //===----------------------------------------------------------------------===//
-// Arithmetic operations.
+// Integer arithmetic operations.
 //===----------------------------------------------------------------------===//
 
-def Forth_AddOp : Forth_StackOpBase<"add"> {
-  let summary = "Add top two stack elements";
+def Forth_AddIOp : Forth_StackOpBase<"addi"> {
+  let summary = "Add top two stack elements (integer)";
   let description = [{
     Pops the top two elements, adds them, and pushes the result.
     Forth semantics: ( a b -- a+b )
   }];
 }
 
-def Forth_SubOp : Forth_StackOpBase<"sub"> {
-  let summary = "Subtract top two stack elements";
+def Forth_SubIOp : Forth_StackOpBase<"subi"> {
+  let summary = "Subtract top two stack elements (integer)";
   let description = [{
     Pops the top two elements, subtracts them (a - b), and pushes the result.
     Forth semantics: ( a b -- a-b )
   }];
 }
 
-def Forth_MulOp : Forth_StackOpBase<"mul"> {
-  let summary = "Multiply top two stack elements";
+def Forth_MulIOp : Forth_StackOpBase<"muli"> {
+  let summary = "Multiply top two stack elements (integer)";
   let description = [{
     Pops the top two elements, multiplies them, and pushes the result.
     Forth semantics: ( a b -- a*b )
   }];
 }
 
-def Forth_DivOp : Forth_StackOpBase<"div"> {
-  let summary = "Divide top two stack elements";
+def Forth_DivIOp : Forth_StackOpBase<"divi"> {
+  let summary = "Divide top two stack elements (integer)";
   let description = [{
     Pops the top two elements, divides them (a / b), and pushes the result.
     Forth semantics: ( a b -- a/b )
@@ -173,6 +173,42 @@ def Forth_ModOp : Forth_StackOpBase<"mod"> {
   let description = [{
     Pops the top two elements, computes modulo (a % b), and pushes the result.
     Forth semantics: ( a b -- a%b )
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Float arithmetic operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_AddFOp : Forth_StackOpBase<"addf"> {
+  let summary = "Add top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, adds, bitcasts result back to i64.
+    Forth semantics: ( f1 f2 -- f1+f2 )
+  }];
+}
+
+def Forth_SubFOp : Forth_StackOpBase<"subf"> {
+  let summary = "Subtract top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, subtracts, bitcasts result back to i64.
+    Forth semantics: ( f1 f2 -- f1-f2 )
+  }];
+}
+
+def Forth_MulFOp : Forth_StackOpBase<"mulf"> {
+  let summary = "Multiply top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, multiplies, bitcasts result back to i64.
+    Forth semantics: ( f1 f2 -- f1*f2 )
+  }];
+}
+
+def Forth_DivFOp : Forth_StackOpBase<"divf"> {
+  let summary = "Divide top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, divides, bitcasts result back to i64.
+    Forth semantics: ( f1 f2 -- f1/f2 )
   }];
 }
 
@@ -232,38 +268,73 @@ def Forth_RshiftOp : Forth_StackOpBase<"rshift"> {
 // Memory operations.
 //===----------------------------------------------------------------------===//
 
-def Forth_LoadOp : Forth_StackOpBase<"load"> {
-  let summary = "Load value from memory buffer";
+def Forth_LoadIOp : Forth_StackOpBase<"loadi"> {
+  let summary = "Load i64 value from memory buffer";
   let description = [{
-    Pops an address from the stack, loads a value from the memory buffer at that address,
+    Pops an address from the stack, loads an i64 value from memory,
     and pushes the loaded value onto the stack.
     Forth semantics: ( addr -- value )
   }];
 }
 
-def Forth_StoreOp : Forth_StackOpBase<"store"> {
-  let summary = "Store value to memory buffer";
+def Forth_StoreIOp : Forth_StackOpBase<"storei"> {
+  let summary = "Store i64 value to memory buffer";
   let description = [{
-    Pops an address and value from the stack, stores the value to the memory buffer
-    at the specified address.
+    Pops an address and value from the stack, stores the i64 value to memory.
     Forth semantics: ( x addr -- )
   }];
 }
 
-def Forth_SharedLoadOp : Forth_StackOpBase<"shared_load"> {
-  let summary = "Load value from shared memory buffer";
+def Forth_LoadFOp : Forth_StackOpBase<"loadf"> {
+  let summary = "Load f64 value from memory buffer";
   let description = [{
-    Pops an address from the stack, loads a value from shared/workgroup memory at
-    that address, and pushes the loaded value onto the stack.
+    Pops an address from the stack, loads an f64 value from memory,
+    bitcasts to i64, and pushes onto the stack.
     Forth semantics: ( addr -- value )
   }];
 }
 
-def Forth_SharedStoreOp : Forth_StackOpBase<"shared_store"> {
-  let summary = "Store value to shared memory buffer";
+def Forth_StoreFOp : Forth_StackOpBase<"storef"> {
+  let summary = "Store f64 value to memory buffer";
   let description = [{
-    Pops an address and value from the stack, stores the value to shared/workgroup
-    memory at the specified address.
+    Pops an address and value (i64 bit pattern of f64) from the stack,
+    bitcasts to f64, stores to memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+def Forth_SharedLoadIOp : Forth_StackOpBase<"shared_loadi"> {
+  let summary = "Load i64 value from shared memory buffer";
+  let description = [{
+    Pops an address from the stack, loads an i64 value from shared/workgroup memory,
+    and pushes the loaded value onto the stack.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_SharedStoreIOp : Forth_StackOpBase<"shared_storei"> {
+  let summary = "Store i64 value to shared memory buffer";
+  let description = [{
+    Pops an address and value from the stack, stores the i64 value to
+    shared/workgroup memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+def Forth_SharedLoadFOp : Forth_StackOpBase<"shared_loadf"> {
+  let summary = "Load f64 value from shared memory buffer";
+  let description = [{
+    Pops an address from the stack, loads an f64 value from shared/workgroup memory,
+    bitcasts to i64, and pushes onto the stack.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_SharedStoreFOp : Forth_StackOpBase<"shared_storef"> {
+  let summary = "Store f64 value to shared memory buffer";
+  let description = [{
+    Pops an address and value (i64 bit pattern of f64) from the stack,
+    bitcasts to f64, stores to shared/workgroup memory.
     Forth semantics: ( x addr -- )
   }];
 }
@@ -417,54 +488,112 @@ def Forth_BarrierOp : Forth_Op<"barrier", []> {
 }
 
 //===----------------------------------------------------------------------===//
-// Comparison operations.
+// Integer comparison operations.
 //===----------------------------------------------------------------------===//
 
-def Forth_EqOp : Forth_StackOpBase<"eq"> {
-  let summary = "Test equality of top two stack elements";
+def Forth_EqIOp : Forth_StackOpBase<"eqi"> {
+  let summary = "Test equality of top two stack elements (integer)";
   let description = [{
     Pops two values, pushes -1 (true) if equal, 0 (false) otherwise.
     Forth semantics: ( a b -- flag )
   }];
 }
 
-def Forth_LtOp : Forth_StackOpBase<"lt"> {
-  let summary = "Test less-than of top two stack elements";
+def Forth_LtIOp : Forth_StackOpBase<"lti"> {
+  let summary = "Test less-than of top two stack elements (integer)";
   let description = [{
     Pops two values, pushes -1 (true) if a < b, 0 (false) otherwise.
     Forth semantics: ( a b -- flag )
   }];
 }
 
-def Forth_GtOp : Forth_StackOpBase<"gt"> {
-  let summary = "Test greater-than of top two stack elements";
+def Forth_GtIOp : Forth_StackOpBase<"gti"> {
+  let summary = "Test greater-than of top two stack elements (integer)";
   let description = [{
     Pops two values, pushes -1 (true) if a > b, 0 (false) otherwise.
     Forth semantics: ( a b -- flag )
   }];
 }
 
-def Forth_NeOp : Forth_StackOpBase<"ne"> {
-  let summary = "Test inequality of top two stack elements";
+def Forth_NeIOp : Forth_StackOpBase<"nei"> {
+  let summary = "Test inequality of top two stack elements (integer)";
   let description = [{
     Pops two values, pushes -1 (true) if not equal, 0 (false) otherwise.
     Forth semantics: ( a b -- flag )
   }];
 }
 
-def Forth_LeOp : Forth_StackOpBase<"le"> {
-  let summary = "Test less-than-or-equal of top two stack elements";
+def Forth_LeIOp : Forth_StackOpBase<"lei"> {
+  let summary = "Test less-than-or-equal of top two stack elements (integer)";
   let description = [{
     Pops two values, pushes -1 (true) if a <= b, 0 (false) otherwise.
     Forth semantics: ( a b -- flag )
   }];
 }
 
-def Forth_GeOp : Forth_StackOpBase<"ge"> {
-  let summary = "Test greater-than-or-equal of top two stack elements";
+def Forth_GeIOp : Forth_StackOpBase<"gei"> {
+  let summary = "Test greater-than-or-equal of top two stack elements (integer)";
   let description = [{
     Pops two values, pushes -1 (true) if a >= b, 0 (false) otherwise.
     Forth semantics: ( a b -- flag )
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Float comparison operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_EqFOp : Forth_StackOpBase<"eqf"> {
+  let summary = "Test equality of top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, compares for equality (ordered).
+    Pushes -1 (true) or 0 (false).
+    Forth semantics: ( f1 f2 -- flag )
+  }];
+}
+
+def Forth_LtFOp : Forth_StackOpBase<"ltf"> {
+  let summary = "Test less-than of top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, compares f1 < f2 (ordered).
+    Pushes -1 (true) or 0 (false).
+    Forth semantics: ( f1 f2 -- flag )
+  }];
+}
+
+def Forth_GtFOp : Forth_StackOpBase<"gtf"> {
+  let summary = "Test greater-than of top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, compares f1 > f2 (ordered).
+    Pushes -1 (true) or 0 (false).
+    Forth semantics: ( f1 f2 -- flag )
+  }];
+}
+
+def Forth_NeFOp : Forth_StackOpBase<"nef"> {
+  let summary = "Test inequality of top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, compares for inequality (ordered).
+    Pushes -1 (true) or 0 (false).
+    Forth semantics: ( f1 f2 -- flag )
+  }];
+}
+
+def Forth_LeFOp : Forth_StackOpBase<"lef"> {
+  let summary = "Test less-than-or-equal of top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, compares f1 <= f2 (ordered).
+    Pushes -1 (true) or 0 (false).
+    Forth semantics: ( f1 f2 -- flag )
+  }];
+}
+
+def Forth_GeFOp : Forth_StackOpBase<"gef"> {
+  let summary = "Test greater-than-or-equal of top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, compares f1 >= f2 (ordered).
+    Pushes -1 (true) or 0 (false).
+    Forth semantics: ( f1 f2 -- flag )
   }];
 }
 
@@ -473,6 +602,28 @@ def Forth_ZeroEqOp : Forth_StackOpBase<"zero_eq"> {
   let description = [{
     Pops one value, pushes -1 (true) if zero, 0 (false) otherwise.
     Forth semantics: ( a -- flag )
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Type conversion operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_IToFOp : Forth_StackOpBase<"itof"> {
+  let summary = "Convert integer to float";
+  let description = [{
+    Pops an i64 integer, converts to f64 via sitofp, bitcasts result
+    to i64 bit pattern, pushes onto stack.
+    Forth semantics: ( n -- f )
+  }];
+}
+
+def Forth_FToIOp : Forth_StackOpBase<"ftoi"> {
+  let summary = "Convert float to integer";
+  let description = [{
+    Pops an i64 (f64 bit pattern), bitcasts to f64, converts to i64
+    via fptosi, pushes onto stack.
+    Forth semantics: ( f -- n )
   }];
 }
 
