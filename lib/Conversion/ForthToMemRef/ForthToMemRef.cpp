@@ -12,6 +12,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -513,6 +514,60 @@ using MulFOpConversion =
     BinaryArithOpConversion<forth::MulFOp, arith::MulFOp, true>;
 using DivFOpConversion =
     BinaryArithOpConversion<forth::DivFOp, arith::DivFOp, true>;
+
+// Float binary intrinsics (max/min)
+using MaxFOpConversion =
+    BinaryArithOpConversion<forth::MaxFOp, arith::MaximumFOp, true>;
+using MinFOpConversion =
+    BinaryArithOpConversion<forth::MinFOp, arith::MinimumFOp, true>;
+
+/// Base template for unary float operations.
+/// Pops one value, applies operation, pushes result: (f -- result)
+/// Bitcasts i64->f64 before the op and f64->i64 after.
+template <typename ForthOp, typename MathOp>
+struct UnaryFloatOpConversion : public OpConversionPattern<ForthOp> {
+  UnaryFloatOpConversion(const TypeConverter &typeConverter,
+                         MLIRContext *context)
+      : OpConversionPattern<ForthOp>(typeConverter, context) {}
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    Value stackPtr = inputStack[1];
+
+    // Load value from top of stack
+    Value a = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+
+    // Bitcast i64 -> f64
+    auto f64Type = rewriter.getF64Type();
+    Value aF = rewriter.create<arith::BitcastOp>(loc, f64Type, a);
+
+    // Apply math/arith op
+    Value resF = rewriter.create<MathOp>(loc, aF);
+
+    // Bitcast f64 -> i64
+    Value result =
+        rewriter.create<arith::BitcastOp>(loc, rewriter.getI64Type(), resF);
+
+    // Store result at same position (SP unchanged — unary op)
+    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
+
+    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
+    return success();
+  }
+};
+
+// Float unary intrinsics
+using ExpFOpConversion = UnaryFloatOpConversion<forth::ExpFOp, math::ExpOp>;
+using SqrtFOpConversion = UnaryFloatOpConversion<forth::SqrtFOp, math::SqrtOp>;
+using LogFOpConversion = UnaryFloatOpConversion<forth::LogFOp, math::LogOp>;
+using AbsFOpConversion = UnaryFloatOpConversion<forth::AbsFOp, math::AbsFOp>;
+using NegFOpConversion = UnaryFloatOpConversion<forth::NegFOp, arith::NegFOp>;
 
 /// Base template for binary comparison operations.
 /// Pops two values, compares, pushes -1 (true) or 0 (false): (a b -- flag)
@@ -1153,7 +1208,8 @@ struct ConvertForthToMemRefPass
 
     // Mark MemRef, Arith, LLVM, and CF dialects as legal
     target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect,
-                           LLVM::LLVMDialect, cf::ControlFlowDialect>();
+                           LLVM::LLVMDialect, cf::ControlFlowDialect,
+                           math::MathDialect>();
 
     // Mark IntrinsicOp and BarrierOp as legal (to be lowered later)
     target.addLegalOp<forth::IntrinsicOp>();
@@ -1205,6 +1261,9 @@ struct ConvertForthToMemRefPass
         ModOpConversion,
         // Float arithmetic
         AddFOpConversion, SubFOpConversion, MulFOpConversion, DivFOpConversion,
+        // Float math intrinsics
+        ExpFOpConversion, SqrtFOpConversion, LogFOpConversion, AbsFOpConversion,
+        NegFOpConversion, MaxFOpConversion, MinFOpConversion,
         // Bitwise
         AndOpConversion, OrOpConversion, XorOpConversion, NotOpConversion,
         LshiftOpConversion, RshiftOpConversion,
