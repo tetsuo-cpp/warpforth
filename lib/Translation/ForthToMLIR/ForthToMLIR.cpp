@@ -1031,6 +1031,11 @@ LogicalResult ForthParser::parseBody(Value &stack) {
     }
   }
 
+  if (!cfStack.empty()) {
+    cfStack.clear();
+    return emitError("unclosed control flow (missing THEN, REPEAT, or UNTIL?)");
+  }
+
   return success();
 }
 
