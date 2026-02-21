@@ -1004,6 +1004,11 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         Value step = popOp.getValue();
         emitLoopEnd(loc, ctx, step, stack);
 
+        //=== { outside word definition ===
+      } else if (currentToken.text == "{") {
+        return emitError(
+            "local variables can only be declared inside a word definition");
+
         //=== Normal word ===
       } else {
         Value newStack = emitOperation(currentToken.text, stack, loc);
@@ -1069,7 +1074,9 @@ LogicalResult ForthParser::parseLocals(Value &stack) {
     consume();
   }
 
-  // Skip '--' and output names until '}'
+  // Skip '--' and output names until '}'. Per ANS Forth, output names are
+  // documentation-only and have no semantic effect; we intentionally ignore
+  // them.
   if (currentToken.kind == Token::Kind::Word && currentToken.text == "--") {
     consume(); // consume '--'
     while (currentToken.kind != Token::Kind::EndOfFile) {
