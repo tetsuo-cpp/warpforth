@@ -763,7 +763,11 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         builder.create<cf::BranchOp>(loc, mergeBlock, ValueRange{stack});
 
         // Pop the false-path block (from IF) - this becomes else-body start.
+        if (cfStack.empty())
+          return emitError("ELSE without matching IF");
         auto [tag, joinBlock] = cfStack.pop_back_val();
+        if (tag != CFTag::Orig)
+          return emitError("ELSE without matching IF");
 
         // Push merge block for THEN to pick up.
         cfStack.push_back({CFTag::Orig, mergeBlock});
@@ -777,7 +781,11 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         consume();
 
         // Pop the join/merge block.
+        if (cfStack.empty())
+          return emitError("THEN without matching IF");
         auto [tag, joinBlock] = cfStack.pop_back_val();
+        if (tag != CFTag::Orig)
+          return emitError("THEN without matching IF");
 
         // Branch from current block to join.
         builder.create<cf::BranchOp>(loc, joinBlock, ValueRange{stack});
@@ -810,7 +818,11 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 
         auto [s1, flag] = emitPopFlag(loc, stack);
 
+        if (cfStack.empty())
+          return emitError("UNTIL without matching BEGIN");
         auto [tag, loopBlock] = cfStack.pop_back_val();
+        if (tag != CFTag::Dest)
+          return emitError("UNTIL without matching BEGIN");
 
         auto *exitBlock = createStackBlock(parentRegion, loc);
 
@@ -829,7 +841,11 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 
         auto [s1, flag] = emitPopFlag(loc, stack);
 
+        if (cfStack.empty())
+          return emitError("WHILE without matching BEGIN");
         auto [tag, loopBlock] = cfStack.pop_back_val();
+        if (tag != CFTag::Dest)
+          return emitError("WHILE without matching BEGIN");
 
         auto *bodyBlock = createStackBlock(parentRegion, loc);
         auto *exitBlock = createStackBlock(parentRegion, loc);
@@ -851,13 +867,21 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         consume();
 
         // Pop loop header (from WHILE's re-push).
+        if (cfStack.empty())
+          return emitError("REPEAT without matching WHILE");
         auto [destTag, loopBlock] = cfStack.pop_back_val();
+        if (destTag != CFTag::Dest)
+          return emitError("REPEAT without matching WHILE");
 
         // Branch back to loop header.
         builder.create<cf::BranchOp>(loc, loopBlock, ValueRange{stack});
 
         // Pop exit block (from WHILE).
+        if (cfStack.empty())
+          return emitError("REPEAT without matching WHILE");
         auto [origTag, exitBlock] = cfStack.pop_back_val();
+        if (origTag != CFTag::Orig)
+          return emitError("REPEAT without matching WHILE");
 
         // Continue after exit.
         builder.setInsertionPointToStart(exitBlock);
