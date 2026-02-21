@@ -50,7 +50,7 @@ void buildWarpForthPipeline(OpPassManager &pm) {
   // Stage 8: Reconcile type conversions
   pm.addPass(createReconcileUnrealizedCastsPass());
 
-  // Stage 8: Compile GPU module to PTX binary
+  // Stage 9: Compile GPU module to PTX binary
   GpuModuleToBinaryPassOptions binaryOptions;
   binaryOptions.compilationTarget = "isa"; // Output PTX assembly
   pm.addPass(createGpuModuleToBinaryPass(binaryOptions));
