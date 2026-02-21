@@ -11,6 +11,7 @@ add_mlir_library(MLIRConversionPasses
   MLIRGPUDialect
   MLIRGPUToNVVMTransforms
   MLIRGPUTransforms
+  MLIRMathToLLVM
   MLIRReconcileUnrealizedCasts
   MLIRTransforms
 )

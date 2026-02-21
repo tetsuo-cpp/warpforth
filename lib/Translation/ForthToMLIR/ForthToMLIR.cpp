@@ -531,6 +531,27 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   } else if (word == "F/") {
     return builder.create<forth::DivFOp>(loc, stackType, inputStack)
         .getResult();
+  } else if (word == "FEXP") {
+    return builder.create<forth::ExpFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "FSQRT") {
+    return builder.create<forth::SqrtFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "FLOG") {
+    return builder.create<forth::LogFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "FABS") {
+    return builder.create<forth::AbsFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "FNEG") {
+    return builder.create<forth::NegFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "FMAX") {
+    return builder.create<forth::MaxFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "FMIN") {
+    return builder.create<forth::MinFOp>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "MOD") {
     return builder.create<forth::ModOp>(loc, stackType, inputStack).getResult();
   } else if (word == "AND") {

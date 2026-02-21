@@ -6,6 +6,7 @@
 
 #include "warpforth/Conversion/Passes.h"
 #include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
+#include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
 #include "mlir/Conversion/NVVMToLLVM/NVVMToLLVM.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -40,10 +41,13 @@ void buildWarpForthPipeline(OpPassManager &pm) {
   pm.addNestedPass<gpu::GPUModuleOp>(
       createConvertGpuOpsToNVVMOps(gpuToNVVMOptions));
 
-  // Stage 6: Lower NVVM to LLVM
+  // Stage 6: Lower math ops to LLVM intrinsics inside GPU module
+  pm.addNestedPass<gpu::GPUModuleOp>(createConvertMathToLLVMPass());
+
+  // Stage 7: Lower NVVM to LLVM
   pm.addPass(createConvertNVVMToLLVMPass());
 
-  // Stage 7: Reconcile type conversions
+  // Stage 8: Reconcile type conversions
   pm.addPass(createReconcileUnrealizedCastsPass());
 
   // Stage 8: Compile GPU module to PTX binary

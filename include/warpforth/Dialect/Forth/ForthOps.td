@@ -213,6 +213,71 @@ def Forth_DivFOp : Forth_StackOpBase<"divf"> {
 }
 
 //===----------------------------------------------------------------------===//
+// Float math intrinsic operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_ExpFOp : Forth_StackOpBase<"expf"> {
+  let summary = "Exponential of top stack element (float)";
+  let description = [{
+    Pops an i64 (f64 bit pattern), bitcasts to f64, computes e^x,
+    bitcasts result back to i64.
+    Forth semantics: ( f -- exp(f) )
+  }];
+}
+
+def Forth_SqrtFOp : Forth_StackOpBase<"sqrtf"> {
+  let summary = "Square root of top stack element (float)";
+  let description = [{
+    Pops an i64 (f64 bit pattern), bitcasts to f64, computes sqrt(x),
+    bitcasts result back to i64.
+    Forth semantics: ( f -- sqrt(f) )
+  }];
+}
+
+def Forth_LogFOp : Forth_StackOpBase<"logf"> {
+  let summary = "Natural logarithm of top stack element (float)";
+  let description = [{
+    Pops an i64 (f64 bit pattern), bitcasts to f64, computes ln(x),
+    bitcasts result back to i64.
+    Forth semantics: ( f -- log(f) )
+  }];
+}
+
+def Forth_AbsFOp : Forth_StackOpBase<"absf"> {
+  let summary = "Absolute value of top stack element (float)";
+  let description = [{
+    Pops an i64 (f64 bit pattern), bitcasts to f64, computes |x|,
+    bitcasts result back to i64.
+    Forth semantics: ( f -- |f| )
+  }];
+}
+
+def Forth_NegFOp : Forth_StackOpBase<"negf"> {
+  let summary = "Negate top stack element (float)";
+  let description = [{
+    Pops an i64 (f64 bit pattern), bitcasts to f64, negates,
+    bitcasts result back to i64.
+    Forth semantics: ( f -- -f )
+  }];
+}
+
+def Forth_MaxFOp : Forth_StackOpBase<"maxf"> {
+  let summary = "Maximum of top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, computes max, bitcasts result back to i64.
+    Forth semantics: ( f1 f2 -- max(f1,f2) )
+  }];
+}
+
+def Forth_MinFOp : Forth_StackOpBase<"minf"> {
+  let summary = "Minimum of top two stack elements (float)";
+  let description = [{
+    Pops two i64 values, bitcasts to f64, computes min, bitcasts result back to i64.
+    Forth semantics: ( f1 f2 -- min(f1,f2) )
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Bitwise operations.
 //===----------------------------------------------------------------------===//
 
