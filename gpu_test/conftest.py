@@ -181,13 +181,33 @@ class VastSession:
                         self.ssh_host,
                         self.ssh_port,
                     )
-                    # Upload and compile the C++ runner
+                    # Wait for sshd to actually accept connections, then compile runner
+                    self._wait_for_sshd()
                     self._compile_runner()
                     return
 
             time.sleep(POLL_INTERVAL_S)
 
         msg = f"Instance {self.instance_id} did not become SSH-ready within {POLL_TIMEOUT_S}s"
+        raise TimeoutError(msg)
+
+    def _wait_for_sshd(self) -> None:
+        """Poll until sshd is actually accepting connections."""
+        deadline = time.monotonic() + POLL_TIMEOUT_S
+        while time.monotonic() < deadline:
+            result = subprocess.run(
+                [*self._ssh_cmd(), "true"],
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+            if result.returncode == 0:
+                logger.info("sshd ready on %s:%s", self.ssh_host, self.ssh_port)
+                return
+            time.sleep(POLL_INTERVAL_S)
+        msg = (
+            f"sshd on {self.ssh_host}:{self.ssh_port} did not become ready within {POLL_TIMEOUT_S}s"
+        )
         raise TimeoutError(msg)
 
     def _compile_runner(self) -> None:
@@ -241,6 +261,8 @@ class VastSession:
             "-o",
             "ConnectTimeout=10",
             "-o",
+            "ConnectionAttempts=3",
+            "-o",
             "LogLevel=ERROR",
             "-p",
             str(self.ssh_port),
@@ -270,6 +292,10 @@ class VastSession:
                 "StrictHostKeyChecking=no",
                 "-o",
                 "UserKnownHostsFile=/dev/null",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "ConnectionAttempts=3",
                 "-o",
                 "LogLevel=ERROR",
                 "-P",
