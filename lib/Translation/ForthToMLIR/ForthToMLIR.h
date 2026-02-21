@@ -101,6 +101,7 @@ private:
   std::vector<ParamDecl> paramDecls;
   std::vector<SharedDecl> sharedDecls;
   llvm::StringMap<Value> sharedAllocs;
+  llvm::StringMap<Value> localVars;
   std::string kernelName;
   const char *headerEndPtr = nullptr;
   bool inWordDefinition = false;
@@ -158,6 +159,9 @@ private:
   /// load counter, add step, store, crossing test, cond_br to exit or body.
   void emitLoopEnd(Location loc, const LoopContext &ctx, Value step,
                    Value &stack);
+
+  /// Parse local variable declarations: { a b c -- }
+  LogicalResult parseLocals(Value &stack);
 
   /// Parse a user-defined word definition.
   LogicalResult parseWordDefinition();

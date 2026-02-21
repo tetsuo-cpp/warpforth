@@ -409,6 +409,16 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
                                  Location loc) {
   Type stackType = forth::StackType::get(context);
 
+  // Check if word is a local variable (only valid inside word definitions)
+  if (inWordDefinition) {
+    auto it = localVars.find(word);
+    if (it != localVars.end()) {
+      return builder
+          .create<forth::PushValueOp>(loc, stackType, inputStack, it->second)
+          .getOutputStack();
+    }
+  }
+
   // Check if word is a param name (only valid outside word definitions)
   if (!inWordDefinition) {
     for (const auto &param : paramDecls) {
@@ -1014,6 +1024,82 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 // Word definition and top-level parsing.
 //===----------------------------------------------------------------------===//
 
+LogicalResult ForthParser::parseLocals(Value &stack) {
+  // If current token is not '{', no locals to parse
+  if (currentToken.kind != Token::Kind::Word || currentToken.text != "{")
+    return success();
+
+  Location loc = getLoc();
+  consume(); // consume '{'
+
+  // Collect local names until '--' or '}'
+  SmallVector<std::string> names;
+  while (currentToken.kind != Token::Kind::EndOfFile) {
+    if (currentToken.kind == Token::Kind::Word && currentToken.text == "--")
+      break;
+    if (currentToken.kind == Token::Kind::Word && currentToken.text == "}")
+      break;
+
+    if (currentToken.kind != Token::Kind::Word)
+      return emitError("expected local variable name in { ... }");
+
+    std::string name = currentToken.text; // already uppercased by lexer
+
+    // Check for duplicate local names
+    for (const auto &existing : names) {
+      if (existing == name)
+        return emitError("duplicate local variable name: " + name);
+    }
+
+    // Check for conflicts with param names
+    for (const auto &param : paramDecls) {
+      if (param.name == name)
+        return emitError("local variable name '" + name +
+                         "' conflicts with parameter name");
+    }
+
+    // Check for conflicts with shared names
+    for (const auto &shared : sharedDecls) {
+      if (shared.name == name)
+        return emitError("local variable name '" + name +
+                         "' conflicts with shared memory name");
+    }
+
+    names.push_back(name);
+    consume();
+  }
+
+  // Skip '--' and output names until '}'
+  if (currentToken.kind == Token::Kind::Word && currentToken.text == "--") {
+    consume(); // consume '--'
+    while (currentToken.kind != Token::Kind::EndOfFile) {
+      if (currentToken.kind == Token::Kind::Word && currentToken.text == "}")
+        break;
+      consume(); // skip output names (ignored)
+    }
+  }
+
+  if (currentToken.kind != Token::Kind::Word || currentToken.text != "}")
+    return emitError("expected '}' to close local variable declaration");
+
+  consume(); // consume '}'
+
+  if (names.empty())
+    return success();
+
+  // Pop values in reverse order: { a b c -- } with stack ( 1 2 3 )
+  // pops 3->c, 2->b, 1->a
+  Type i64Type = builder.getI64Type();
+  Type stackType = forth::StackType::get(context);
+  for (int i = names.size() - 1; i >= 0; --i) {
+    auto popOp = builder.create<forth::PopOp>(loc, stackType, i64Type, stack);
+    stack = popOp.getOutputStack();
+    localVars[names[i]] = popOp.getValue();
+  }
+
+  return success();
+}
+
 LogicalResult ForthParser::parseWordDefinition() {
   Location loc = getLoc();
   auto savedInsertionPoint = builder.saveInsertionPoint();
@@ -1039,6 +1125,10 @@ LogicalResult ForthParser::parseWordDefinition() {
   Value resultStack = entryBlock->getArgument(0);
   builder.setInsertionPointToStart(entryBlock);
 
+  // Parse local variable declarations (if any)
+  if (failed(parseLocals(resultStack)))
+    return failure();
+
   // Parse word body until ';'
   if (failed(parseBody(resultStack)))
     return failure();
@@ -1057,6 +1147,7 @@ LogicalResult ForthParser::parseWordDefinition() {
   consume(); // consume ';'
 
   inWordDefinition = false;
+  localVars.clear();
 
   // Restore insertion point
   builder.restoreInsertionPoint(savedInsertionPoint);
