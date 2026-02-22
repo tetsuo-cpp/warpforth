@@ -588,6 +588,75 @@ def test_float_to_int_conversion(kernel_runner: KernelRunner) -> None:
 
 # --- Attention ---
 
+_ATTENTION_KERNEL = """\
+\\! kernel attention
+\\! param Q f64[{n}]
+\\! param K f64[{n}]
+\\! param V f64[{n}]
+\\! param O f64[{n}]
+\\! param SEQ_LEN i64
+\\! param HEAD_DIM i64
+\\! shared SCORES f64[{seq_len}]
+\\! shared SCRATCH f64[{seq_len}]
+BID-X
+TID-X
+0.0
+HEAD_DIM 0 DO
+  2 PICK HEAD_DIM * I + CELLS Q + F@
+  2 PICK HEAD_DIM * I + CELLS K + F@
+  F* F+
+LOOP
+HEAD_DIM S>F FSQRT F/
+OVER 3 PICK >
+IF DROP -1.0e30 THEN
+OVER CELLS SCORES + SF!
+BARRIER
+TID-X 0= IF
+  0 CELLS SCORES + SF@
+  SEQ_LEN 1 DO I CELLS SCORES + SF@ FMAX LOOP
+  0 CELLS SCRATCH + SF!
+THEN
+BARRIER
+DUP CELLS SCORES + SF@
+0 CELLS SCRATCH + SF@
+F- FEXP
+OVER CELLS SCORES + SF!
+BARRIER
+TID-X 0= IF
+  0.0
+  SEQ_LEN 0 DO I CELLS SCORES + SF@ F+ LOOP
+  0 CELLS SCRATCH + SF!
+THEN
+BARRIER
+DUP CELLS SCORES + SF@
+0 CELLS SCRATCH + SF@
+F/
+OVER CELLS SCORES + SF!
+BARRIER
+DUP BEGIN DUP HEAD_DIM < WHILE
+  0.0
+  SEQ_LEN 0 DO
+    I CELLS SCORES + SF@
+    I HEAD_DIM * 3 PICK + CELLS V + F@
+    F* F+
+  LOOP
+  OVER 4 PICK HEAD_DIM * + CELLS O + F!
+  BDIM-X +
+REPEAT
+DROP DROP DROP
+"""
+
+
+def _attention_reference(q: np.ndarray, k: np.ndarray, v: np.ndarray, seq_len: int) -> list[float]:
+    """Compute scaled dot-product attention with causal mask (NumPy reference)."""
+    head_dim = q.shape[1]
+    scores = q @ k.T / np.sqrt(head_dim)
+    causal_mask = np.triu(np.ones((seq_len, seq_len), dtype=bool), k=1)
+    scores[causal_mask] = -1e30
+    exp_scores = np.exp(scores - scores.max(axis=1, keepdims=True))
+    attn = exp_scores / exp_scores.sum(axis=1, keepdims=True)
+    return (attn @ v).flatten().tolist()
+
 
 def test_naive_attention_f64(kernel_runner: KernelRunner) -> None:
     """Naive scaled dot-product attention with causal mask.
@@ -622,68 +691,11 @@ def test_naive_attention_f64(kernel_runner: KernelRunner) -> None:
         ]
     )
 
-    # Reference: scaled dot-product attention with causal mask
-    scores = q @ k.T / np.sqrt(head_dim)
-    causal_mask = np.triu(np.ones((seq_len, seq_len), dtype=bool), k=1)
-    scores[causal_mask] = -1e30
-    exp_scores = np.exp(scores - scores.max(axis=1, keepdims=True))
-    attn = exp_scores / exp_scores.sum(axis=1, keepdims=True)
-    expected = (attn @ v).flatten().tolist()
+    expected = _attention_reference(q, k, v, seq_len)
+    n = seq_len * head_dim
 
     result = kernel_runner.run(
-        forth_source=(
-            "\\! kernel attention\n"
-            "\\! param Q f64[16]\n"
-            "\\! param K f64[16]\n"
-            "\\! param V f64[16]\n"
-            "\\! param O f64[16]\n"
-            "\\! param SEQ_LEN i64\n"
-            "\\! param HEAD_DIM i64\n"
-            "\\! shared SCORES f64[4]\n"
-            "\\! shared SCRATCH f64[4]\n"
-            "BID-X\n"
-            "TID-X\n"
-            "0.0\n"
-            "HEAD_DIM 0 DO\n"
-            "  2 PICK HEAD_DIM * I + CELLS Q + F@\n"
-            "  2 PICK HEAD_DIM * I + CELLS K + F@\n"
-            "  F* F+\n"
-            "LOOP\n"
-            "HEAD_DIM S>F FSQRT F/\n"
-            "OVER 3 PICK >\n"
-            "IF DROP -1.0e30 THEN\n"
-            "OVER CELLS SCORES + SF!\n"
-            "BARRIER\n"
-            "TID-X 0= IF\n"
-            "  0 CELLS SCORES + SF@\n"
-            "  SEQ_LEN 1 DO I CELLS SCORES + SF@ FMAX LOOP\n"
-            "  0 CELLS SCRATCH + SF!\n"
-            "THEN\n"
-            "BARRIER\n"
-            "DUP CELLS SCORES + SF@\n"
-            "0 CELLS SCRATCH + SF@\n"
-            "F- FEXP\n"
-            "OVER CELLS SCORES + SF!\n"
-            "BARRIER\n"
-            "TID-X 0= IF\n"
-            "  0.0\n"
-            "  SEQ_LEN 0 DO I CELLS SCORES + SF@ F+ LOOP\n"
-            "  0 CELLS SCRATCH + SF!\n"
-            "THEN\n"
-            "BARRIER\n"
-            "DUP CELLS SCORES + SF@\n"
-            "0 CELLS SCRATCH + SF@\n"
-            "F/\n"
-            "OVER CELLS SCORES + SF!\n"
-            "BARRIER\n"
-            "0.0\n"
-            "SEQ_LEN 0 DO\n"
-            "  I CELLS SCORES + SF@\n"
-            "  I HEAD_DIM * 3 PICK + CELLS V + F@\n"
-            "  F* F+\n"
-            "LOOP\n"
-            "ROT HEAD_DIM * ROT + CELLS O + F!\n"
-        ),
+        forth_source=_ATTENTION_KERNEL.format(n=n, seq_len=seq_len),
         params={
             "Q": q.flatten().tolist(),
             "K": k.flatten().tolist(),
@@ -694,6 +706,35 @@ def test_naive_attention_f64(kernel_runner: KernelRunner) -> None:
         grid=(seq_len, 1, 1),
         block=(seq_len, 1, 1),
         output_param=3,
-        output_count=seq_len * head_dim,
+        output_count=n,
+    )
+    assert result == [pytest.approx(v) for v in expected]
+
+
+def test_naive_attention_f64_16x64(kernel_runner: KernelRunner) -> None:
+    """Naive scaled dot-product attention, seq_len=16, head_dim=64."""
+    seq_len, head_dim = 16, 64
+
+    rng = np.random.default_rng(42)
+    q = rng.standard_normal((seq_len, head_dim))
+    k = rng.standard_normal((seq_len, head_dim))
+    v = rng.standard_normal((seq_len, head_dim))
+
+    expected = _attention_reference(q, k, v, seq_len)
+    n = seq_len * head_dim
+
+    result = kernel_runner.run(
+        forth_source=_ATTENTION_KERNEL.format(n=n, seq_len=seq_len),
+        params={
+            "Q": q.flatten().tolist(),
+            "K": k.flatten().tolist(),
+            "V": v.flatten().tolist(),
+            "SEQ_LEN": seq_len,
+            "HEAD_DIM": head_dim,
+        },
+        grid=(seq_len, 1, 1),
+        block=(seq_len, 1, 1),
+        output_param=3,
+        output_count=n,
     )
     assert result == [pytest.approx(v) for v in expected]

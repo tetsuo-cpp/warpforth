@@ -65,13 +65,16 @@ F/
 OVER CELLS SCORES + SF!
 BARRIER
 
-\ --- V accumulation: O[row,t] = sum_j SCORES[j] * V[j*HD + t] ---
-0.0
-SEQ_LEN 0 DO
-  I CELLS SCORES + SF@
-  I HEAD_DIM * 3 PICK + CELLS V + F@
-  F* F+
-LOOP
-
-\ --- Write output: O[row*HD + t] ---
-ROT HEAD_DIM * ROT + CELLS O + F!
+\ --- V accumulation: O[row,col] = sum_j SCORES[j] * V[j*HD + col] ---
+\ Stride over head_dim columns: col = t, t+BDIM-X, t+2*BDIM-X, ...
+DUP BEGIN DUP HEAD_DIM < WHILE
+  0.0
+  SEQ_LEN 0 DO
+    I CELLS SCORES + SF@
+    I HEAD_DIM * 3 PICK + CELLS V + F@
+    F* F+
+  LOOP
+  OVER 4 PICK HEAD_DIM * + CELLS O + F!
+  BDIM-X +
+REPEAT
+DROP DROP DROP
