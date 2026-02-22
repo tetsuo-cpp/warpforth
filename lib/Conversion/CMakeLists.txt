@@ -16,5 +16,9 @@ add_mlir_library(MLIRConversionPasses
   MLIRTransforms
 )
 
+target_compile_definitions(obj.MLIRConversionPasses PRIVATE
+  WARPFORTH_LIBDEVICE_PATH="${WARPFORTH_LIBDEVICE_PATH}"
+)
+
 add_subdirectory(ForthToMemRef)
 add_subdirectory(ForthToGPU)
