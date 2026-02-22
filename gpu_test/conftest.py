@@ -118,7 +118,10 @@ class VastSession:
 
     def _launch(self) -> None:
         """Find the cheapest suitable offer and launch an instance."""
-        query = f"num_gpus=1 rentable=True rented=False compute_cap>=700 dph<={MAX_COST_PER_HOUR}"
+        query = (
+            f"num_gpus=1 rentable=True rented=False compute_cap>=700"
+            f" reliability2>=0.95 inet_up>=100 dph<={MAX_COST_PER_HOUR}"
+        )
         offers = self.sdk.search_offers(query=query, order="dph", limit=5)
 
         if not offers:
