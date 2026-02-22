@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pytest
 
 if TYPE_CHECKING:
@@ -583,3 +584,116 @@ def test_float_to_int_conversion(kernel_runner: KernelRunner) -> None:
         forth_source=("\\! kernel main\n\\! param DATA i64[256]\n7.9 F>S\n0 CELLS DATA + !"),
     )
     assert result[0] == 7
+
+
+# --- Attention ---
+
+
+def test_naive_attention_f64(kernel_runner: KernelRunner) -> None:
+    """Naive scaled dot-product attention with causal mask.
+
+    O = softmax(Q @ K^T / sqrt(d_k)) @ V, seq_len=4, head_dim=4.
+    One block per query row, one thread per key position.
+    """
+    seq_len, head_dim = 4, 4
+
+    q = np.array(
+        [
+            [1.0, 0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ]
+    )
+    k = np.array(
+        [
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ]
+    )
+    v = np.array(
+        [
+            [1.0, 2.0, 3.0, 4.0],
+            [5.0, 6.0, 7.0, 8.0],
+            [9.0, 10.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0, 16.0],
+        ]
+    )
+
+    # Reference: scaled dot-product attention with causal mask
+    scores = q @ k.T / np.sqrt(head_dim)
+    causal_mask = np.triu(np.ones((seq_len, seq_len), dtype=bool), k=1)
+    scores[causal_mask] = -1e30
+    exp_scores = np.exp(scores - scores.max(axis=1, keepdims=True))
+    attn = exp_scores / exp_scores.sum(axis=1, keepdims=True)
+    expected = (attn @ v).flatten().tolist()
+
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel attention\n"
+            "\\! param Q f64[16]\n"
+            "\\! param K f64[16]\n"
+            "\\! param V f64[16]\n"
+            "\\! param O f64[16]\n"
+            "\\! param SEQ_LEN i64\n"
+            "\\! param HEAD_DIM i64\n"
+            "\\! shared SCORES f64[4]\n"
+            "\\! shared SCRATCH f64[4]\n"
+            "BID-X\n"
+            "TID-X\n"
+            "0.0\n"
+            "HEAD_DIM 0 DO\n"
+            "  2 PICK HEAD_DIM * I + CELLS Q + F@\n"
+            "  2 PICK HEAD_DIM * I + CELLS K + F@\n"
+            "  F* F+\n"
+            "LOOP\n"
+            "HEAD_DIM S>F FSQRT F/\n"
+            "OVER 3 PICK >\n"
+            "IF DROP -1.0e30 THEN\n"
+            "OVER CELLS SCORES + SF!\n"
+            "BARRIER\n"
+            "TID-X 0= IF\n"
+            "  0 CELLS SCORES + SF@\n"
+            "  SEQ_LEN 1 DO I CELLS SCORES + SF@ FMAX LOOP\n"
+            "  0 CELLS SCRATCH + SF!\n"
+            "THEN\n"
+            "BARRIER\n"
+            "DUP CELLS SCORES + SF@\n"
+            "0 CELLS SCRATCH + SF@\n"
+            "F- FEXP\n"
+            "OVER CELLS SCORES + SF!\n"
+            "BARRIER\n"
+            "TID-X 0= IF\n"
+            "  0.0\n"
+            "  SEQ_LEN 0 DO I CELLS SCORES + SF@ F+ LOOP\n"
+            "  0 CELLS SCRATCH + SF!\n"
+            "THEN\n"
+            "BARRIER\n"
+            "DUP CELLS SCORES + SF@\n"
+            "0 CELLS SCRATCH + SF@\n"
+            "F/\n"
+            "OVER CELLS SCORES + SF!\n"
+            "BARRIER\n"
+            "0.0\n"
+            "SEQ_LEN 0 DO\n"
+            "  I CELLS SCORES + SF@\n"
+            "  I HEAD_DIM * 3 PICK + CELLS V + F@\n"
+            "  F* F+\n"
+            "LOOP\n"
+            "ROT HEAD_DIM * ROT + CELLS O + F!\n"
+        ),
+        params={
+            "Q": q.flatten().tolist(),
+            "K": k.flatten().tolist(),
+            "V": v.flatten().tolist(),
+            "SEQ_LEN": seq_len,
+            "HEAD_DIM": head_dim,
+        },
+        grid=(seq_len, 1, 1),
+        block=(seq_len, 1, 1),
+        output_param=3,
+        output_count=seq_len * head_dim,
+    )
+    assert result == [pytest.approx(v) for v in expected]
