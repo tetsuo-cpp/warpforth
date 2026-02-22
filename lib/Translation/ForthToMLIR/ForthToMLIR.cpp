@@ -592,6 +592,78 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   } else if (word == "SF!") {
     return builder.create<forth::SharedStoreFOp>(loc, stackType, inputStack)
         .getResult();
+  } else if (word == "I8@") {
+    return builder.create<forth::LoadI8Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "I8!") {
+    return builder.create<forth::StoreI8Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI8@") {
+    return builder.create<forth::SharedLoadI8Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI8!") {
+    return builder.create<forth::SharedStoreI8Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "I16@") {
+    return builder.create<forth::LoadI16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "I16!") {
+    return builder.create<forth::StoreI16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI16@") {
+    return builder.create<forth::SharedLoadI16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI16!") {
+    return builder.create<forth::SharedStoreI16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "I32@") {
+    return builder.create<forth::LoadI32Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "I32!") {
+    return builder.create<forth::StoreI32Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI32@") {
+    return builder.create<forth::SharedLoadI32Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI32!") {
+    return builder.create<forth::SharedStoreI32Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "HF@") {
+    return builder.create<forth::LoadF16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "HF!") {
+    return builder.create<forth::StoreF16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SHF@") {
+    return builder.create<forth::SharedLoadF16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SHF!") {
+    return builder.create<forth::SharedStoreF16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "BF@") {
+    return builder.create<forth::LoadBF16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "BF!") {
+    return builder.create<forth::StoreBF16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SBF@") {
+    return builder.create<forth::SharedLoadBF16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SBF!") {
+    return builder.create<forth::SharedStoreBF16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "F32@") {
+    return builder.create<forth::LoadF32Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "F32!") {
+    return builder.create<forth::StoreF32Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SF32@") {
+    return builder.create<forth::SharedLoadF32Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SF32!") {
+    return builder.create<forth::SharedStoreF32Op>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "TID-X") {
     return builder.create<forth::ThreadIdXOp>(loc, stackType, inputStack)
         .getResult();

@@ -775,11 +775,46 @@ struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
   }
 };
 
+/// Memory element type tag for generalized load/store templates.
+enum class MemType { I64, F64, I8, I16, I32, F16, BF16, F32 };
+
+/// Return the MLIR element type for a given MemType.
+static Type getMemElemType(MLIRContext *ctx, MemType mt) {
+  switch (mt) {
+  case MemType::I64:
+    return IntegerType::get(ctx, 64);
+  case MemType::I32:
+    return IntegerType::get(ctx, 32);
+  case MemType::I16:
+    return IntegerType::get(ctx, 16);
+  case MemType::I8:
+    return IntegerType::get(ctx, 8);
+  case MemType::F64:
+    return Float64Type::get(ctx);
+  case MemType::F32:
+    return Float32Type::get(ctx);
+  case MemType::F16:
+    return Float16Type::get(ctx);
+  case MemType::BF16:
+    return BFloat16Type::get(ctx);
+  }
+  llvm_unreachable("unhandled MemType");
+}
+
+template <MemType MT>
+inline constexpr bool isReducedInt =
+    (MT == MemType::I8 || MT == MemType::I16 || MT == MemType::I32);
+
+template <MemType MT>
+inline constexpr bool isReducedFloat =
+    (MT == MemType::F16 || MT == MemType::BF16 || MT == MemType::F32);
+
 /// Generalized memory load template.
 /// Pops address from stack, loads value via pointer, pushes value.
-/// When IsFloat=true, loads f64 from memory and bitcasts to i64 for stack.
+/// MemType selects the memory element type and the widening strategy.
 /// AddressSpace selects global (0) or workgroup memory.
-template <typename ForthOp, bool IsFloat = false, unsigned AddressSpace = 0>
+template <typename ForthOp, MemType MT = MemType::I64,
+          unsigned AddressSpace = 0>
 struct MemoryLoadOpConversion : public OpConversionPattern<ForthOp> {
   MemoryLoadOpConversion(const TypeConverter &typeConverter,
                          MLIRContext *context)
@@ -804,16 +839,23 @@ struct MemoryLoadOpConversion : public OpConversionPattern<ForthOp> {
     // Load value from memory via pointer
     Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
 
+    Type elemType = getMemElemType(rewriter.getContext(), MT);
+    Value loaded = rewriter.create<LLVM::LoadOp>(loc, elemType, ptr);
+
     Value valueToPush;
-    if constexpr (IsFloat) {
-      // Load f64 from memory, then bitcast to i64 for stack storage
-      Value loadedF64 =
-          rewriter.create<LLVM::LoadOp>(loc, rewriter.getF64Type(), ptr);
-      valueToPush = rewriter.create<arith::BitcastOp>(
-          loc, rewriter.getI64Type(), loadedF64);
-    } else {
+    if constexpr (MT == MemType::I64) {
+      valueToPush = loaded;
+    } else if constexpr (MT == MemType::F64) {
       valueToPush =
-          rewriter.create<LLVM::LoadOp>(loc, rewriter.getI64Type(), ptr);
+          rewriter.create<arith::BitcastOp>(loc, rewriter.getI64Type(), loaded);
+    } else if constexpr (isReducedInt<MT>) {
+      valueToPush =
+          rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), loaded);
+    } else if constexpr (isReducedFloat<MT>) {
+      Value extended =
+          rewriter.create<arith::ExtFOp>(loc, rewriter.getF64Type(), loaded);
+      valueToPush = rewriter.create<arith::BitcastOp>(
+          loc, rewriter.getI64Type(), extended);
     }
 
     // Store loaded value back at same position (replaces address)
@@ -824,18 +866,52 @@ struct MemoryLoadOpConversion : public OpConversionPattern<ForthOp> {
   }
 };
 
-// Memory load instantiations
+// Memory load instantiations — full-width
 using LoadIOpConversion = MemoryLoadOpConversion<forth::LoadIOp>;
-using LoadFOpConversion = MemoryLoadOpConversion<forth::LoadFOp, true>;
+using LoadFOpConversion = MemoryLoadOpConversion<forth::LoadFOp, MemType::F64>;
 using SharedLoadIOpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadIOp, false, kWorkgroupAddressSpace>;
+    MemoryLoadOpConversion<forth::SharedLoadIOp, MemType::I64,
+                           kWorkgroupAddressSpace>;
 using SharedLoadFOpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadFOp, true, kWorkgroupAddressSpace>;
+    MemoryLoadOpConversion<forth::SharedLoadFOp, MemType::F64,
+                           kWorkgroupAddressSpace>;
+
+// Memory load instantiations — reduced-width
+using LoadI8OpConversion = MemoryLoadOpConversion<forth::LoadI8Op, MemType::I8>;
+using SharedLoadI8OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadI8Op, MemType::I8,
+                           kWorkgroupAddressSpace>;
+using LoadI16OpConversion =
+    MemoryLoadOpConversion<forth::LoadI16Op, MemType::I16>;
+using SharedLoadI16OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadI16Op, MemType::I16,
+                           kWorkgroupAddressSpace>;
+using LoadI32OpConversion =
+    MemoryLoadOpConversion<forth::LoadI32Op, MemType::I32>;
+using SharedLoadI32OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadI32Op, MemType::I32,
+                           kWorkgroupAddressSpace>;
+using LoadF16OpConversion =
+    MemoryLoadOpConversion<forth::LoadF16Op, MemType::F16>;
+using SharedLoadF16OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadF16Op, MemType::F16,
+                           kWorkgroupAddressSpace>;
+using LoadBF16OpConversion =
+    MemoryLoadOpConversion<forth::LoadBF16Op, MemType::BF16>;
+using SharedLoadBF16OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadBF16Op, MemType::BF16,
+                           kWorkgroupAddressSpace>;
+using LoadF32OpConversion =
+    MemoryLoadOpConversion<forth::LoadF32Op, MemType::F32>;
+using SharedLoadF32OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadF32Op, MemType::F32,
+                           kWorkgroupAddressSpace>;
 
 /// Generalized memory store template.
 /// Pops address and value from stack, stores value to memory.
-/// When IsFloat=true, bitcasts i64->f64 before storing.
-template <typename ForthOp, bool IsFloat = false, unsigned AddressSpace = 0>
+/// MemType selects the memory element type and the narrowing strategy.
+template <typename ForthOp, MemType MT = MemType::I64,
+          unsigned AddressSpace = 0>
 struct MemoryStoreOpConversion : public OpConversionPattern<ForthOp> {
   MemoryStoreOpConversion(const TypeConverter &typeConverter,
                           MLIRContext *context)
@@ -865,13 +941,23 @@ struct MemoryStoreOpConversion : public OpConversionPattern<ForthOp> {
     // Store value to memory via pointer
     Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
 
-    if constexpr (IsFloat) {
-      // Bitcast i64 -> f64 before storing
+    if constexpr (MT == MemType::I64) {
+      rewriter.create<LLVM::StoreOp>(loc, value, ptr);
+    } else if constexpr (MT == MemType::F64) {
       Value f64Value =
           rewriter.create<arith::BitcastOp>(loc, rewriter.getF64Type(), value);
       rewriter.create<LLVM::StoreOp>(loc, f64Value, ptr);
-    } else {
-      rewriter.create<LLVM::StoreOp>(loc, value, ptr);
+    } else if constexpr (isReducedInt<MT>) {
+      Type elemType = getMemElemType(rewriter.getContext(), MT);
+      Value truncated = rewriter.create<arith::TruncIOp>(loc, elemType, value);
+      rewriter.create<LLVM::StoreOp>(loc, truncated, ptr);
+    } else if constexpr (isReducedFloat<MT>) {
+      Type elemType = getMemElemType(rewriter.getContext(), MT);
+      Value f64Value =
+          rewriter.create<arith::BitcastOp>(loc, rewriter.getF64Type(), value);
+      Value truncated =
+          rewriter.create<arith::TruncFOp>(loc, elemType, f64Value);
+      rewriter.create<LLVM::StoreOp>(loc, truncated, ptr);
     }
 
     // New stack pointer is SP-2 (popped both address and value)
@@ -881,14 +967,47 @@ struct MemoryStoreOpConversion : public OpConversionPattern<ForthOp> {
   }
 };
 
-// Memory store instantiations
+// Memory store instantiations — full-width
 using StoreIOpConversion = MemoryStoreOpConversion<forth::StoreIOp>;
-using StoreFOpConversion = MemoryStoreOpConversion<forth::StoreFOp, true>;
+using StoreFOpConversion =
+    MemoryStoreOpConversion<forth::StoreFOp, MemType::F64>;
 using SharedStoreIOpConversion =
-    MemoryStoreOpConversion<forth::SharedStoreIOp, false,
+    MemoryStoreOpConversion<forth::SharedStoreIOp, MemType::I64,
                             kWorkgroupAddressSpace>;
 using SharedStoreFOpConversion =
-    MemoryStoreOpConversion<forth::SharedStoreFOp, true,
+    MemoryStoreOpConversion<forth::SharedStoreFOp, MemType::F64,
+                            kWorkgroupAddressSpace>;
+
+// Memory store instantiations — reduced-width
+using StoreI8OpConversion =
+    MemoryStoreOpConversion<forth::StoreI8Op, MemType::I8>;
+using SharedStoreI8OpConversion =
+    MemoryStoreOpConversion<forth::SharedStoreI8Op, MemType::I8,
+                            kWorkgroupAddressSpace>;
+using StoreI16OpConversion =
+    MemoryStoreOpConversion<forth::StoreI16Op, MemType::I16>;
+using SharedStoreI16OpConversion =
+    MemoryStoreOpConversion<forth::SharedStoreI16Op, MemType::I16,
+                            kWorkgroupAddressSpace>;
+using StoreI32OpConversion =
+    MemoryStoreOpConversion<forth::StoreI32Op, MemType::I32>;
+using SharedStoreI32OpConversion =
+    MemoryStoreOpConversion<forth::SharedStoreI32Op, MemType::I32,
+                            kWorkgroupAddressSpace>;
+using StoreF16OpConversion =
+    MemoryStoreOpConversion<forth::StoreF16Op, MemType::F16>;
+using SharedStoreF16OpConversion =
+    MemoryStoreOpConversion<forth::SharedStoreF16Op, MemType::F16,
+                            kWorkgroupAddressSpace>;
+using StoreBF16OpConversion =
+    MemoryStoreOpConversion<forth::StoreBF16Op, MemType::BF16>;
+using SharedStoreBF16OpConversion =
+    MemoryStoreOpConversion<forth::SharedStoreBF16Op, MemType::BF16,
+                            kWorkgroupAddressSpace>;
+using StoreF32OpConversion =
+    MemoryStoreOpConversion<forth::StoreF32Op, MemType::F32>;
+using SharedStoreF32OpConversion =
+    MemoryStoreOpConversion<forth::SharedStoreF32Op, MemType::F32,
                             kWorkgroupAddressSpace>;
 
 /// Conversion pattern for forth.itof (S>F).
@@ -1279,6 +1398,16 @@ struct ConvertForthToMemRefPass
         LoadIOpConversion, StoreIOpConversion, LoadFOpConversion,
         StoreFOpConversion, SharedLoadIOpConversion, SharedStoreIOpConversion,
         SharedLoadFOpConversion, SharedStoreFOpConversion,
+        // Reduced-width memory ops
+        LoadI8OpConversion, StoreI8OpConversion, SharedLoadI8OpConversion,
+        SharedStoreI8OpConversion, LoadI16OpConversion, StoreI16OpConversion,
+        SharedLoadI16OpConversion, SharedStoreI16OpConversion,
+        LoadI32OpConversion, StoreI32OpConversion, SharedLoadI32OpConversion,
+        SharedStoreI32OpConversion, LoadF16OpConversion, StoreF16OpConversion,
+        SharedLoadF16OpConversion, SharedStoreF16OpConversion,
+        LoadBF16OpConversion, StoreBF16OpConversion, SharedLoadBF16OpConversion,
+        SharedStoreBF16OpConversion, LoadF32OpConversion, StoreF32OpConversion,
+        SharedLoadF32OpConversion, SharedStoreF32OpConversion,
         // Type conversions
         IToFOpConversion, FToIOpConversion,
         // Control flow
