@@ -2227,6 +2227,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "lit" },
+    { name = "numpy" },
     { name = "pytest" },
     { name = "vastai-sdk" },
 ]
@@ -2240,6 +2241,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "lit", specifier = ">=18.1.0" },
+    { name = "numpy" },
     { name = "pytest" },
     { name = "vastai-sdk" },
 ]
