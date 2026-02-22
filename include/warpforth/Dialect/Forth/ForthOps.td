@@ -410,7 +410,7 @@ def Forth_SharedStoreFOp : Forth_StackOpBase<"shared_storef"> {
 
 // --- i8 ---
 def Forth_LoadI8Op : Forth_StackOpBase<"load_i8"> {
-  let summary = "Load i8 value from memory, zero-extend to i64";
+  let summary = "Load i8 value from memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i8, sign-extends to i64, pushes result.
     Forth semantics: ( addr -- value )
@@ -424,7 +424,7 @@ def Forth_StoreI8Op : Forth_StackOpBase<"store_i8"> {
   }];
 }
 def Forth_SharedLoadI8Op : Forth_StackOpBase<"shared_load_i8"> {
-  let summary = "Load i8 from shared memory, zero-extend to i64";
+  let summary = "Load i8 from shared memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i8 from shared memory, sign-extends to i64.
     Forth semantics: ( addr -- value )
@@ -440,7 +440,7 @@ def Forth_SharedStoreI8Op : Forth_StackOpBase<"shared_store_i8"> {
 
 // --- i16 ---
 def Forth_LoadI16Op : Forth_StackOpBase<"load_i16"> {
-  let summary = "Load i16 value from memory, zero-extend to i64";
+  let summary = "Load i16 value from memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i16, sign-extends to i64, pushes result.
     Forth semantics: ( addr -- value )
@@ -454,7 +454,7 @@ def Forth_StoreI16Op : Forth_StackOpBase<"store_i16"> {
   }];
 }
 def Forth_SharedLoadI16Op : Forth_StackOpBase<"shared_load_i16"> {
-  let summary = "Load i16 from shared memory, zero-extend to i64";
+  let summary = "Load i16 from shared memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i16 from shared memory, sign-extends to i64.
     Forth semantics: ( addr -- value )
@@ -470,7 +470,7 @@ def Forth_SharedStoreI16Op : Forth_StackOpBase<"shared_store_i16"> {
 
 // --- i32 ---
 def Forth_LoadI32Op : Forth_StackOpBase<"load_i32"> {
-  let summary = "Load i32 value from memory, zero-extend to i64";
+  let summary = "Load i32 value from memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i32, sign-extends to i64, pushes result.
     Forth semantics: ( addr -- value )
@@ -484,7 +484,7 @@ def Forth_StoreI32Op : Forth_StackOpBase<"store_i32"> {
   }];
 }
 def Forth_SharedLoadI32Op : Forth_StackOpBase<"shared_load_i32"> {
-  let summary = "Load i32 from shared memory, zero-extend to i64";
+  let summary = "Load i32 from shared memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i32 from shared memory, sign-extends to i64.
     Forth semantics: ( addr -- value )
