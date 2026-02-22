@@ -7,7 +7,7 @@
 
 \ Verify intermediate MLIR: gpu.func with cf branches, no scf ops
 \ MID: gpu.module @warpforth_module
-\ MID: gpu.func @main(%arg0: memref<4xi64> {forth.param_name = "DATA"}) kernel
+\ MID: gpu.func @main(%arg0: memref<4xi32> {forth.param_name = "DATA"}) kernel
 \ MID: gpu.return
 
 \ Multi-WHILE: two cond_br exits + one unconditional back-edge
@@ -23,7 +23,7 @@
 \ MID: cf.br
 
 \! kernel main
-\! param DATA i64[4]
+\! param DATA i32[4]
 : multi-while
   BEGIN DUP 10 > WHILE DUP 2 MOD 0= WHILE 1 - REPEAT DROP THEN ;
 : while-until

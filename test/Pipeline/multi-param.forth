@@ -5,7 +5,7 @@
 \ CHECK: gpu.binary @warpforth_module
 
 \ Verify both params appear in kernel signature and are used correctly
-\ MID: gpu.func @main(%arg0: memref<256xi64> {forth.param_name = "INPUT"}, %arg1: memref<256xi64> {forth.param_name = "OUTPUT"}) kernel
+\ MID: gpu.func @main(%arg0: memref<256xi32> {forth.param_name = "INPUT"}, %arg1: memref<256xi32> {forth.param_name = "OUTPUT"}) kernel
 \ MID: memref.extract_aligned_pointer_as_index %arg0
 \ MID: llvm.load
 \ MID: memref.extract_aligned_pointer_as_index %arg1
@@ -13,8 +13,8 @@
 \ MID: gpu.return
 
 \! kernel main
-\! param INPUT i64[256]
-\! param OUTPUT i64[256]
+\! param INPUT i32[256]
+\! param OUTPUT i32[256]
 GLOBAL-ID CELLS INPUT + @
 2 *
 GLOBAL-ID CELLS OUTPUT + !

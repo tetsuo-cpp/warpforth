@@ -4,7 +4,7 @@
 \ CHECK: gpu.binary @warpforth_module
 
 \! kernel main
-\! param data f64[256]
+\! param data f32[256]
 GLOBAL-ID CELLS data + F@
 FABS FEXP FSQRT FLOG FNEG
 GLOBAL-ID CELLS data + F@

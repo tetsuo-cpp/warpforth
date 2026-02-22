@@ -6,12 +6,12 @@
 
 \ Verify intermediate MLIR: gpu.func with conditional branching
 \ MID: gpu.module @warpforth_module
-\ MID: gpu.func @main(%arg0: memref<256xi64> {forth.param_name = "DATA"}) kernel
+\ MID: gpu.func @main(%arg0: memref<256xi32> {forth.param_name = "DATA"}) kernel
 \ MID: memref.load
 \ MID: arith.cmpi ne
 \ MID: cf.cond_br
 \ MID: gpu.return
 
 \! kernel main
-\! param DATA i64[256]
+\! param DATA i32[256]
 DATA @ 5 > IF DATA @ 1 + DATA ! THEN

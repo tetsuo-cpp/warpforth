@@ -4,5 +4,5 @@
 \ CHECK: gpu.binary @warpforth_module
 
 \! kernel main
-\! param DATA i64[4]
+\! param DATA i32[4]
 0 10 DO I DATA 0 CELLS + ! -1 +LOOP

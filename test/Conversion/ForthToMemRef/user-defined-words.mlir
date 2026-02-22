@@ -4,7 +4,10 @@
 // (memref<256xi64>, index) -> (memref<256xi64>, index)
 // CHECK-LABEL: func.func private @double(%{{.*}}: memref<256xi64>, %{{.*}}: index) -> (memref<256xi64>, index)
 // CHECK: memref.load
-// CHECK: arith.addi
+// CHECK: arith.trunci %{{.*}} : i64 to i32
+// CHECK: arith.trunci %{{.*}} : i64 to i32
+// CHECK: arith.addi %{{.*}}, %{{.*}} : i32
+// CHECK: arith.extsi %{{.*}} : i32 to i64
 // CHECK: memref.store
 // CHECK: return %{{.*}}, %{{.*}} : memref<256xi64>, index
 
@@ -19,7 +22,7 @@ module {
   }
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.constant %0(5 : i64) : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(5 : i32) : !forth.stack -> !forth.stack
     %2 = call @double(%1) : (!forth.stack) -> !forth.stack
     return
   }

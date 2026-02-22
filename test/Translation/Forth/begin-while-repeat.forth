@@ -3,16 +3,16 @@
 \ Verify BEGIN/WHILE/REPEAT generates condition check + body loop with cond_br
 
 \ CHECK:       %[[S0:.*]] = forth.stack !forth.stack
-\ CHECK-NEXT:  %[[S1:.*]] = forth.constant %[[S0]](10 : i64) : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S1:.*]] = forth.constant %[[S0]](10 : i32) : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  cf.br ^bb1(%[[S1]] : !forth.stack)
 \ CHECK:     ^bb1(%[[B1:.*]]: !forth.stack):
 \ CHECK-NEXT:  %[[DUP:.*]] = forth.dup %[[B1]] : !forth.stack -> !forth.stack
-\ CHECK-NEXT:  %[[L0:.*]] = forth.constant %[[DUP]](0 : i64) : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[L0:.*]] = forth.constant %[[DUP]](0 : i32) : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[GT:.*]] = forth.gti %[[L0]] : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[PF:.*]], %[[FLAG:.*]] = forth.pop_flag %[[GT]] : !forth.stack -> !forth.stack, i1
 \ CHECK-NEXT:  cf.cond_br %[[FLAG]], ^bb2(%[[PF]] : !forth.stack), ^bb3(%[[PF]] : !forth.stack)
 \ CHECK:     ^bb2(%[[B2:.*]]: !forth.stack):
-\ CHECK-NEXT:  %[[L1:.*]] = forth.constant %[[B2]](1 : i64) : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[L1:.*]] = forth.constant %[[B2]](1 : i32) : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[SUB:.*]] = forth.subi %[[L1]] : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  cf.br ^bb1(%[[SUB]] : !forth.stack)
 \ CHECK:     ^bb3(%[[B3:.*]]: !forth.stack):

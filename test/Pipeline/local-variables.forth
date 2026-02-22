@@ -4,7 +4,7 @@
 \ CHECK: gpu.binary @warpforth_module
 
 \! kernel main
-\! param DATA i64[256]
+\! param DATA i32[256]
 : ADD3 { a b c -- } a b + c + ;
 1 2 3 ADD3
 GLOBAL-ID CELLS DATA + !

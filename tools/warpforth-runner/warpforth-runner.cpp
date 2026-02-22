@@ -5,7 +5,7 @@
 /// -std=c++17`.
 ///
 /// Usage:
-///   warpforth-runner kernel.ptx --param i64[]:1,2,3 --param f64:3.14 \
+///   warpforth-runner kernel.ptx --param i32[]:1,2,3 --param f32:3.14 \
 ///       --grid 4,1,1 --block 64,1,1 --kernel main \
 ///       --output-param 0 --output-count 3
 
@@ -46,8 +46,8 @@ template <typename T> struct ScalarParam {
   T value;
 };
 
-using Param = std::variant<ArrayParam<int64_t>, ArrayParam<double>,
-                           ScalarParam<int64_t>, ScalarParam<double>>;
+using Param = std::variant<ArrayParam<int32_t>, ArrayParam<float>,
+                           ScalarParam<int32_t>, ScalarParam<float>>;
 
 template <typename T> static void allocDevice(ArrayParam<T> &arr) {
   size_t bytes = arr.values.size() * sizeof(T);
@@ -64,7 +64,7 @@ static void printOutput(ArrayParam<T> &arr, size_t count) {
     if (i > 0)
       std::cout << ",";
     if constexpr (std::is_floating_point_v<T>)
-      std::cout << std::setprecision(17) << output[i];
+      std::cout << std::setprecision(9) << output[i];
     else
       std::cout << output[i];
   }
@@ -72,18 +72,18 @@ static void printOutput(ArrayParam<T> &arr, size_t count) {
 }
 
 static void *kernelArgPtr(Param &p) {
-  if (auto *a = std::get_if<ArrayParam<int64_t>>(&p))
+  if (auto *a = std::get_if<ArrayParam<int32_t>>(&p))
     return &a->devicePtr;
-  if (auto *a = std::get_if<ArrayParam<double>>(&p))
+  if (auto *a = std::get_if<ArrayParam<float>>(&p))
     return &a->devicePtr;
-  if (auto *s = std::get_if<ScalarParam<int64_t>>(&p))
+  if (auto *s = std::get_if<ScalarParam<int32_t>>(&p))
     return &s->value;
-  return &std::get<ScalarParam<double>>(p).value;
+  return &std::get<ScalarParam<float>>(p).value;
 }
 
 static bool isScalar(const Param &p) {
-  return std::holds_alternative<ScalarParam<int64_t>>(p) ||
-         std::holds_alternative<ScalarParam<double>>(p);
+  return std::holds_alternative<ScalarParam<int32_t>>(p) ||
+         std::holds_alternative<ScalarParam<float>>(p);
 }
 
 struct Dims {
@@ -131,8 +131,8 @@ static Param parseParam(std::string_view s) {
 
   auto colonPos = input.find(':');
   if (colonPos == std::string::npos) {
-    std::cerr << "Error: --param requires type prefix (e.g. i64:42 or "
-                 "f64[]:1.0,2.0), got: "
+    std::cerr << "Error: --param requires type prefix (e.g. i32:42 or "
+                 "f32[]:1.0,2.0), got: "
               << s << "\n";
     exit(1);
   }
@@ -157,18 +157,18 @@ static Param parseParam(std::string_view s) {
     return vals;
   };
 
-  auto toI64 = [&](const std::string &tok) -> int64_t {
+  auto toI32 = [&](const std::string &tok) -> int32_t {
     try {
-      return std::stoll(tok);
+      return std::stoi(tok);
     } catch (const std::exception &) {
       std::cerr << "Error: invalid integer value '" << tok << "' in --param "
                 << s << "\n";
       exit(1);
     }
   };
-  auto toF64 = [&](const std::string &tok) -> double {
+  auto toF32 = [&](const std::string &tok) -> float {
     try {
-      return std::stod(tok);
+      return std::stof(tok);
     } catch (const std::exception &) {
       std::cerr << "Error: invalid float value '" << tok << "' in --param " << s
                 << "\n";
@@ -176,10 +176,10 @@ static Param parseParam(std::string_view s) {
     }
   };
 
-  if (typePrefix == "i64[]")
-    return Param{ArrayParam<int64_t>{parseValues(toI64)}};
-  if (typePrefix == "f64[]")
-    return Param{ArrayParam<double>{parseValues(toF64)}};
+  if (typePrefix == "i32[]")
+    return Param{ArrayParam<int32_t>{parseValues(toI32)}};
+  if (typePrefix == "f32[]")
+    return Param{ArrayParam<float>{parseValues(toF32)}};
 
   // Scalars — must be exactly one value
   if (valueStr.find(',') != std::string::npos) {
@@ -188,13 +188,13 @@ static Param parseParam(std::string_view s) {
     exit(1);
   }
 
-  if (typePrefix == "i64")
-    return Param{ScalarParam<int64_t>{toI64(valueStr)}};
-  if (typePrefix == "f64")
-    return Param{ScalarParam<double>{toF64(valueStr)}};
+  if (typePrefix == "i32")
+    return Param{ScalarParam<int32_t>{toI32(valueStr)}};
+  if (typePrefix == "f32")
+    return Param{ScalarParam<float>{toF32(valueStr)}};
 
   std::cerr << "Error: unsupported param type '" << typePrefix
-            << "' (expected i64, i64[], f64, or f64[]), got: " << s << "\n";
+            << "' (expected i32, i32[], f32, or f32[]), got: " << s << "\n";
   exit(1);
 }
 
@@ -254,8 +254,8 @@ int main(int argc, char **argv) {
 
   if (!ptxFile) {
     std::cerr << "Usage: warpforth-runner kernel.ptx --kernel NAME "
-                 "[--param i64[]:V,...] [--param f64[]:V,...] "
-                 "[--param i64:V] [--param f64:V] [--grid X,Y,Z] "
+                 "[--param i32[]:V,...] [--param f32[]:V,...] "
+                 "[--param i32:V] [--param f32:V] [--grid X,Y,Z] "
                  "[--block X,Y,Z] [--output-param N] [--output-count N]\n";
     return 1;
   }
@@ -303,9 +303,9 @@ int main(int argc, char **argv) {
 
   // Allocate device buffers for array params
   for (auto &p : params) {
-    if (auto *a = std::get_if<ArrayParam<int64_t>>(&p))
+    if (auto *a = std::get_if<ArrayParam<int32_t>>(&p))
       allocDevice(*a);
-    else if (auto *a = std::get_if<ArrayParam<double>>(&p))
+    else if (auto *a = std::get_if<ArrayParam<float>>(&p))
       allocDevice(*a);
   }
 
@@ -322,12 +322,12 @@ int main(int argc, char **argv) {
 
   // Copy back and print output param
   size_t count = outputCount >= 0 ? static_cast<size_t>(outputCount) : 0;
-  if (auto *iArr = std::get_if<ArrayParam<int64_t>>(&params[outputParam])) {
+  if (auto *iArr = std::get_if<ArrayParam<int32_t>>(&params[outputParam])) {
     if (outputCount < 0)
       count = iArr->values.size();
     printOutput(*iArr, count);
   } else {
-    auto &fArr = std::get<ArrayParam<double>>(params[outputParam]);
+    auto &fArr = std::get<ArrayParam<float>>(params[outputParam]);
     if (outputCount < 0)
       count = fArr.values.size();
     printOutput(fArr, count);
@@ -335,9 +335,9 @@ int main(int argc, char **argv) {
 
   // Cleanup — only free device memory for array params
   for (auto &p : params) {
-    if (auto *a = std::get_if<ArrayParam<int64_t>>(&p))
+    if (auto *a = std::get_if<ArrayParam<int32_t>>(&p))
       cuMemFree(a->devicePtr);
-    else if (auto *a = std::get_if<ArrayParam<double>>(&p))
+    else if (auto *a = std::get_if<ArrayParam<float>>(&p))
       cuMemFree(a->devicePtr);
   }
   cuModuleUnload(module);

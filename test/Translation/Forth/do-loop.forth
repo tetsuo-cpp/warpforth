@@ -3,28 +3,31 @@
 \ Verify DO/LOOP generates post-test loop with crossing test
 
 \ CHECK:       %[[S0:.*]] = forth.stack !forth.stack
-\ CHECK-NEXT:  %[[S1:.*]] = forth.constant %[[S0]](10 : i64) : !forth.stack -> !forth.stack
-\ CHECK-NEXT:  %[[S2:.*]] = forth.constant %[[S1]](0 : i64) : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S1:.*]] = forth.constant %[[S0]](10 : i32) : !forth.stack -> !forth.stack
+\ CHECK-NEXT:  %[[S2:.*]] = forth.constant %[[S1]](0 : i32) : !forth.stack -> !forth.stack
 \ CHECK-NEXT:  %[[OS:.*]], %[[VAL:.*]] = forth.pop %[[S2]] : !forth.stack -> !forth.stack, i64
 \ CHECK-NEXT:  %[[OS2:.*]], %[[LIM:.*]] = forth.pop %[[OS]] : !forth.stack -> !forth.stack, i64
-\ CHECK-NEXT:  %[[ALLOCA:.*]] = memref.alloca() : memref<1xi64>
+\ CHECK-NEXT:  %[[TVAL:.*]] = arith.trunci %[[VAL]] : i64 to i32
+\ CHECK-NEXT:  %[[TLIM:.*]] = arith.trunci %[[LIM]] : i64 to i32
+\ CHECK-NEXT:  %[[ALLOCA:.*]] = memref.alloca() : memref<1xi32>
 \ CHECK-NEXT:  %[[C0:.*]] = arith.constant 0 : index
-\ CHECK-NEXT:  memref.store %[[VAL]], %[[ALLOCA]][%[[C0]]] : memref<1xi64>
+\ CHECK-NEXT:  memref.store %[[TVAL]], %[[ALLOCA]][%[[C0]]] : memref<1xi32>
 \ CHECK-NEXT:  cf.br ^bb1(%[[OS2]] : !forth.stack)
 \ CHECK:     ^bb1(%[[B1:.*]]: !forth.stack):
 \ CHECK-NEXT:  %[[C0_2:.*]] = arith.constant 0 : index
-\ CHECK-NEXT:  %[[LOAD1:.*]] = memref.load %[[ALLOCA]][%[[C0_2]]] : memref<1xi64>
-\ CHECK-NEXT:  %[[PUSH:.*]] = forth.push_value %[[B1]], %[[LOAD1]] : !forth.stack, i64 -> !forth.stack
-\ CHECK-NEXT:  %[[C1:.*]] = arith.constant 1 : i64
+\ CHECK-NEXT:  %[[LOAD1:.*]] = memref.load %[[ALLOCA]][%[[C0_2]]] : memref<1xi32>
+\ CHECK-NEXT:  %[[EXT:.*]] = arith.extsi %[[LOAD1]] : i32 to i64
+\ CHECK-NEXT:  %[[PUSH:.*]] = forth.push_value %[[B1]], %[[EXT]] : !forth.stack, i64 -> !forth.stack
+\ CHECK-NEXT:  %[[C1:.*]] = arith.constant 1 : i32
 \ CHECK-NEXT:  %[[C0_3:.*]] = arith.constant 0 : index
-\ CHECK-NEXT:  %[[OLD:.*]] = memref.load %[[ALLOCA]][%[[C0_3]]] : memref<1xi64>
-\ CHECK-NEXT:  %[[NEW:.*]] = arith.addi %[[OLD]], %[[C1]] : i64
-\ CHECK-NEXT:  memref.store %[[NEW]], %[[ALLOCA]][%[[C0_3]]] : memref<1xi64>
-\ CHECK-NEXT:  %[[D1:.*]] = arith.subi %[[OLD]], %[[LIM]] : i64
-\ CHECK-NEXT:  %[[D2:.*]] = arith.subi %[[NEW]], %[[LIM]] : i64
-\ CHECK-NEXT:  %[[XOR:.*]] = arith.xori %[[D1]], %[[D2]] : i64
-\ CHECK-NEXT:  %[[ZERO:.*]] = arith.constant 0 : i64
-\ CHECK-NEXT:  %[[CROSSED:.*]] = arith.cmpi slt, %[[XOR]], %[[ZERO]] : i64
+\ CHECK-NEXT:  %[[OLD:.*]] = memref.load %[[ALLOCA]][%[[C0_3]]] : memref<1xi32>
+\ CHECK-NEXT:  %[[NEW:.*]] = arith.addi %[[OLD]], %[[C1]] : i32
+\ CHECK-NEXT:  memref.store %[[NEW]], %[[ALLOCA]][%[[C0_3]]] : memref<1xi32>
+\ CHECK-NEXT:  %[[D1:.*]] = arith.subi %[[OLD]], %[[TLIM]] : i32
+\ CHECK-NEXT:  %[[D2:.*]] = arith.subi %[[NEW]], %[[TLIM]] : i32
+\ CHECK-NEXT:  %[[XOR:.*]] = arith.xori %[[D1]], %[[D2]] : i32
+\ CHECK-NEXT:  %[[ZERO:.*]] = arith.constant 0 : i32
+\ CHECK-NEXT:  %[[CROSSED:.*]] = arith.cmpi slt, %[[XOR]], %[[ZERO]] : i32
 \ CHECK-NEXT:  cf.cond_br %[[CROSSED]], ^bb2(%[[PUSH]] : !forth.stack), ^bb1(%[[PUSH]] : !forth.stack)
 \ CHECK:     ^bb2(%[[B2:.*]]: !forth.stack):
 \ CHECK-NEXT:  return

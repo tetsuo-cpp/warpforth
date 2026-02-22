@@ -4,16 +4,16 @@
 \ Verify mixed scalar + array params survive the full pipeline
 \ CHECK: gpu.binary @warpforth_module
 
-\ Verify scalar becomes i64 arg, array becomes memref
+\ Verify scalar becomes i32 arg, array becomes memref
 \ MID: gpu.func @main(
-\ MID-SAME: i64 {forth.param_name = "SCALE"}
-\ MID-SAME: memref<256xi64> {forth.param_name = "DATA"}
+\ MID-SAME: i32 {forth.param_name = "SCALE"}
+\ MID-SAME: memref<256xi32> {forth.param_name = "DATA"}
 \ MID-SAME: kernel
 \ MID: gpu.return
 
 \! kernel main
-\! param SCALE i64
-\! param DATA i64[256]
+\! param SCALE i32
+\! param DATA i32[256]
 GLOBAL-ID
 DUP CELLS DATA + @
 SCALE *

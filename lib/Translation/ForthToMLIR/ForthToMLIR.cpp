@@ -320,23 +320,23 @@ LogicalResult ForthParser::parseHeader() {
         llvm::StringRef typeToken = tokens[2];
         bool isArray = false;
         int64_t size = 0;
-        BaseType baseType = BaseType::I64;
+        BaseType baseType = BaseType::I32;
         size_t lbracket = typeToken.find('[');
         if (lbracket != llvm::StringRef::npos) {
           size_t rbracket = typeToken.find(']');
           if (rbracket == llvm::StringRef::npos ||
               rbracket != typeToken.size() - 1) {
             return emitErrorAt(lineLoc,
-                               "array type must use suffix [N], e.g. i64[4]");
+                               "array type must use suffix [N], e.g. i32[4]");
           }
           llvm::StringRef base = typeToken.substr(0, lbracket);
           llvm::StringRef sizeStr =
               typeToken.substr(lbracket + 1, rbracket - lbracket - 1);
           std::string baseUpper = toUpperCase(base);
-          if (baseUpper == "I64") {
-            baseType = BaseType::I64;
-          } else if (baseUpper == "F64") {
-            baseType = BaseType::F64;
+          if (baseUpper == "I32") {
+            baseType = BaseType::I32;
+          } else if (baseUpper == "F32") {
+            baseType = BaseType::F32;
           } else {
             return emitErrorAt(lineLoc, "unsupported base type: " + base.str());
           }
@@ -348,10 +348,10 @@ LogicalResult ForthParser::parseHeader() {
           isArray = true;
         } else {
           std::string typeUpper = toUpperCase(typeToken);
-          if (typeUpper == "I64") {
-            baseType = BaseType::I64;
-          } else if (typeUpper == "F64") {
-            baseType = BaseType::F64;
+          if (typeUpper == "I32") {
+            baseType = BaseType::I32;
+          } else if (typeUpper == "F32") {
+            baseType = BaseType::F32;
           } else {
             return emitErrorAt(lineLoc,
                                "unsupported scalar type: " + typeToken.str());
@@ -473,13 +473,13 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
         .getResult(0);
   }
 
-  // CELLS: multiply by 8 (sizeof i64 = sizeof f64) for byte addressing
+  // CELLS: multiply by 4 (sizeof i32 = sizeof f32) for byte addressing
   if (word == "CELLS") {
-    Value lit8 = builder
+    Value lit4 = builder
                      .create<forth::ConstantOp>(loc, stackType, inputStack,
-                                                builder.getI64IntegerAttr(8))
+                                                builder.getI32IntegerAttr(4))
                      .getResult();
-    return builder.create<forth::MulIOp>(loc, stackType, lit8).getResult();
+    return builder.create<forth::MulIOp>(loc, stackType, lit4).getResult();
   }
 
   // Built-in operations
@@ -592,6 +592,54 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   } else if (word == "SF!") {
     return builder.create<forth::SharedStoreFOp>(loc, stackType, inputStack)
         .getResult();
+  } else if (word == "HF@") {
+    return builder.create<forth::LoadHFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "HF!") {
+    return builder.create<forth::StoreHFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "BF@") {
+    return builder.create<forth::LoadBFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "BF!") {
+    return builder.create<forth::StoreBFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "I8@") {
+    return builder.create<forth::LoadI8Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "I8!") {
+    return builder.create<forth::StoreI8Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "I16@") {
+    return builder.create<forth::LoadI16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "I16!") {
+    return builder.create<forth::StoreI16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SHF@") {
+    return builder.create<forth::SharedLoadHFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SHF!") {
+    return builder.create<forth::SharedStoreHFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SBF@") {
+    return builder.create<forth::SharedLoadBFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SBF!") {
+    return builder.create<forth::SharedStoreBFOp>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI8@") {
+    return builder.create<forth::SharedLoadI8Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI8!") {
+    return builder.create<forth::SharedStoreI8Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI16@") {
+    return builder.create<forth::SharedLoadI16Op>(loc, stackType, inputStack)
+        .getResult();
+  } else if (word == "SI16!") {
+    return builder.create<forth::SharedStoreI16Op>(loc, stackType, inputStack)
+        .getResult();
   } else if (word == "TID-X") {
     return builder.create<forth::ThreadIdXOp>(loc, stackType, inputStack)
         .getResult();
@@ -674,11 +722,14 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
                       std::to_string(depth + 1) + " nested DO/LOOP(s)");
       return nullptr;
     }
-    // Load counter from the appropriate loop context
+    // Load counter (i32) from the appropriate loop context,
+    // sign-extend to i64 for PushValueOp.
     auto &ctx = loopStack[loopStack.size() - 1 - depth];
     Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
-    Value idx =
+    Value idxI32 =
         builder.create<memref::LoadOp>(loc, ctx.counter, ValueRange{c0});
+    Value idx =
+        builder.create<arith::ExtSIOp>(loc, builder.getI64Type(), idxI32);
     return builder.create<forth::PushValueOp>(loc, stackType, inputStack, idx)
         .getOutputStack();
   }
@@ -707,9 +758,9 @@ std::pair<Value, Value> ForthParser::emitPopFlag(Location loc, Value stack) {
 
 void ForthParser::emitLoopEnd(Location loc, const LoopContext &ctx, Value step,
                               Value &stack) {
-  auto i64Type = builder.getI64Type();
+  auto i32Type = builder.getI32Type();
 
-  // Load old counter, compute new = old + step, store.
+  // Load old counter (i32), compute new = old + step, store.
   Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
   Value oldIdx =
       builder.create<memref::LoadOp>(loc, ctx.counter, ValueRange{c0});
@@ -721,8 +772,8 @@ void ForthParser::emitLoopEnd(Location loc, const LoopContext &ctx, Value step,
   Value oldDiff = builder.create<arith::SubIOp>(loc, oldIdx, ctx.limit);
   Value newDiff = builder.create<arith::SubIOp>(loc, newIdx, ctx.limit);
   Value xorVal = builder.create<arith::XOrIOp>(loc, oldDiff, newDiff);
-  Value zero = builder.create<arith::ConstantOp>(loc, i64Type,
-                                                 builder.getI64IntegerAttr(0));
+  Value zero = builder.create<arith::ConstantOp>(loc, i32Type,
+                                                 builder.getI32IntegerAttr(0));
   Value crossed = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
                                                 xorVal, zero);
 
@@ -744,18 +795,18 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 
     if (currentToken.kind == Token::Kind::Number) {
       Location tokenLoc = getLoc();
-      int64_t value = std::stoll(currentToken.text);
+      int32_t value = std::stol(currentToken.text);
       stack = builder
                   .create<forth::ConstantOp>(tokenLoc, stackType, stack,
-                                             builder.getI64IntegerAttr(value))
+                                             builder.getI32IntegerAttr(value))
                   .getResult();
       consume();
     } else if (currentToken.kind == Token::Kind::Float) {
       Location tokenLoc = getLoc();
-      double value = std::stod(currentToken.text);
+      float value = std::stof(currentToken.text);
       stack = builder
                   .create<forth::ConstantOp>(tokenLoc, stackType, stack,
-                                             builder.getF64FloatAttr(value))
+                                             builder.getF32FloatAttr(value))
                   .getResult();
       consume();
     } else if (currentToken.kind == Token::Kind::Word) {
@@ -987,20 +1038,25 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         consume();
         Region *parentRegion = builder.getInsertionBlock()->getParent();
         auto i64Type = builder.getI64Type();
+        auto i32Type = builder.getI32Type();
 
-        // Pop start and limit from the Forth stack.
+        // Pop start and limit from the Forth stack (as i64).
         auto popStart =
             builder.create<forth::PopOp>(loc, stackType, i64Type, stack);
         Value s1 = popStart.getOutputStack();
-        Value start = popStart.getValue();
+        Value startI64 = popStart.getValue();
 
         auto popLimit =
             builder.create<forth::PopOp>(loc, stackType, i64Type, s1);
         Value s2 = popLimit.getOutputStack();
-        Value limit = popLimit.getValue();
+        Value limitI64 = popLimit.getValue();
 
-        // Allocate counter storage.
-        auto counterType = MemRefType::get({1}, i64Type);
+        // Truncate to i32 for loop counter arithmetic.
+        Value start = builder.create<arith::TruncIOp>(loc, i32Type, startI64);
+        Value limit = builder.create<arith::TruncIOp>(loc, i32Type, limitI64);
+
+        // Allocate counter storage (i32).
+        auto counterType = MemRefType::get({1}, i32Type);
         Value counter = builder.create<memref::AllocaOp>(loc, counterType);
         Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
         builder.create<memref::StoreOp>(loc, start, counter, ValueRange{c0});
@@ -1029,7 +1085,7 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 
         auto ctx = loopStack.pop_back_val();
         Value one = builder.create<arith::ConstantOp>(
-            loc, builder.getI64Type(), builder.getI64IntegerAttr(1));
+            loc, builder.getI32Type(), builder.getI32IntegerAttr(1));
         emitLoopEnd(loc, ctx, one, stack);
 
         //=== +LOOP ===
@@ -1042,11 +1098,12 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 
         auto ctx = loopStack.pop_back_val();
 
-        // Pop step from data stack.
+        // Pop step from data stack (i64) and truncate to i32.
         auto popOp = builder.create<forth::PopOp>(
             loc, forth::StackType::get(context), builder.getI64Type(), stack);
         stack = popOp.getOutputStack();
-        Value step = popOp.getValue();
+        Value step = builder.create<arith::TruncIOp>(loc, builder.getI32Type(),
+                                                     popOp.getValue());
         emitLoopEnd(loc, ctx, step, stack);
 
         //=== { outside word definition ===
@@ -1273,9 +1330,9 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   // Build function argument types from param declarations
   SmallVector<Type> argTypes;
   for (const auto &param : paramDecls) {
-    Type elemType = param.baseType == BaseType::F64
-                        ? Type(builder.getF64Type())
-                        : Type(builder.getI64Type());
+    Type elemType = param.baseType == BaseType::F32
+                        ? Type(builder.getF32Type())
+                        : Type(builder.getI32Type());
     if (param.isArray) {
       argTypes.push_back(MemRefType::get({param.size}, elemType));
     } else {
@@ -1301,9 +1358,9 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   // Emit shared memory allocations at kernel entry
   for (const auto &shared : sharedDecls) {
     int64_t size = shared.isArray ? shared.size : 1;
-    Type elemType = shared.baseType == BaseType::F64
-                        ? Type(builder.getF64Type())
-                        : Type(builder.getI64Type());
+    Type elemType = shared.baseType == BaseType::F32
+                        ? Type(builder.getF32Type())
+                        : Type(builder.getI32Type());
     auto memrefType = MemRefType::get({size}, elemType);
     Value alloca = builder.create<memref::AllocaOp>(loc, memrefType);
     alloca.getDefiningOp()->setAttr("forth.shared_name",

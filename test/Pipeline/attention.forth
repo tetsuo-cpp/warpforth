@@ -5,14 +5,14 @@
 \ CHECK: gpu.binary @warpforth_module
 
 \! kernel attention
-\! param Q f64[16]
-\! param K f64[16]
-\! param V f64[16]
-\! param O f64[16]
-\! param SEQ_LEN i64
-\! param HEAD_DIM i64
-\! shared SCORES f64[4]
-\! shared SCRATCH f64[4]
+\! param Q f32[16]
+\! param K f32[16]
+\! param V f32[16]
+\! param O f32[16]
+\! param SEQ_LEN i32
+\! param HEAD_DIM i32
+\! shared SCORES f32[4]
+\! shared SCRATCH f32[4]
 
 \ row = BID-X, t = TID-X
 BID-X

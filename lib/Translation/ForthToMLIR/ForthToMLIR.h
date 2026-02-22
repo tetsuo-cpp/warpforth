@@ -19,14 +19,14 @@ namespace mlir {
 namespace forth {
 
 /// Base element type for param/shared declarations.
-enum class BaseType { I64, F64 };
+enum class BaseType { I32, F32 };
 
 /// A declared kernel parameter: `param <name> <type>`.
 struct ParamDecl {
   std::string name;
   bool isArray = false;
   int64_t size = 0;
-  BaseType baseType = BaseType::I64;
+  BaseType baseType = BaseType::I32;
 };
 
 /// A declared shared memory region: `shared <name> <type>`.
@@ -34,7 +34,7 @@ struct SharedDecl {
   std::string name;
   bool isArray = false;
   int64_t size = 0;
-  BaseType baseType = BaseType::I64;
+  BaseType baseType = BaseType::I32;
 };
 
 /// Simple token representing a Forth word or literal.
@@ -115,8 +115,8 @@ private:
 
   /// Loop context for DO/LOOP with I/J/K support.
   struct LoopContext {
-    Value counter; // memref<1xi64> alloca for the loop counter
-    Value limit;   // i64 loop limit
+    Value counter; // memref<1xi32> alloca for the loop counter
+    Value limit;   // i32 loop limit
     Block *body;   // loop body block
     Block *exit;   // loop exit block
   };

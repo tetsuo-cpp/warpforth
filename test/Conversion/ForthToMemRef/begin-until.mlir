@@ -7,17 +7,24 @@
 
 // Stack allocation and literal 10 push:
 // CHECK: %[[ALLOCA:.*]] = memref.alloca() : memref<256xi64>
-// CHECK: %[[C10:.*]] = arith.constant 10 : i64
-// CHECK: memref.store %[[C10]], %[[ALLOCA]]
+// CHECK: arith.constant 10 : i32
+// CHECK: arith.extsi %{{.*}} : i32 to i64
+// CHECK: memref.store %{{.*}}, %[[ALLOCA]]
 // CHECK: cf.br ^bb1
 
 // Loop body: push 1, subtract, dup, zero_eq, pop_flag, cond_br
 // CHECK: ^bb1(%{{.*}}: memref<256xi64>, %{{.*}}: index):
-// CHECK: arith.constant 1 : i64
+// CHECK: arith.constant 1 : i32
+// CHECK: arith.extsi %{{.*}} : i32 to i64
 // CHECK: memref.store
-// CHECK: arith.subi
+// CHECK: arith.trunci %{{.*}} : i64 to i32
+// CHECK: arith.trunci %{{.*}} : i64 to i32
+// CHECK: arith.subi %{{.*}}, %{{.*}} : i32
+// CHECK: arith.extsi %{{.*}} : i32 to i64
 // CHECK: memref.store
 // CHECK: memref.store
+// CHECK: arith.trunci %{{.*}} : i64 to i32
+// CHECK: arith.constant 0 : i32
 // CHECK: arith.cmpi eq
 // CHECK: arith.extsi
 // CHECK: memref.store
@@ -31,10 +38,10 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.constant %0(10 : i64) : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(10 : i32) : !forth.stack -> !forth.stack
     cf.br ^bb1(%1 : !forth.stack)
   ^bb1(%2: !forth.stack):
-    %3 = forth.constant %2(1 : i64) : !forth.stack -> !forth.stack
+    %3 = forth.constant %2(1 : i32) : !forth.stack -> !forth.stack
     %4 = forth.subi %3 : !forth.stack -> !forth.stack
     %5 = forth.dup %4 : !forth.stack -> !forth.stack
     %6 = forth.zero_eq %5 : !forth.stack -> !forth.stack

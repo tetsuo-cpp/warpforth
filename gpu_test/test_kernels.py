@@ -19,7 +19,7 @@ pytestmark = pytest.mark.gpu
 def test_addition(kernel_runner: KernelRunner) -> None:
     """3 + 4 = 7."""
     result = kernel_runner.run(
-        forth_source="\\! kernel main\n\\! param DATA i64[256]\n3 4 +\n0 CELLS DATA + !",
+        forth_source="\\! kernel main\n\\! param DATA i32[256]\n3 4 +\n0 CELLS DATA + !",
     )
     assert result[0] == 7
 
@@ -27,7 +27,7 @@ def test_addition(kernel_runner: KernelRunner) -> None:
 def test_subtraction(kernel_runner: KernelRunner) -> None:
     """10 - 3 = 7."""
     result = kernel_runner.run(
-        forth_source="\\! kernel main\n\\! param DATA i64[256]\n10 3 -\n0 CELLS DATA + !",
+        forth_source="\\! kernel main\n\\! param DATA i32[256]\n10 3 -\n0 CELLS DATA + !",
     )
     assert result[0] == 7
 
@@ -35,7 +35,7 @@ def test_subtraction(kernel_runner: KernelRunner) -> None:
 def test_multiplication(kernel_runner: KernelRunner) -> None:
     """6 * 7 = 42."""
     result = kernel_runner.run(
-        forth_source="\\! kernel main\n\\! param DATA i64[256]\n6 7 *\n0 CELLS DATA + !",
+        forth_source="\\! kernel main\n\\! param DATA i32[256]\n6 7 *\n0 CELLS DATA + !",
     )
     assert result[0] == 42
 
@@ -43,7 +43,7 @@ def test_multiplication(kernel_runner: KernelRunner) -> None:
 def test_division(kernel_runner: KernelRunner) -> None:
     """42 / 6 = 7."""
     result = kernel_runner.run(
-        forth_source="\\! kernel main\n\\! param DATA i64[256]\n42 6 /\n0 CELLS DATA + !",
+        forth_source="\\! kernel main\n\\! param DATA i32[256]\n42 6 /\n0 CELLS DATA + !",
     )
     assert result[0] == 7
 
@@ -51,7 +51,7 @@ def test_division(kernel_runner: KernelRunner) -> None:
 def test_modulo(kernel_runner: KernelRunner) -> None:
     """17 MOD 5 = 2."""
     result = kernel_runner.run(
-        forth_source="\\! kernel main\n\\! param DATA i64[256]\n17 5 MOD\n0 CELLS DATA + !",
+        forth_source="\\! kernel main\n\\! param DATA i32[256]\n17 5 MOD\n0 CELLS DATA + !",
     )
     assert result[0] == 2
 
@@ -63,7 +63,7 @@ def test_dup(kernel_runner: KernelRunner) -> None:
     """DUP duplicates top of stack: 5 DUP → [5, 5]."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA i64[256]\n5 DUP\n1 CELLS DATA + !\n0 CELLS DATA + !"
+            "\\! kernel main\n\\! param DATA i32[256]\n5 DUP\n1 CELLS DATA + !\n0 CELLS DATA + !"
         ),
         output_count=2,
     )
@@ -74,7 +74,7 @@ def test_swap(kernel_runner: KernelRunner) -> None:
     """SWAP exchanges top two: 1 2 SWAP → [2, 1]."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA i64[256]\n1 2 SWAP\n1 CELLS DATA + !\n0 CELLS DATA + !"
+            "\\! kernel main\n\\! param DATA i32[256]\n1 2 SWAP\n1 CELLS DATA + !\n0 CELLS DATA + !"
         ),
         output_count=2,
     )
@@ -86,7 +86,7 @@ def test_over(kernel_runner: KernelRunner) -> None:
     result = kernel_runner.run(
         forth_source=(
             "\\! kernel main\n"
-            "\\! param DATA i64[256]\n"
+            "\\! param DATA i32[256]\n"
             "1 2 OVER\n"
             "2 CELLS DATA + !\n"
             "1 CELLS DATA + !\n"
@@ -102,7 +102,7 @@ def test_rot(kernel_runner: KernelRunner) -> None:
     result = kernel_runner.run(
         forth_source=(
             "\\! kernel main\n"
-            "\\! param DATA i64[256]\n"
+            "\\! param DATA i32[256]\n"
             "1 2 3 ROT\n"
             "2 CELLS DATA + !\n"
             "1 CELLS DATA + !\n"
@@ -116,7 +116,7 @@ def test_rot(kernel_runner: KernelRunner) -> None:
 def test_drop(kernel_runner: KernelRunner) -> None:
     """DROP removes top: 1 2 DROP → [1]."""
     result = kernel_runner.run(
-        forth_source=("\\! kernel main\n\\! param DATA i64[256]\n1 2 DROP\n0 CELLS DATA + !"),
+        forth_source=("\\! kernel main\n\\! param DATA i32[256]\n1 2 DROP\n0 CELLS DATA + !"),
     )
     assert result[0] == 1
 
@@ -128,7 +128,7 @@ def test_comparisons(kernel_runner: KernelRunner) -> None:
     """Test =, <, >, 0= in a single kernel. True = -1, False = 0."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA i64[256]\n"
+            "\\! kernel main\n\\! param DATA i32[256]\n"
             "5 5 =  0 CELLS DATA + !\n"
             "3 5 <  1 CELLS DATA + !\n"
             "5 3 >  2 CELLS DATA + !\n"
@@ -147,7 +147,7 @@ def test_if_else_then(kernel_runner: KernelRunner) -> None:
     result = kernel_runner.run(
         forth_source=(
             "\\! kernel main\n"
-            "\\! param DATA i64[256]\n"
+            "\\! param DATA i32[256]\n"
             "0 CELLS DATA + @\n"
             "0 >\n"
             "IF 1 ELSE 2 THEN\n"
@@ -163,7 +163,7 @@ def test_begin_until(kernel_runner: KernelRunner) -> None:
     """BEGIN/UNTIL countdown: 10 BEGIN 1- DUP 0= UNTIL → final value is 0."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA i64[256]\n10 BEGIN 1 - DUP 0= UNTIL\n0 CELLS DATA + !"
+            "\\! kernel main\n\\! param DATA i32[256]\n10 BEGIN 1 - DUP 0= UNTIL\n0 CELLS DATA + !"
         ),
     )
     assert result[0] == 0
@@ -173,7 +173,7 @@ def test_do_loop(kernel_runner: KernelRunner) -> None:
     """DO/LOOP: write I values 0..4 to DATA[0..4]."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA i64[256]\n5 0 DO\n  I I CELLS DATA + !\nLOOP"
+            "\\! kernel main\n\\! param DATA i32[256]\n5 0 DO\n  I I CELLS DATA + !\nLOOP"
         ),
         output_count=5,
     )
@@ -185,7 +185,7 @@ def test_do_plus_loop(kernel_runner: KernelRunner) -> None:
     result = kernel_runner.run(
         forth_source=(
             "\\! kernel main\n"
-            "\\! param DATA i64[256]\n"
+            "\\! param DATA i32[256]\n"
             "0\n"
             "10 0 DO\n"
             "  I OVER CELLS DATA + !\n"
@@ -203,7 +203,7 @@ def test_do_plus_loop_negative(kernel_runner: KernelRunner) -> None:
     result = kernel_runner.run(
         forth_source=(
             "\\! kernel main\n"
-            "\\! param DATA i64[256]\n"
+            "\\! param DATA i32[256]\n"
             "0\n"
             "0 10 DO\n"
             "  I OVER CELLS DATA + !\n"
@@ -224,7 +224,7 @@ def test_multi_while(kernel_runner: KernelRunner) -> None:
     """
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA i64[256]\n"
+            "\\! kernel main\n\\! param DATA i32[256]\n"
             "20 BEGIN DUP 10 > WHILE DUP 2 MOD 0= WHILE 1 - REPEAT THEN\n"
             "0 CELLS DATA + !"
         ),
@@ -241,7 +241,7 @@ def test_while_until(kernel_runner: KernelRunner) -> None:
     result = kernel_runner.run(
         forth_source=(
             "\\! kernel main\n"
-            "\\! param DATA i64[256]\n"
+            "\\! param DATA i32[256]\n"
             "10 BEGIN DUP 0 > WHILE 1 - DUP 5 = UNTIL THEN\n"
             "0 CELLS DATA + !"
         ),
@@ -255,7 +255,7 @@ def test_while_until(kernel_runner: KernelRunner) -> None:
 def test_global_id(kernel_runner: KernelRunner) -> None:
     """4 threads each write GLOBAL-ID to DATA[GLOBAL-ID]."""
     result = kernel_runner.run(
-        forth_source=("\\! kernel main\n\\! param DATA i64[256]\nGLOBAL-ID\nDUP CELLS DATA + !"),
+        forth_source=("\\! kernel main\n\\! param DATA i32[256]\nGLOBAL-ID\nDUP CELLS DATA + !"),
         block=(4, 1, 1),
         output_count=4,
     )
@@ -266,8 +266,8 @@ def test_multi_param(kernel_runner: KernelRunner) -> None:
     """Two params: each thread reads INPUT[i], doubles it, writes OUTPUT[i]."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param INPUT i64[4]\n"
-            "\\! param OUTPUT i64[4]\n"
+            "\\! kernel main\n\\! param INPUT i32[4]\n"
+            "\\! param OUTPUT i32[4]\n"
             "GLOBAL-ID\n"
             "DUP CELLS INPUT + @\n"
             "DUP +\n"
@@ -285,9 +285,9 @@ def test_scalar_param(kernel_runner: KernelRunner) -> None:
     """Scalar + array params: each thread multiplies INPUT[i] by SCALE, writes OUTPUT[i]."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param SCALE i64\n"
-            "\\! param INPUT i64[4]\n"
-            "\\! param OUTPUT i64[4]\n"
+            "\\! kernel main\n\\! param SCALE i32\n"
+            "\\! param INPUT i32[4]\n"
+            "\\! param OUTPUT i32[4]\n"
             "GLOBAL-ID\n"
             "DUP CELLS INPUT + @\n"
             "SCALE *\n"
@@ -304,15 +304,15 @@ def test_scalar_param(kernel_runner: KernelRunner) -> None:
 # --- Matmul ---
 
 
-def test_naive_matmul_i64(kernel_runner: KernelRunner) -> None:
-    """Naive i64 matmul: C = A(2x4) * B(4x3) -> C(2x3)."""
+def test_naive_matmul_i32(kernel_runner: KernelRunner) -> None:
+    """Naive i32 matmul: C = A(2x4) * B(4x3) -> C(2x3)."""
     # Work partition: one thread per output element.
     # GLOBAL-ID maps to (row, col) with row = gid / N, col = gid MOD N.
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param A i64[8]\n"
-            "\\! param B i64[12]\n"
-            "\\! param C i64[6]\n"
+            "\\! kernel main\n\\! param A i32[8]\n"
+            "\\! param B i32[12]\n"
+            "\\! param C i32[6]\n"
             "GLOBAL-ID\n"
             "DUP 3 /\n"
             "SWAP 3 MOD\n"
@@ -338,8 +338,8 @@ def test_naive_matmul_i64(kernel_runner: KernelRunner) -> None:
     assert result == [12, 6, 9, 28, 14, 29]
 
 
-def test_tiled_matmul_i64(kernel_runner: KernelRunner) -> None:
-    """Tiled i64 matmul with shared memory: C = A(4x4) * B(4x4) -> C(4x4).
+def test_tiled_matmul_i32(kernel_runner: KernelRunner) -> None:
+    """Tiled i32 matmul with shared memory: C = A(4x4) * B(4x4) -> C(4x4).
 
     Uses 2x2 tiles, shared memory for A/B tiles, and BARRIER for sync.
     Grid: (2,2,1), Block: (2,2,1) — 4 blocks of 4 threads each.
@@ -347,11 +347,11 @@ def test_tiled_matmul_i64(kernel_runner: KernelRunner) -> None:
     result = kernel_runner.run(
         forth_source=(
             "\\! kernel main\n"
-            "\\! param A i64[16]\n"
-            "\\! param B i64[16]\n"
-            "\\! param C i64[16]\n"
-            "\\! shared SA i64[4]\n"
-            "\\! shared SB i64[4]\n"
+            "\\! param A i32[16]\n"
+            "\\! param B i32[16]\n"
+            "\\! param C i32[16]\n"
+            "\\! shared SA i32[4]\n"
+            "\\! shared SB i32[4]\n"
             "BID-Y 2 * TID-Y +\n"
             "BID-X 2 * TID-X +\n"
             "0\n"
@@ -400,8 +400,8 @@ def test_tiled_matmul_i64(kernel_runner: KernelRunner) -> None:
     assert result == expected
 
 
-def test_tiled_matmul_f64(kernel_runner: KernelRunner) -> None:
-    """Tiled f64 matmul with shared memory: C = A(4x4) * B(4x4) -> C(4x4).
+def test_tiled_matmul_f32(kernel_runner: KernelRunner) -> None:
+    """Tiled f32 matmul with shared memory: C = A(4x4) * B(4x4) -> C(4x4).
 
     Uses 2x2 tiles, float shared memory for A/B tiles, and BARRIER for sync.
     Grid: (2,2,1), Block: (2,2,1) — 4 blocks of 4 threads each.
@@ -409,11 +409,11 @@ def test_tiled_matmul_f64(kernel_runner: KernelRunner) -> None:
     result = kernel_runner.run(
         forth_source=(
             "\\! kernel main\n"
-            "\\! param A f64[16]\n"
-            "\\! param B f64[16]\n"
-            "\\! param C f64[16]\n"
-            "\\! shared SA f64[4]\n"
-            "\\! shared SB f64[4]\n"
+            "\\! param A f32[16]\n"
+            "\\! param B f32[16]\n"
+            "\\! param C f32[16]\n"
+            "\\! shared SA f32[4]\n"
+            "\\! shared SB f32[4]\n"
             "BID-Y 2 * TID-Y +\n"
             "BID-X 2 * TID-X +\n"
             "0.0\n"
@@ -469,7 +469,7 @@ def test_user_defined_word(kernel_runner: KernelRunner) -> None:
     """: DOUBLE DUP + ; then 5 DOUBLE → 10."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA i64[256]\n: DOUBLE DUP + ;\n5 DOUBLE\n0 CELLS DATA + !"
+            "\\! kernel main\n\\! param DATA i32[256]\n: DOUBLE DUP + ;\n5 DOUBLE\n0 CELLS DATA + !"
         ),
     )
     assert result[0] == 10
@@ -481,7 +481,7 @@ def test_user_defined_word(kernel_runner: KernelRunner) -> None:
 def test_float_addition(kernel_runner: KernelRunner) -> None:
     """F+: 1.5 + 2.5 = 4.0."""
     result = kernel_runner.run(
-        forth_source="\\! kernel main\n\\! param DATA f64[256]\n1.5 2.5 F+\n0 CELLS DATA + F!",
+        forth_source="\\! kernel main\n\\! param DATA f32[256]\n1.5 2.5 F+\n0 CELLS DATA + F!",
     )
     assert result[0] == pytest.approx(4.0)
 
@@ -489,7 +489,7 @@ def test_float_addition(kernel_runner: KernelRunner) -> None:
 def test_float_subtraction(kernel_runner: KernelRunner) -> None:
     """F-: 10.0 - 3.5 = 6.5."""
     result = kernel_runner.run(
-        forth_source="\\! kernel main\n\\! param DATA f64[256]\n10.0 3.5 F-\n0 CELLS DATA + F!",
+        forth_source="\\! kernel main\n\\! param DATA f32[256]\n10.0 3.5 F-\n0 CELLS DATA + F!",
     )
     assert result[0] == pytest.approx(6.5)
 
@@ -497,7 +497,7 @@ def test_float_subtraction(kernel_runner: KernelRunner) -> None:
 def test_float_multiplication(kernel_runner: KernelRunner) -> None:
     """F*: 6.0 * 7.5 = 45.0."""
     result = kernel_runner.run(
-        forth_source="\\! kernel main\n\\! param DATA f64[256]\n6.0 7.5 F*\n0 CELLS DATA + F!",
+        forth_source="\\! kernel main\n\\! param DATA f32[256]\n6.0 7.5 F*\n0 CELLS DATA + F!",
     )
     assert result[0] == pytest.approx(45.0)
 
@@ -505,7 +505,7 @@ def test_float_multiplication(kernel_runner: KernelRunner) -> None:
 def test_float_division(kernel_runner: KernelRunner) -> None:
     """F/: 42.0 / 6.0 = 7.0."""
     result = kernel_runner.run(
-        forth_source="\\! kernel main\n\\! param DATA f64[256]\n42.0 6.0 F/\n0 CELLS DATA + F!",
+        forth_source="\\! kernel main\n\\! param DATA f32[256]\n42.0 6.0 F/\n0 CELLS DATA + F!",
     )
     assert result[0] == pytest.approx(7.0)
 
@@ -517,7 +517,7 @@ def test_float_load_store(kernel_runner: KernelRunner) -> None:
     """F@ and F!: read from DATA[0], multiply by 2, write to DATA[1]."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA f64[256]\n0 CELLS DATA + F@\n2.0 F*\n1 CELLS DATA + F!"
+            "\\! kernel main\n\\! param DATA f32[256]\n0 CELLS DATA + F@\n2.0 F*\n1 CELLS DATA + F!"
         ),
         params={"DATA": [3.14]},
         output_count=2,
@@ -529,10 +529,10 @@ def test_float_load_store(kernel_runner: KernelRunner) -> None:
 
 
 def test_float_scalar_param(kernel_runner: KernelRunner) -> None:
-    """Scalar f64 param: each thread scales DATA[i] by SCALE."""
+    """Scalar f32 param: each thread scales DATA[i] by SCALE."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA f64[256]\n\\! param SCALE f64\n"
+            "\\! kernel main\n\\! param DATA f32[256]\n\\! param SCALE f32\n"
             "GLOBAL-ID\n"
             "DUP CELLS DATA + F@\n"
             "SCALE F*\n"
@@ -554,10 +554,10 @@ def test_float_scalar_param(kernel_runner: KernelRunner) -> None:
 
 
 def test_float_comparisons(kernel_runner: KernelRunner) -> None:
-    """F=, F<, F>: True = -1, False = 0 (pushed as i64 on the stack)."""
+    """F=, F<, F>: True = -1, False = 0 (pushed as i32 on the stack)."""
     result = kernel_runner.run(
         forth_source=(
-            "\\! kernel main\n\\! param DATA i64[256]\n"
+            "\\! kernel main\n\\! param DATA i32[256]\n"
             "3.14 3.14 F=  0 CELLS DATA + !\n"
             "1.0 2.0 F<    1 CELLS DATA + !\n"
             "5.0 3.0 F>    2 CELLS DATA + !"
@@ -571,17 +571,17 @@ def test_float_comparisons(kernel_runner: KernelRunner) -> None:
 
 
 def test_int_to_float_conversion(kernel_runner: KernelRunner) -> None:
-    """S>F: convert int 7 to float, multiply by 1.5, store as f64."""
+    """S>F: convert int 7 to float, multiply by 1.5, store as f32."""
     result = kernel_runner.run(
-        forth_source=("\\! kernel main\n\\! param DATA f64[256]\n7 S>F 1.5 F*\n0 CELLS DATA + F!"),
+        forth_source=("\\! kernel main\n\\! param DATA f32[256]\n7 S>F 1.5 F*\n0 CELLS DATA + F!"),
     )
     assert result[0] == pytest.approx(10.5)
 
 
 def test_float_to_int_conversion(kernel_runner: KernelRunner) -> None:
-    """F>S: convert float 7.9 to int (truncates to 7), store as i64."""
+    """F>S: convert float 7.9 to int (truncates to 7), store as i32."""
     result = kernel_runner.run(
-        forth_source=("\\! kernel main\n\\! param DATA i64[256]\n7.9 F>S\n0 CELLS DATA + !"),
+        forth_source=("\\! kernel main\n\\! param DATA i32[256]\n7.9 F>S\n0 CELLS DATA + !"),
     )
     assert result[0] == 7
 
@@ -590,14 +590,14 @@ def test_float_to_int_conversion(kernel_runner: KernelRunner) -> None:
 
 _ATTENTION_KERNEL = """\
 \\! kernel attention
-\\! param Q f64[{n}]
-\\! param K f64[{n}]
-\\! param V f64[{n}]
-\\! param O f64[{n}]
-\\! param SEQ_LEN i64
-\\! param HEAD_DIM i64
-\\! shared SCORES f64[{seq_len}]
-\\! shared SCRATCH f64[{seq_len}]
+\\! param Q f32[{n}]
+\\! param K f32[{n}]
+\\! param V f32[{n}]
+\\! param O f32[{n}]
+\\! param SEQ_LEN i32
+\\! param HEAD_DIM i32
+\\! shared SCORES f32[{seq_len}]
+\\! shared SCRATCH f32[{seq_len}]
 BID-X
 TID-X
 0.0
@@ -648,17 +648,20 @@ DROP DROP DROP
 
 
 def _attention_reference(q: np.ndarray, k: np.ndarray, v: np.ndarray, seq_len: int) -> list[float]:
-    """Compute scaled dot-product attention with causal mask (NumPy reference)."""
+    """Compute scaled dot-product attention with causal mask (NumPy reference, f32)."""
+    q = q.astype(np.float32)
+    k = k.astype(np.float32)
+    v = v.astype(np.float32)
     head_dim = q.shape[1]
-    scores = q @ k.T / np.sqrt(head_dim)
+    scores = q @ k.T / np.sqrt(np.float32(head_dim))
     causal_mask = np.triu(np.ones((seq_len, seq_len), dtype=bool), k=1)
-    scores[causal_mask] = -1e30
+    scores[causal_mask] = np.float32(-1e30)
     exp_scores = np.exp(scores - scores.max(axis=1, keepdims=True))
     attn = exp_scores / exp_scores.sum(axis=1, keepdims=True)
     return (attn @ v).flatten().tolist()
 
 
-def test_naive_attention_f64(kernel_runner: KernelRunner) -> None:
+def test_naive_attention_f32(kernel_runner: KernelRunner) -> None:
     """Naive scaled dot-product attention with causal mask.
 
     O = softmax(Q @ K^T / sqrt(d_k)) @ V, seq_len=4, head_dim=4.
@@ -708,10 +711,10 @@ def test_naive_attention_f64(kernel_runner: KernelRunner) -> None:
         output_param=3,
         output_count=n,
     )
-    assert result == [pytest.approx(v) for v in expected]
+    assert result == [pytest.approx(v, rel=1e-4) for v in expected]
 
 
-def test_naive_attention_f64_16x64(kernel_runner: KernelRunner) -> None:
+def test_naive_attention_f32_16x64(kernel_runner: KernelRunner) -> None:
     """Naive scaled dot-product attention, seq_len=16, head_dim=64."""
     seq_len, head_dim = 16, 64
 
@@ -737,4 +740,4 @@ def test_naive_attention_f64_16x64(kernel_runner: KernelRunner) -> None:
         output_param=3,
         output_count=n,
     )
-    assert result == [pytest.approx(v) for v in expected]
+    assert result == [pytest.approx(v, rel=1e-3) for v in expected]

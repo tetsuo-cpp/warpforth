@@ -39,7 +39,7 @@ class ParamDecl:
     name: str
     is_array: bool
     size: int  # 0 for scalars
-    base_type: str = "i64"  # "i64" or "f64"
+    base_type: str = "i32"  # "i32" or "f32"
 
 
 class CompileError(Exception):
@@ -320,7 +320,7 @@ def _parse_array_type(type_spec: str) -> tuple[str, int]:
         raise ValueError(msg)
     base, size_str = type_spec[:-1].split("[", 1)
     base_lower = base.lower()
-    if base_lower not in ("i64", "f64"):
+    if base_lower not in ("i32", "f32"):
         msg = f"Unsupported base type: {base}"
         raise ValueError(msg)
     return base_lower, int(size_str)
@@ -377,7 +377,7 @@ def _parse_param_declarations(forth_source: str) -> list[ParamDecl]:
             decls.append(ParamDecl(name=name, is_array=True, size=size, base_type=base_type))
         else:
             base_type = type_spec.lower()
-            if base_type not in ("i64", "f64"):
+            if base_type not in ("i32", "f32"):
                 msg = f"Unsupported scalar type: {type_spec}"
                 raise ValueError(msg)
             decls.append(ParamDecl(name=name, is_array=False, size=0, base_type=base_type))
@@ -453,13 +453,13 @@ class KernelRunner:
                 if not isinstance(values, list):
                     msg = f"Array param '{decl.name}' expects a list, got {type(values).__name__}"
                     raise TypeError(msg)
-                zero = 0.0 if decl.base_type == "f64" else 0
+                zero = 0.0 if decl.base_type == "f32" else 0
                 buf = [zero] * decl.size
                 for i, v in enumerate(values):
                     buf[i] = v
                 cmd_parts.extend(["--param", f"{decl.base_type}[]:{','.join(str(v) for v in buf)}"])
             else:
-                value = params.get(decl.name, 0.0 if decl.base_type == "f64" else 0)
+                value = params.get(decl.name, 0.0 if decl.base_type == "f32" else 0)
                 if isinstance(value, list):
                     msg = f"Scalar param '{decl.name}' expects a scalar, got list"
                     raise TypeError(msg)
@@ -484,7 +484,7 @@ class KernelRunner:
 
         # Parse CSV output — type depends on the output param
         out_type = decls[output_param].base_type
-        parse = float if out_type == "f64" else int
+        parse = float if out_type == "f32" else int
         return [parse(v) for v in stdout.strip().split(",")]
 
 

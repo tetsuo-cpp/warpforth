@@ -2,6 +2,6 @@
 \ CHECK: gpu.binary @warpforth_module
 
 \! kernel main
-\! param DATA i64[4]
+\! param DATA i32[4]
 : FIND-FIVE  10 0 DO I 5 = IF UNLOOP EXIT THEN LOOP 0 ;
 FIND-FIVE DATA 0 CELLS + !

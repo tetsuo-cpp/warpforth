@@ -124,7 +124,7 @@ def Forth_ConstantOp : Forth_Op<"constant", [Pure]> {
     Forth semantics: ( -- n )
   }];
 
-  let arguments = (ins Forth_StackType:$input_stack, AnyAttrOf<[I64Attr, F64Attr]>:$value);
+  let arguments = (ins Forth_StackType:$input_stack, AnyAttrOf<[I32Attr, F32Attr]>:$value);
   let results = (outs Forth_StackType:$output_stack);
 
   let assemblyFormat = [{
@@ -183,7 +183,7 @@ def Forth_ModOp : Forth_StackOpBase<"mod"> {
 def Forth_AddFOp : Forth_StackOpBase<"addf"> {
   let summary = "Add top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, adds, bitcasts result back to i64.
+    Pops two i64 values, truncates to i32, bitcasts to f32, adds, bitcasts result back to i32, extends to i64.
     Forth semantics: ( f1 f2 -- f1+f2 )
   }];
 }
@@ -191,7 +191,7 @@ def Forth_AddFOp : Forth_StackOpBase<"addf"> {
 def Forth_SubFOp : Forth_StackOpBase<"subf"> {
   let summary = "Subtract top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, subtracts, bitcasts result back to i64.
+    Pops two i64 values, truncates to i32, bitcasts to f32, subtracts, bitcasts result back to i32, extends to i64.
     Forth semantics: ( f1 f2 -- f1-f2 )
   }];
 }
@@ -199,7 +199,7 @@ def Forth_SubFOp : Forth_StackOpBase<"subf"> {
 def Forth_MulFOp : Forth_StackOpBase<"mulf"> {
   let summary = "Multiply top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, multiplies, bitcasts result back to i64.
+    Pops two i64 values, truncates to i32, bitcasts to f32, multiplies, bitcasts result back to i32, extends to i64.
     Forth semantics: ( f1 f2 -- f1*f2 )
   }];
 }
@@ -207,7 +207,7 @@ def Forth_MulFOp : Forth_StackOpBase<"mulf"> {
 def Forth_DivFOp : Forth_StackOpBase<"divf"> {
   let summary = "Divide top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, divides, bitcasts result back to i64.
+    Pops two i64 values, truncates to i32, bitcasts to f32, divides, bitcasts result back to i32, extends to i64.
     Forth semantics: ( f1 f2 -- f1/f2 )
   }];
 }
@@ -219,8 +219,8 @@ def Forth_DivFOp : Forth_StackOpBase<"divf"> {
 def Forth_ExpFOp : Forth_StackOpBase<"expf"> {
   let summary = "Exponential of top stack element (float)";
   let description = [{
-    Pops an i64 (f64 bit pattern), bitcasts to f64, computes e^x,
-    bitcasts result back to i64.
+    Pops an i64, truncates to i32 (f32 bit pattern), bitcasts to f32, computes e^x,
+    bitcasts result back to i32, extends to i64.
     Forth semantics: ( f -- exp(f) )
   }];
 }
@@ -228,8 +228,8 @@ def Forth_ExpFOp : Forth_StackOpBase<"expf"> {
 def Forth_SqrtFOp : Forth_StackOpBase<"sqrtf"> {
   let summary = "Square root of top stack element (float)";
   let description = [{
-    Pops an i64 (f64 bit pattern), bitcasts to f64, computes sqrt(x),
-    bitcasts result back to i64.
+    Pops an i64, truncates to i32 (f32 bit pattern), bitcasts to f32, computes sqrt(x),
+    bitcasts result back to i32, extends to i64.
     Forth semantics: ( f -- sqrt(f) )
   }];
 }
@@ -237,8 +237,8 @@ def Forth_SqrtFOp : Forth_StackOpBase<"sqrtf"> {
 def Forth_LogFOp : Forth_StackOpBase<"logf"> {
   let summary = "Natural logarithm of top stack element (float)";
   let description = [{
-    Pops an i64 (f64 bit pattern), bitcasts to f64, computes ln(x),
-    bitcasts result back to i64.
+    Pops an i64, truncates to i32 (f32 bit pattern), bitcasts to f32, computes ln(x),
+    bitcasts result back to i32, extends to i64.
     Forth semantics: ( f -- log(f) )
   }];
 }
@@ -246,8 +246,8 @@ def Forth_LogFOp : Forth_StackOpBase<"logf"> {
 def Forth_AbsFOp : Forth_StackOpBase<"absf"> {
   let summary = "Absolute value of top stack element (float)";
   let description = [{
-    Pops an i64 (f64 bit pattern), bitcasts to f64, computes |x|,
-    bitcasts result back to i64.
+    Pops an i64, truncates to i32 (f32 bit pattern), bitcasts to f32, computes |x|,
+    bitcasts result back to i32, extends to i64.
     Forth semantics: ( f -- |f| )
   }];
 }
@@ -255,8 +255,8 @@ def Forth_AbsFOp : Forth_StackOpBase<"absf"> {
 def Forth_NegFOp : Forth_StackOpBase<"negf"> {
   let summary = "Negate top stack element (float)";
   let description = [{
-    Pops an i64 (f64 bit pattern), bitcasts to f64, negates,
-    bitcasts result back to i64.
+    Pops an i64, truncates to i32 (f32 bit pattern), bitcasts to f32, negates,
+    bitcasts result back to i32, extends to i64.
     Forth semantics: ( f -- -f )
   }];
 }
@@ -264,7 +264,7 @@ def Forth_NegFOp : Forth_StackOpBase<"negf"> {
 def Forth_MaxFOp : Forth_StackOpBase<"maxf"> {
   let summary = "Maximum of top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, computes max, bitcasts result back to i64.
+    Pops two i64 values, truncates to i32, bitcasts to f32, computes max, bitcasts result back to i32, extends to i64.
     Forth semantics: ( f1 f2 -- max(f1,f2) )
   }];
 }
@@ -272,7 +272,7 @@ def Forth_MaxFOp : Forth_StackOpBase<"maxf"> {
 def Forth_MinFOp : Forth_StackOpBase<"minf"> {
   let summary = "Minimum of top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, computes min, bitcasts result back to i64.
+    Pops two i64 values, truncates to i32, bitcasts to f32, computes min, bitcasts result back to i32, extends to i64.
     Forth semantics: ( f1 f2 -- min(f1,f2) )
   }];
 }
@@ -334,72 +334,220 @@ def Forth_RshiftOp : Forth_StackOpBase<"rshift"> {
 //===----------------------------------------------------------------------===//
 
 def Forth_LoadIOp : Forth_StackOpBase<"loadi"> {
-  let summary = "Load i64 value from memory buffer";
+  let summary = "Load i32 value from memory buffer";
   let description = [{
-    Pops an address from the stack, loads an i64 value from memory,
-    and pushes the loaded value onto the stack.
+    Pops an address from the stack, loads an i32 value from memory,
+    sign-extends to i64, and pushes the loaded value onto the stack.
     Forth semantics: ( addr -- value )
   }];
 }
 
 def Forth_StoreIOp : Forth_StackOpBase<"storei"> {
-  let summary = "Store i64 value to memory buffer";
+  let summary = "Store i32 value to memory buffer";
   let description = [{
-    Pops an address and value from the stack, stores the i64 value to memory.
+    Pops an address and value from the stack, truncates to i32, stores to memory.
     Forth semantics: ( x addr -- )
   }];
 }
 
 def Forth_LoadFOp : Forth_StackOpBase<"loadf"> {
-  let summary = "Load f64 value from memory buffer";
+  let summary = "Load f32 value from memory buffer";
   let description = [{
-    Pops an address from the stack, loads an f64 value from memory,
-    bitcasts to i64, and pushes onto the stack.
+    Pops an address from the stack, loads an f32 value from memory,
+    bitcasts to i32, sign-extends to i64, and pushes onto the stack.
     Forth semantics: ( addr -- value )
   }];
 }
 
 def Forth_StoreFOp : Forth_StackOpBase<"storef"> {
-  let summary = "Store f64 value to memory buffer";
+  let summary = "Store f32 value to memory buffer";
   let description = [{
-    Pops an address and value (i64 bit pattern of f64) from the stack,
-    bitcasts to f64, stores to memory.
+    Pops an address and value from the stack, truncates to i32,
+    bitcasts to f32, stores to memory.
     Forth semantics: ( x addr -- )
   }];
 }
 
 def Forth_SharedLoadIOp : Forth_StackOpBase<"shared_loadi"> {
-  let summary = "Load i64 value from shared memory buffer";
+  let summary = "Load i32 value from shared memory buffer";
   let description = [{
-    Pops an address from the stack, loads an i64 value from shared/workgroup memory,
-    and pushes the loaded value onto the stack.
+    Pops an address from the stack, loads an i32 value from shared/workgroup memory,
+    sign-extends to i64, and pushes the loaded value onto the stack.
     Forth semantics: ( addr -- value )
   }];
 }
 
 def Forth_SharedStoreIOp : Forth_StackOpBase<"shared_storei"> {
-  let summary = "Store i64 value to shared memory buffer";
+  let summary = "Store i32 value to shared memory buffer";
   let description = [{
-    Pops an address and value from the stack, stores the i64 value to
+    Pops an address and value from the stack, truncates to i32, stores to
     shared/workgroup memory.
     Forth semantics: ( x addr -- )
   }];
 }
 
 def Forth_SharedLoadFOp : Forth_StackOpBase<"shared_loadf"> {
-  let summary = "Load f64 value from shared memory buffer";
+  let summary = "Load f32 value from shared memory buffer";
   let description = [{
-    Pops an address from the stack, loads an f64 value from shared/workgroup memory,
-    bitcasts to i64, and pushes onto the stack.
+    Pops an address from the stack, loads an f32 value from shared/workgroup memory,
+    bitcasts to i32, sign-extends to i64, and pushes onto the stack.
     Forth semantics: ( addr -- value )
   }];
 }
 
 def Forth_SharedStoreFOp : Forth_StackOpBase<"shared_storef"> {
-  let summary = "Store f64 value to shared memory buffer";
+  let summary = "Store f32 value to shared memory buffer";
   let description = [{
-    Pops an address and value (i64 bit pattern of f64) from the stack,
-    bitcasts to f64, stores to shared/workgroup memory.
+    Pops an address and value from the stack, truncates to i32,
+    bitcasts to f32, stores to shared/workgroup memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Reduced-precision memory operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_LoadHFOp : Forth_StackOpBase<"loadhf"> {
+  let summary = "Load f16 value from memory buffer";
+  let description = [{
+    Pops an address from the stack, loads an f16 value from memory,
+    extends to f32, bitcasts to i32, sign-extends to i64, and pushes.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_StoreHFOp : Forth_StackOpBase<"storehf"> {
+  let summary = "Store f16 value to memory buffer";
+  let description = [{
+    Pops an address and value from the stack, truncates to i32,
+    bitcasts to f32, truncates to f16, stores to memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+def Forth_LoadBFOp : Forth_StackOpBase<"loadbf"> {
+  let summary = "Load bf16 value from memory buffer";
+  let description = [{
+    Pops an address from the stack, loads a bf16 value from memory,
+    extends to f32, bitcasts to i32, sign-extends to i64, and pushes.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_StoreBFOp : Forth_StackOpBase<"storebf"> {
+  let summary = "Store bf16 value to memory buffer";
+  let description = [{
+    Pops an address and value from the stack, truncates to i32,
+    bitcasts to f32, truncates to bf16, stores to memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+def Forth_LoadI8Op : Forth_StackOpBase<"loadi8"> {
+  let summary = "Load i8 value from memory buffer";
+  let description = [{
+    Pops an address from the stack, loads an i8 value from memory,
+    sign-extends to i32, sign-extends to i64, and pushes.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_StoreI8Op : Forth_StackOpBase<"storei8"> {
+  let summary = "Store i8 value to memory buffer";
+  let description = [{
+    Pops an address and value from the stack, truncates to i32,
+    truncates to i8, stores to memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+def Forth_LoadI16Op : Forth_StackOpBase<"loadi16"> {
+  let summary = "Load i16 value from memory buffer";
+  let description = [{
+    Pops an address from the stack, loads an i16 value from memory,
+    sign-extends to i32, sign-extends to i64, and pushes.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_StoreI16Op : Forth_StackOpBase<"storei16"> {
+  let summary = "Store i16 value to memory buffer";
+  let description = [{
+    Pops an address and value from the stack, truncates to i32,
+    truncates to i16, stores to memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+def Forth_SharedLoadHFOp : Forth_StackOpBase<"shared_loadhf"> {
+  let summary = "Load f16 value from shared memory buffer";
+  let description = [{
+    Pops an address from the stack, loads an f16 value from shared memory,
+    extends to f32, bitcasts to i32, sign-extends to i64, and pushes.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_SharedStoreHFOp : Forth_StackOpBase<"shared_storehf"> {
+  let summary = "Store f16 value to shared memory buffer";
+  let description = [{
+    Pops an address and value from the stack, truncates to i32,
+    bitcasts to f32, truncates to f16, stores to shared memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+def Forth_SharedLoadBFOp : Forth_StackOpBase<"shared_loadbf"> {
+  let summary = "Load bf16 value from shared memory buffer";
+  let description = [{
+    Pops an address from the stack, loads a bf16 value from shared memory,
+    extends to f32, bitcasts to i32, sign-extends to i64, and pushes.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_SharedStoreBFOp : Forth_StackOpBase<"shared_storebf"> {
+  let summary = "Store bf16 value to shared memory buffer";
+  let description = [{
+    Pops an address and value from the stack, truncates to i32,
+    bitcasts to f32, truncates to bf16, stores to shared memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+def Forth_SharedLoadI8Op : Forth_StackOpBase<"shared_loadi8"> {
+  let summary = "Load i8 value from shared memory buffer";
+  let description = [{
+    Pops an address from the stack, loads an i8 value from shared memory,
+    sign-extends to i32, sign-extends to i64, and pushes.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_SharedStoreI8Op : Forth_StackOpBase<"shared_storei8"> {
+  let summary = "Store i8 value to shared memory buffer";
+  let description = [{
+    Pops an address and value from the stack, truncates to i32,
+    truncates to i8, stores to shared memory.
+    Forth semantics: ( x addr -- )
+  }];
+}
+
+def Forth_SharedLoadI16Op : Forth_StackOpBase<"shared_loadi16"> {
+  let summary = "Load i16 value from shared memory buffer";
+  let description = [{
+    Pops an address from the stack, loads an i16 value from shared memory,
+    sign-extends to i32, sign-extends to i64, and pushes.
+    Forth semantics: ( addr -- value )
+  }];
+}
+
+def Forth_SharedStoreI16Op : Forth_StackOpBase<"shared_storei16"> {
+  let summary = "Store i16 value to shared memory buffer";
+  let description = [{
+    Pops an address and value from the stack, truncates to i32,
+    truncates to i16, stores to shared memory.
     Forth semantics: ( x addr -- )
   }];
 }
@@ -611,7 +759,7 @@ def Forth_GeIOp : Forth_StackOpBase<"gei"> {
 def Forth_EqFOp : Forth_StackOpBase<"eqf"> {
   let summary = "Test equality of top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, compares for equality (ordered).
+    Pops two i64 values, truncates to i32, bitcasts to f32, compares for equality (ordered).
     Pushes -1 (true) or 0 (false).
     Forth semantics: ( f1 f2 -- flag )
   }];
@@ -620,7 +768,7 @@ def Forth_EqFOp : Forth_StackOpBase<"eqf"> {
 def Forth_LtFOp : Forth_StackOpBase<"ltf"> {
   let summary = "Test less-than of top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, compares f1 < f2 (ordered).
+    Pops two i64 values, truncates to i32, bitcasts to f32, compares f1 < f2 (ordered).
     Pushes -1 (true) or 0 (false).
     Forth semantics: ( f1 f2 -- flag )
   }];
@@ -629,7 +777,7 @@ def Forth_LtFOp : Forth_StackOpBase<"ltf"> {
 def Forth_GtFOp : Forth_StackOpBase<"gtf"> {
   let summary = "Test greater-than of top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, compares f1 > f2 (ordered).
+    Pops two i64 values, truncates to i32, bitcasts to f32, compares f1 > f2 (ordered).
     Pushes -1 (true) or 0 (false).
     Forth semantics: ( f1 f2 -- flag )
   }];
@@ -638,7 +786,7 @@ def Forth_GtFOp : Forth_StackOpBase<"gtf"> {
 def Forth_NeFOp : Forth_StackOpBase<"nef"> {
   let summary = "Test inequality of top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, compares for inequality (ordered).
+    Pops two i64 values, truncates to i32, bitcasts to f32, compares for inequality (ordered).
     Pushes -1 (true) or 0 (false).
     Forth semantics: ( f1 f2 -- flag )
   }];
@@ -647,7 +795,7 @@ def Forth_NeFOp : Forth_StackOpBase<"nef"> {
 def Forth_LeFOp : Forth_StackOpBase<"lef"> {
   let summary = "Test less-than-or-equal of top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, compares f1 <= f2 (ordered).
+    Pops two i64 values, truncates to i32, bitcasts to f32, compares f1 <= f2 (ordered).
     Pushes -1 (true) or 0 (false).
     Forth semantics: ( f1 f2 -- flag )
   }];
@@ -656,7 +804,7 @@ def Forth_LeFOp : Forth_StackOpBase<"lef"> {
 def Forth_GeFOp : Forth_StackOpBase<"gef"> {
   let summary = "Test greater-than-or-equal of top two stack elements (float)";
   let description = [{
-    Pops two i64 values, bitcasts to f64, compares f1 >= f2 (ordered).
+    Pops two i64 values, truncates to i32, bitcasts to f32, compares f1 >= f2 (ordered).
     Pushes -1 (true) or 0 (false).
     Forth semantics: ( f1 f2 -- flag )
   }];
@@ -677,8 +825,8 @@ def Forth_ZeroEqOp : Forth_StackOpBase<"zero_eq"> {
 def Forth_IToFOp : Forth_StackOpBase<"itof"> {
   let summary = "Convert integer to float";
   let description = [{
-    Pops an i64 integer, converts to f64 via sitofp, bitcasts result
-    to i64 bit pattern, pushes onto stack.
+    Pops an i64, truncates to i32, converts to f32 via sitofp, bitcasts
+    f32 to i32, sign-extends to i64, pushes onto stack.
     Forth semantics: ( n -- f )
   }];
 }
@@ -686,8 +834,8 @@ def Forth_IToFOp : Forth_StackOpBase<"itof"> {
 def Forth_FToIOp : Forth_StackOpBase<"ftoi"> {
   let summary = "Convert float to integer";
   let description = [{
-    Pops an i64 (f64 bit pattern), bitcasts to f64, converts to i64
-    via fptosi, pushes onto stack.
+    Pops an i64, truncates to i32 (f32 bit pattern), bitcasts to f32,
+    converts to i32 via fptosi, sign-extends to i64, pushes onto stack.
     Forth semantics: ( f -- n )
   }];
 }

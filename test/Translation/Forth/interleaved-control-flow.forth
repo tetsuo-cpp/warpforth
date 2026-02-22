@@ -15,7 +15,7 @@
 \ Loop header: DUP 10 > → WHILE(1)
 \ CHECK:     ^bb1(%[[H:.*]]: !forth.stack):
 \ CHECK:       forth.dup
-\ CHECK:       forth.constant %{{.*}}(10 : i64)
+\ CHECK:       forth.constant %{{.*}}(10 : i32)
 \ CHECK-NEXT:  %{{.*}} = forth.gti
 \ CHECK:       forth.pop_flag
 \ CHECK-NEXT:  cf.cond_br %{{.*}}, ^bb2(%{{.*}} : !forth.stack), ^bb3(%{{.*}} : !forth.stack)
@@ -23,7 +23,7 @@
 \ WHILE(1) body: DUP 2 MOD 0= → WHILE(2)
 \ CHECK:     ^bb2(%{{.*}}: !forth.stack):
 \ CHECK:       forth.dup
-\ CHECK:       forth.constant %{{.*}}(2 : i64)
+\ CHECK:       forth.constant %{{.*}}(2 : i32)
 \ CHECK-NEXT:  %{{.*}} = forth.mod
 \ CHECK-NEXT:  %{{.*}} = forth.zero_eq
 \ CHECK:       forth.pop_flag
@@ -35,7 +35,7 @@
 
 \ WHILE(2) body: 1 - → REPEAT (branch back to loop header)
 \ CHECK:     ^bb4(%[[B4:.*]]: !forth.stack):
-\ CHECK-NEXT:  %{{.*}} = forth.constant %[[B4]](1 : i64)
+\ CHECK-NEXT:  %{{.*}} = forth.constant %[[B4]](1 : i32)
 \ CHECK-NEXT:  %{{.*}} = forth.subi
 \ CHECK-NEXT:  cf.br ^bb1
 
@@ -59,7 +59,7 @@
 \ Loop header: DUP 0 > → WHILE
 \ CHECK:     ^bb1(%{{.*}}: !forth.stack):
 \ CHECK:       forth.dup
-\ CHECK:       forth.constant %{{.*}}(0 : i64)
+\ CHECK:       forth.constant %{{.*}}(0 : i32)
 \ CHECK-NEXT:  %{{.*}} = forth.gti
 \ CHECK:       forth.pop_flag
 \ CHECK-NEXT:  cf.cond_br %{{.*}}, ^bb2(%{{.*}} : !forth.stack), ^bb3(%{{.*}} : !forth.stack)
@@ -67,10 +67,10 @@
 \ WHILE body + UNTIL: 1 - DUP 5 = UNTIL
 \ UNTIL true exits to ^bb4, UNTIL false loops back to ^bb1
 \ CHECK:     ^bb2(%[[W:.*]]: !forth.stack):
-\ CHECK-NEXT:  %{{.*}} = forth.constant %[[W]](1 : i64)
+\ CHECK-NEXT:  %{{.*}} = forth.constant %[[W]](1 : i32)
 \ CHECK-NEXT:  %{{.*}} = forth.subi
 \ CHECK:       forth.dup
-\ CHECK:       forth.constant %{{.*}}(5 : i64)
+\ CHECK:       forth.constant %{{.*}}(5 : i32)
 \ CHECK-NEXT:  %{{.*}} = forth.eqi
 \ CHECK:       forth.pop_flag
 \ CHECK-NEXT:  cf.cond_br %{{.*}}, ^bb4(%{{.*}} : !forth.stack), ^bb1(%{{.*}} : !forth.stack)

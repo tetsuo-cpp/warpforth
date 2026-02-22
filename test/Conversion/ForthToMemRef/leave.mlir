@@ -14,8 +14,8 @@
 module {
   func.func private @main() {
     %0 = forth.stack !forth.stack
-    %1 = forth.constant %0(10 : i64) : !forth.stack -> !forth.stack
-    %2 = forth.constant %1(0 : i64) : !forth.stack -> !forth.stack
+    %1 = forth.constant %0(10 : i32) : !forth.stack -> !forth.stack
+    %2 = forth.constant %1(0 : i32) : !forth.stack -> !forth.stack
     %output_stack, %value = forth.pop %2 : !forth.stack -> !forth.stack, i64
     %output_stack_0, %value_1 = forth.pop %output_stack : !forth.stack -> !forth.stack, i64
     %alloca = memref.alloca() : memref<1xi64>

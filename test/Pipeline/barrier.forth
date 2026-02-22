@@ -5,6 +5,6 @@
 \ MID: gpu.barrier
 \ MID: gpu.return
 \! kernel main
-\! param DATA i64[256]
-\! shared SCRATCH i64[256]
+\! param DATA i32[256]
+\! shared SCRATCH i32[256]
 GLOBAL-ID CELLS SCRATCH + @ BARRIER GLOBAL-ID CELLS DATA + !
