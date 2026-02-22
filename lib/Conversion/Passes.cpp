@@ -33,7 +33,10 @@ void buildWarpForthPipeline(OpPassManager &pm) {
   pm.addPass(createCanonicalizerPass());
 
   // Stage 4: Attach NVVM target to GPU modules (sm_70 = Volta architecture)
-  pm.addPass(createGpuNVVMAttachTarget());
+  GpuNVVMAttachTargetOptions nvvmOptions;
+  nvvmOptions.chip = "sm_70";
+  nvvmOptions.linkLibs.push_back(WARPFORTH_LIBDEVICE_PATH);
+  pm.addPass(createGpuNVVMAttachTarget(nvvmOptions));
 
   // Stage 5: Lower GPU to NVVM with bare pointers
   ConvertGpuOpsToNVVMOpsOptions gpuToNVVMOptions;
