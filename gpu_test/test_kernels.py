@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import struct
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -738,3 +739,137 @@ def test_naive_attention_f64_16x64(kernel_runner: KernelRunner) -> None:
         output_count=n,
     )
     assert result == [pytest.approx(v) for v in expected]
+
+
+# --- Attention (f32 global memory) ---
+
+_ATTENTION_F32_KERNEL = """\
+\\! kernel attention
+\\! param Q i64[{n_i64}]
+\\! param K i64[{n_i64}]
+\\! param V i64[{n_i64}]
+\\! param O i64[{n_i64}]
+\\! param SEQ_LEN i64
+\\! param HEAD_DIM i64
+\\! shared SCORES f64[{seq_len}]
+\\! shared SCRATCH f64[{seq_len}]
+BID-X
+TID-X
+0.0
+HEAD_DIM 0 DO
+  2 PICK HEAD_DIM * I + 4 * Q + F32@
+  2 PICK HEAD_DIM * I + 4 * K + F32@
+  F* F+
+LOOP
+HEAD_DIM S>F FSQRT F/
+OVER 3 PICK >
+IF DROP -1.0e30 THEN
+OVER CELLS SCORES + SF!
+BARRIER
+TID-X 0= IF
+  0 CELLS SCORES + SF@
+  SEQ_LEN 1 DO I CELLS SCORES + SF@ FMAX LOOP
+  0 CELLS SCRATCH + SF!
+THEN
+BARRIER
+DUP CELLS SCORES + SF@
+0 CELLS SCRATCH + SF@
+F- FEXP
+OVER CELLS SCORES + SF!
+BARRIER
+TID-X 0= IF
+  0.0
+  SEQ_LEN 0 DO I CELLS SCORES + SF@ F+ LOOP
+  0 CELLS SCRATCH + SF!
+THEN
+BARRIER
+DUP CELLS SCORES + SF@
+0 CELLS SCRATCH + SF@
+F/
+OVER CELLS SCORES + SF!
+BARRIER
+DUP BEGIN DUP HEAD_DIM < WHILE
+  0.0
+  SEQ_LEN 0 DO
+    I CELLS SCORES + SF@
+    I HEAD_DIM * 3 PICK + 4 * V + F32@
+    F* F+
+  LOOP
+  OVER 4 PICK HEAD_DIM * + 4 * O + F32!
+  BDIM-X +
+REPEAT
+DROP DROP DROP
+"""
+
+
+def _pack_f32_to_i64(data: np.ndarray) -> list[int]:
+    """Pack a flat f64 array as f32 values into i64 list (reinterpret bytes)."""
+    f32_bytes = data.astype(np.float32).tobytes()
+    # Pad to 8-byte boundary
+    pad_len = (8 - len(f32_bytes) % 8) % 8
+    f32_bytes += b"\x00" * pad_len
+    return [struct.unpack("<q", f32_bytes[i : i + 8])[0] for i in range(0, len(f32_bytes), 8)]
+
+
+def _unpack_i64_to_f32(values: list[int], count: int) -> list[float]:
+    """Unpack i64 list back to f32 floats."""
+    raw = b"".join(struct.pack("<q", v) for v in values)
+    f32_arr = np.frombuffer(raw, dtype=np.float32)
+    return f32_arr[:count].tolist()
+
+
+def test_naive_attention_f32(kernel_runner: KernelRunner) -> None:
+    """Naive attention with f32 global memory, f64 shared memory for softmax.
+
+    Same test data as test_naive_attention_f64 but using F32@/F32! for global
+    memory access. This isolates whether reduced-width float loads/stores work
+    correctly in the attention kernel.
+    """
+    seq_len, head_dim = 4, 4
+
+    q = np.array(
+        [
+            [1.0, 0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ]
+    )
+    k = np.array(
+        [
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ]
+    )
+    v = np.array(
+        [
+            [1.0, 2.0, 3.0, 4.0],
+            [5.0, 6.0, 7.0, 8.0],
+            [9.0, 10.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0, 16.0],
+        ]
+    )
+
+    expected = _attention_reference(q, k, v, seq_len)
+    n = seq_len * head_dim
+    n_i64 = (n + 1) // 2  # 2 f32 values per i64
+
+    result = kernel_runner.run(
+        forth_source=_ATTENTION_F32_KERNEL.format(n_i64=n_i64, seq_len=seq_len),
+        params={
+            "Q": _pack_f32_to_i64(q.flatten()),
+            "K": _pack_f32_to_i64(k.flatten()),
+            "V": _pack_f32_to_i64(v.flatten()),
+            "SEQ_LEN": seq_len,
+            "HEAD_DIM": head_dim,
+        },
+        grid=(seq_len, 1, 1),
+        block=(seq_len, 1, 1),
+        output_param=3,
+        output_count=n_i64,
+    )
+
+    output = _unpack_i64_to_f32(result, n)
+    assert output == [pytest.approx(v, rel=1e-5) for v in expected]
