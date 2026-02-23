@@ -18,7 +18,7 @@ A pre-compiled `attention.ptx` is included in this directory.
 ## Step 2: Upload to GPU Instance
 
 ```bash
-scp -r demo/ demo/gpt2_generate.py root@HOST:/workspace
+scp -r demo/ root@HOST:/workspace
 ```
 
 ## Step 3: Install Dependencies (Remote)
@@ -30,7 +30,7 @@ pip install pycuda transformers
 ## Step 4: Generate Text (Remote)
 
 ```bash
-python /workspace/gpt2_generate.py --ptx /workspace/attention.ptx --prompt "The meaning of life is"
+python /workspace/demo/gpt2_generate.py --ptx /workspace/demo/attention.ptx --prompt "The meaning of life is"
 ```
 
 | Flag | Default | Description |
