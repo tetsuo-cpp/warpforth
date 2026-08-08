@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 WarpForth is an MLIR-based compiler for the Forth programming language targeting GPU kernels. It implements a custom MLIR dialect for Forth stack operations and converts them to executable PTX.
 
@@ -107,3 +107,4 @@ uv run ruff format gpu_test/
 ## Agent Instructions
 
 - Use context7 MCP for MLIR API documentation: query with `/websites/mlir_llvm` for MLIR dialects, operations, types, and conversion patterns
+- Do not add attribution, including AI attribution, co-author trailers, or thread IDs, to commit messages
