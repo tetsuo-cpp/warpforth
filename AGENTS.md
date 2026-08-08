@@ -13,9 +13,13 @@ cmake --build build --target format
 
 # Run tests (requires: uv sync)
 cmake --build build --target check-warpforth
+
+# Run clang-tidy
+cmake --build build --target check-clang-tidy
 ```
 
-Requires MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in CMake.
+Requires Clang 20 and MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in
+CMake.
 
 ## Key Files
 
@@ -103,6 +107,9 @@ uv run ruff format gpu_test/
 - Document stack effects as `( input -- output )`
 - C++17 required
 - Use `clang-format` (config in `.clang-format`)
+- Run `check-clang-tidy` after C++ changes; do not apply fixes automatically
+- Add `NOLINT` suppressions only for documented false positives or deliberate
+  project exceptions
 
 ## Agent Instructions
 

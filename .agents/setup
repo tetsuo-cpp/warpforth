@@ -19,7 +19,9 @@ install_system_dependencies() {
   local packages=(
     build-essential
     ca-certificates
+    clang-20
     clang-format-20
+    clang-tidy-20
     cmake
     curl
     gnupg
@@ -80,6 +82,8 @@ configure_login_shell() {
 
 $marker
 if [[ "\${PWD}" == "$repo_root" ]]; then
+  export CC=clang-20
+  export CXX=clang++-20
   export LLVM_DIR="$llvm_root/lib/cmake/llvm"
   export MLIR_DIR="$llvm_root/lib/cmake/mlir"
   export PATH="$llvm_root/bin:\${PATH}"
@@ -99,6 +103,8 @@ configure_build() {
     -ULINKER_SUPPORTS_COLOR_DIAGNOSTICS \
     -ULLVM_USE_LINKER \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER=clang-20 \
+    -DCMAKE_CXX_COMPILER=clang++-20 \
     -DMLIR_DIR="$llvm_root/lib/cmake/mlir" \
     -DLLVM_DIR="$llvm_root/lib/cmake/llvm"
 }
