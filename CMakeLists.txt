@@ -3,6 +3,7 @@ project(warpforth LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(MLIR REQUIRED CONFIG)
 
@@ -32,6 +33,30 @@ add_definitions(${LLVM_DEFINITIONS})
 add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
+
+# Add clang-tidy target after the TableGen targets it depends on are defined.
+find_program(CLANG_TIDY_EXECUTABLE
+  NAMES clang-tidy-${LLVM_VERSION_MAJOR} clang-tidy
+  HINTS ${LLVM_TOOLS_BINARY_DIR}
+  REQUIRED)
+find_program(RUN_CLANG_TIDY_EXECUTABLE
+  NAMES run-clang-tidy-${LLVM_VERSION_MAJOR}.py run-clang-tidy
+  HINTS ${LLVM_TOOLS_BINARY_DIR}
+  REQUIRED)
+add_custom_target(check-clang-tidy
+  COMMAND ${RUN_CLANG_TIDY_EXECUTABLE}
+    -clang-tidy-binary ${CLANG_TIDY_EXECUTABLE}
+    -config-file ${PROJECT_SOURCE_DIR}/.clang-tidy
+    -exclude-header-filter ^${PROJECT_BINARY_DIR}/
+    -p ${PROJECT_BINARY_DIR}
+    -j 2
+    -quiet
+  DEPENDS
+    MLIRConversionPassIncGen
+    MLIRForthOpsIncGen
+  COMMENT "Running clang-tidy"
+  VERBATIM
+)
 
 # Test infrastructure (lit + FileCheck)
 find_program(LIT_COMMAND NAMES lit llvm-lit
