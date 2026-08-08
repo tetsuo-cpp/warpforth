@@ -64,7 +64,7 @@ static std::string toUpperCase(llvm::StringRef str) {
 
 ForthLexer::ForthLexer(llvm::SourceMgr &sourceMgr, unsigned bufferID)
     : sourceMgr(sourceMgr), bufferID(bufferID) {
-  auto buffer = sourceMgr.getMemoryBuffer(bufferID);
+  const auto *buffer = sourceMgr.getMemoryBuffer(bufferID);
   curPtr = buffer->getBufferStart();
   endPtr = buffer->getBufferEnd();
 }
@@ -103,13 +103,13 @@ bool ForthLexer::isWhitespace(char c) const {
 }
 
 void ForthLexer::reset() {
-  auto buffer = sourceMgr.getMemoryBuffer(bufferID);
+  const auto *buffer = sourceMgr.getMemoryBuffer(bufferID);
   curPtr = buffer->getBufferStart();
   endPtr = buffer->getBufferEnd();
 }
 
 void ForthLexer::resetTo(const char *ptr) {
-  auto buffer = sourceMgr.getMemoryBuffer(bufferID);
+  const auto *buffer = sourceMgr.getMemoryBuffer(bufferID);
   curPtr = ptr;
   endPtr = buffer->getBufferEnd();
 }
@@ -226,7 +226,7 @@ LogicalResult ForthParser::emitErrorAt(llvm::SMLoc loc,
 }
 
 LogicalResult ForthParser::parseHeader() {
-  auto buffer = sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID());
+  const auto *buffer = sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID());
   const char *bufStart = buffer->getBufferStart();
   const char *bufEnd = buffer->getBufferEnd();
 
@@ -483,9 +483,11 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   }
 
   // Built-in operations
+  // Keep these in one dispatch chain so the alternatives remain visually
+  // grouped despite each branch returning.
   if (word == "DUP") {
     return builder.create<forth::DupOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "DROP") {
+  } else if (word == "DROP") { // NOLINT(llvm-else-after-return)
     return builder.create<forth::DropOp>(loc, stackType, inputStack)
         .getResult();
   } else if (word == "SWAP") {

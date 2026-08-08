@@ -9,8 +9,8 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
-#include "llvm/Support/SourceMgr.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/SourceMgr.h"
 #include <string>
 #include <unordered_set>
 #include <vector>

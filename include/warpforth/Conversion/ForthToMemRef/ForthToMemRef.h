@@ -1,11 +1,12 @@
+#ifndef WARPFORTH_CONVERSION_FORTHTOMEMREF_FORTHTOMEMREF_H
+#define WARPFORTH_CONVERSION_FORTHTOMEMREF_FORTHTOMEMREF_H
+
 //===- ForthToMemRef.h - Forth to MemRef conversion ------------*- C++ -*-===//
 //
 // This file declares the pass for converting Forth dialect operations to
 // MemRef dialect operations.
 //
 //===----------------------------------------------------------------------===//
-
-#pragma once
 
 #include "mlir/Pass/Pass.h"
 #include <memory>
@@ -21,3 +22,5 @@ std::unique_ptr<Pass> createConvertForthToMemRefPass();
 
 } // namespace warpforth
 } // namespace mlir
+
+#endif

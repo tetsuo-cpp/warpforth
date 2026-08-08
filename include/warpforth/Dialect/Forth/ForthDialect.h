@@ -1,10 +1,11 @@
+#ifndef WARPFORTH_DIALECT_FORTH_FORTHDIALECT_H
+#define WARPFORTH_DIALECT_FORTH_FORTHDIALECT_H
+
 //===- ForthDialect.h - Forth dialect ---------------------------*- C++ -*-===//
 //
 // This file defines the Forth dialect.
 //
 //===----------------------------------------------------------------------===//
-
-#pragma once
 
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/Dialect.h"
@@ -19,3 +20,5 @@
 
 #define GET_OP_CLASSES
 #include "warpforth/Dialect/Forth/ForthOps.h.inc"
+
+#endif

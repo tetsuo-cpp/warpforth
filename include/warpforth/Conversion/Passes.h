@@ -1,10 +1,11 @@
+#ifndef WARPFORTH_CONVERSION_PASSES_H
+#define WARPFORTH_CONVERSION_PASSES_H
+
 //===- Passes.h - Conversion Pass Registration -----------------*- C++ -*-===//
 //
 // This file declares the registration functions for conversion passes.
 //
 //===----------------------------------------------------------------------===//
-
-#pragma once
 
 #include "mlir/Pass/Pass.h"
 #include <memory>
@@ -22,3 +23,5 @@ void buildWarpForthPipeline(OpPassManager &pm);
 
 } // namespace warpforth
 } // namespace mlir
+
+#endif
