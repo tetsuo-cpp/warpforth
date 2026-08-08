@@ -1,0 +1,73 @@
+Checks: >
+  -*,
+  clang-diagnostic-*,
+  llvm-*,
+  misc-*,
+  -misc-const-correctness,
+  -misc-include-cleaner,
+  -misc-no-recursion,
+  -misc-non-private-member-variables-in-classes,
+  -misc-unused-parameters,
+  -misc-use-anonymous-namespace,
+  readability-identifier-naming,
+  bugprone-argument-comment,
+  bugprone-assert-side-effect,
+  bugprone-branch-clone,
+  bugprone-copy-constructor-init,
+  bugprone-dangling-handle,
+  bugprone-dynamic-static-initializers,
+  bugprone-macro-parentheses,
+  bugprone-macro-repeated-side-effects,
+  bugprone-misplaced-widening-cast,
+  bugprone-move-forwarding-reference,
+  bugprone-multiple-statement-macro,
+  bugprone-suspicious-semicolon,
+  bugprone-swapped-arguments,
+  bugprone-terminating-continue,
+  bugprone-unused-raii,
+  bugprone-unused-return-value,
+  modernize-loop-convert,
+  modernize-make-unique,
+  modernize-raw-string-literal,
+  modernize-use-bool-literals,
+  modernize-use-default-member-init,
+  modernize-use-emplace,
+  modernize-use-equals-default,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-using,
+  performance-for-range-copy,
+  performance-implicit-conversion-in-loop,
+  performance-inefficient-algorithm,
+  performance-inefficient-vector-operation,
+  performance-move-const-arg,
+  performance-no-automatic-move,
+  performance-trivially-destructible,
+  performance-unnecessary-copy-initialization,
+  performance-unnecessary-value-param,
+  readability-avoid-const-params-in-decls,
+  readability-const-return-type,
+  readability-container-size-empty,
+  readability-inconsistent-declaration-parameter-name,
+  readability-misleading-indentation,
+  readability-redundant-control-flow,
+  readability-redundant-smartptr-get,
+  readability-simplify-boolean-expr,
+  readability-simplify-subscript-expr,
+  readability-use-anyofallof
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/include/.*'
+ExcludeHeaderFilterRegex: '.*/build[^/]*/.*'
+CheckOptions:
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.FunctionCase: camelBack
+  readability-identifier-naming.FunctionIgnoredRegexp: LLVMFuzzerTestOneInput
+  readability-identifier-naming.IgnoreMainLikeFunctions: true
+  readability-identifier-naming.MemberCase: camelBack
+  readability-identifier-naming.ParameterCase: camelBack
+  readability-identifier-naming.UnionCase: CamelCase
+  readability-identifier-naming.VariableCase: camelBack
+  readability-redundant-member-init.IgnoreBaseInCopyConstructors: true
+  modernize-use-default-member-init.UseAssignment: true
+  modernize-use-using.IgnoreExternC: true
