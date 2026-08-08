@@ -1,10 +1,11 @@
+#ifndef WARPFORTH_TRANSLATION_FORTHTOMLIR_FORTHTOMLIR_H
+#define WARPFORTH_TRANSLATION_FORTHTOMLIR_FORTHTOMLIR_H
+
 //===- ForthToMLIR.h - Forth to MLIR translation ----------------*- C++ -*-===//
 //
 // This file declares the registration function for Forth-to-MLIR translation.
 //
 //===----------------------------------------------------------------------===//
-
-#pragma once
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -26,3 +27,5 @@ OwningOpRef<ModuleOp> parseForthSource(llvm::SourceMgr &sourceMgr,
 
 } // namespace forth
 } // namespace mlir
+
+#endif
