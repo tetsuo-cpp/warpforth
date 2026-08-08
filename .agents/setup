@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+llvm_version=20
+llvm_root="/usr/lib/llvm-${llvm_version}"
+export PATH="$llvm_root/bin:$PATH"
+
+run_step() {
+  local label="$1"
+  shift
+  local started=$SECONDS
+  printf '\n==> %s\n' "$label"
+  "$@"
+  printf '<== %s (%ss)\n' "$label" "$((SECONDS - started))"
+}
+
+install_system_dependencies() {
+  local packages=(
+    build-essential
+    ca-certificates
+    clang-format-20
+    cmake
+    curl
+    gnupg
+    libmlir-20-dev
+    llvm-20-dev
+    mlir-20-tools
+    ninja-build
+  )
+  local missing=()
+  local package
+
+  for package in "${packages[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed'; then
+      missing+=("$package")
+    fi
+  done
+
+  if ((${#missing[@]} == 0)); then
+    echo "System dependencies are already installed."
+    return
+  fi
+
+  if [[ ! -f /usr/share/keyrings/apt.llvm.org.gpg ]]; then
+    curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+      | gpg --dearmor \
+      | sudo tee /usr/share/keyrings/apt.llvm.org.gpg >/dev/null
+  fi
+
+  if [[ ! -f /etc/apt/sources.list.d/llvm-20.list ]]; then
+    echo "deb [signed-by=/usr/share/keyrings/apt.llvm.org.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-20 main" \
+      | sudo tee /etc/apt/sources.list.d/llvm-20.list >/dev/null
+  fi
+
+  sudo apt-get update
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+}
+
+install_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    echo "uv is already installed."
+    return
+  fi
+
+  curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL="$HOME/.local/bin" sh
+}
+
+configure_login_shell() {
+  local profile="$HOME/.bash_profile"
+  local marker="# WarpForth LLVM 20 environment"
+
+  touch "$profile"
+  if grep -Fqx "$marker" "$profile"; then
+    echo "Login-shell environment is already configured."
+    return
+  fi
+
+  cat >>"$profile" <<EOF
+
+$marker
+if [[ "\${PWD}" == "$repo_root" ]]; then
+  export LLVM_DIR="$llvm_root/lib/cmake/llvm"
+  export MLIR_DIR="$llvm_root/lib/cmake/mlir"
+  export PATH="$llvm_root/bin:\${PATH}"
+fi
+EOF
+}
+
+configure_build() {
+  local generator_args=()
+  if [[ ! -f "$repo_root/build/CMakeCache.txt" ]]; then
+    generator_args=(-G Ninja)
+  fi
+
+  cmake -S "$repo_root" -B "$repo_root/build" \
+    "${generator_args[@]}" \
+    -UCXX_SUPPORTS_CUSTOM_LINKER \
+    -ULINKER_SUPPORTS_COLOR_DIAGNOSTICS \
+    -ULLVM_USE_LINKER \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DMLIR_DIR="$llvm_root/lib/cmake/mlir" \
+    -DLLVM_DIR="$llvm_root/lib/cmake/llvm"
+}
+
+run_step "Install system dependencies" install_system_dependencies
+run_step "Install uv" install_uv
+run_step "Install locked Python dependencies" uv sync --frozen --project "$repo_root"
+run_step "Configure login-shell environment" configure_login_shell
+run_step "Configure CMake build" configure_build
+
+printf '\nWarpForth orb setup complete.\n'

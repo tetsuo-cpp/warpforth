@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+llvm_root=/usr/lib/llvm-20
+
+command -v cmake >/dev/null
+command -v uv >/dev/null
+test -f "$llvm_root/lib/cmake/mlir/MLIRConfig.cmake"
+
+echo "WarpForth orb environment is ready."
