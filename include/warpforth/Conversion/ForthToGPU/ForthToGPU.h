@@ -1,11 +1,11 @@
-#ifndef WARPFORTH_CONVERSION_FORTHTOGPU_FORTHTOGPU_H
-#define WARPFORTH_CONVERSION_FORTHTOGPU_FORTHTOGPU_H
-
 //===- ForthToGPU.h - Forth to GPU conversion pass -------------*- C++ -*-===//
 //
 // This file declares the pass for converting Forth dialect to GPU dialect.
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef WARPFORTH_CONVERSION_FORTHTOGPU_FORTHTOGPU_H
+#define WARPFORTH_CONVERSION_FORTHTOGPU_FORTHTOGPU_H
 
 #include "mlir/Pass/Pass.h"
 #include <memory>

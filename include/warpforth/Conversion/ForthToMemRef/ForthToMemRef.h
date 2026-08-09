@@ -1,12 +1,12 @@
-#ifndef WARPFORTH_CONVERSION_FORTHTOMEMREF_FORTHTOMEMREF_H
-#define WARPFORTH_CONVERSION_FORTHTOMEMREF_FORTHTOMEMREF_H
-
 //===- ForthToMemRef.h - Forth to MemRef conversion ------------*- C++ -*-===//
 //
 // This file declares the pass for converting Forth dialect operations to
 // MemRef dialect operations.
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef WARPFORTH_CONVERSION_FORTHTOMEMREF_FORTHTOMEMREF_H
+#define WARPFORTH_CONVERSION_FORTHTOMEMREF_FORTHTOMEMREF_H
 
 #include "mlir/Pass/Pass.h"
 #include <memory>

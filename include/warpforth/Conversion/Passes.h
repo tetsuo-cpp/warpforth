@@ -1,11 +1,11 @@
-#ifndef WARPFORTH_CONVERSION_PASSES_H
-#define WARPFORTH_CONVERSION_PASSES_H
-
 //===- Passes.h - Conversion Pass Registration -----------------*- C++ -*-===//
 //
 // This file declares the registration functions for conversion passes.
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef WARPFORTH_CONVERSION_PASSES_H
+#define WARPFORTH_CONVERSION_PASSES_H
 
 #include "mlir/Pass/Pass.h"
 #include <memory>
