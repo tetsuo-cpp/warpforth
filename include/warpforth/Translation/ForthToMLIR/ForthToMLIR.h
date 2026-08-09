@@ -1,11 +1,11 @@
-#ifndef WARPFORTH_TRANSLATION_FORTHTOMLIR_FORTHTOMLIR_H
-#define WARPFORTH_TRANSLATION_FORTHTOMLIR_FORTHTOMLIR_H
-
 //===- ForthToMLIR.h - Forth to MLIR translation ----------------*- C++ -*-===//
 //
 // This file declares the registration function for Forth-to-MLIR translation.
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef WARPFORTH_TRANSLATION_FORTHTOMLIR_FORTHTOMLIR_H
+#define WARPFORTH_TRANSLATION_FORTHTOMLIR_FORTHTOMLIR_H
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
