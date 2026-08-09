@@ -483,265 +483,355 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
   }
 
   // Built-in operations
-  // Keep these in one dispatch chain so the alternatives remain visually
-  // grouped despite each branch returning.
   if (word == "DUP") {
     return builder.create<forth::DupOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "DROP") { // NOLINT(llvm-else-after-return)
+  }
+  if (word == "DROP") {
     return builder.create<forth::DropOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SWAP") {
+  }
+  if (word == "SWAP") {
     return builder.create<forth::SwapOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "OVER") {
+  }
+  if (word == "OVER") {
     return builder.create<forth::OverOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "ROT") {
+  }
+  if (word == "ROT") {
     return builder.create<forth::RotOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "NIP") {
+  }
+  if (word == "NIP") {
     return builder.create<forth::NipOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "TUCK") {
+  }
+  if (word == "TUCK") {
     return builder.create<forth::TuckOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "PICK") {
+  }
+  if (word == "PICK") {
     return builder.create<forth::PickOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "ROLL") {
+  }
+  if (word == "ROLL") {
     return builder.create<forth::RollOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "+" || word == "ADD") {
+  }
+  if (word == "+" || word == "ADD") {
     return builder.create<forth::AddIOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "-" || word == "SUB") {
+  }
+  if (word == "-" || word == "SUB") {
     return builder.create<forth::SubIOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "*" || word == "MUL") {
+  }
+  if (word == "*" || word == "MUL") {
     return builder.create<forth::MulIOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "/" || word == "DIV") {
+  }
+  if (word == "/" || word == "DIV") {
     return builder.create<forth::DivIOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "F+") {
+  }
+  if (word == "F+") {
     return builder.create<forth::AddFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "F-") {
+  }
+  if (word == "F-") {
     return builder.create<forth::SubFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "F*") {
+  }
+  if (word == "F*") {
     return builder.create<forth::MulFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "F/") {
+  }
+  if (word == "F/") {
     return builder.create<forth::DivFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "FEXP") {
+  }
+  if (word == "FEXP") {
     return builder.create<forth::ExpFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "FSQRT") {
+  }
+  if (word == "FSQRT") {
     return builder.create<forth::SqrtFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "FLOG") {
+  }
+  if (word == "FLOG") {
     return builder.create<forth::LogFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "FABS") {
+  }
+  if (word == "FABS") {
     return builder.create<forth::AbsFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "FNEG") {
+  }
+  if (word == "FNEG") {
     return builder.create<forth::NegFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "FMAX") {
+  }
+  if (word == "FMAX") {
     return builder.create<forth::MaxFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "FMIN") {
+  }
+  if (word == "FMIN") {
     return builder.create<forth::MinFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "MOD") {
+  }
+  if (word == "MOD") {
     return builder.create<forth::ModOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "AND") {
+  }
+  if (word == "AND") {
     return builder.create<forth::AndOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "OR") {
+  }
+  if (word == "OR") {
     return builder.create<forth::OrOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "XOR") {
+  }
+  if (word == "XOR") {
     return builder.create<forth::XorOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "NOT") {
+  }
+  if (word == "NOT") {
     return builder.create<forth::NotOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "LSHIFT") {
+  }
+  if (word == "LSHIFT") {
     return builder.create<forth::LshiftOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "RSHIFT") {
+  }
+  if (word == "RSHIFT") {
     return builder.create<forth::RshiftOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "@") {
+  }
+  if (word == "@") {
     return builder.create<forth::LoadIOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "!") {
+  }
+  if (word == "!") {
     return builder.create<forth::StoreIOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "F@") {
+  }
+  if (word == "F@") {
     return builder.create<forth::LoadFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "F!") {
+  }
+  if (word == "F!") {
     return builder.create<forth::StoreFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "S@") {
+  }
+  if (word == "S@") {
     return builder.create<forth::SharedLoadIOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "S!") {
+  }
+  if (word == "S!") {
     return builder.create<forth::SharedStoreIOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SF@") {
+  }
+  if (word == "SF@") {
     return builder.create<forth::SharedLoadFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SF!") {
+  }
+  if (word == "SF!") {
     return builder.create<forth::SharedStoreFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "I8@") {
+  }
+  if (word == "I8@") {
     return builder.create<forth::LoadI8Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "I8!") {
+  }
+  if (word == "I8!") {
     return builder.create<forth::StoreI8Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SI8@") {
+  }
+  if (word == "SI8@") {
     return builder.create<forth::SharedLoadI8Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SI8!") {
+  }
+  if (word == "SI8!") {
     return builder.create<forth::SharedStoreI8Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "I16@") {
+  }
+  if (word == "I16@") {
     return builder.create<forth::LoadI16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "I16!") {
+  }
+  if (word == "I16!") {
     return builder.create<forth::StoreI16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SI16@") {
+  }
+  if (word == "SI16@") {
     return builder.create<forth::SharedLoadI16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SI16!") {
+  }
+  if (word == "SI16!") {
     return builder.create<forth::SharedStoreI16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "I32@") {
+  }
+  if (word == "I32@") {
     return builder.create<forth::LoadI32Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "I32!") {
+  }
+  if (word == "I32!") {
     return builder.create<forth::StoreI32Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SI32@") {
+  }
+  if (word == "SI32@") {
     return builder.create<forth::SharedLoadI32Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SI32!") {
+  }
+  if (word == "SI32!") {
     return builder.create<forth::SharedStoreI32Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "HF@") {
+  }
+  if (word == "HF@") {
     return builder.create<forth::LoadF16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "HF!") {
+  }
+  if (word == "HF!") {
     return builder.create<forth::StoreF16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SHF@") {
+  }
+  if (word == "SHF@") {
     return builder.create<forth::SharedLoadF16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SHF!") {
+  }
+  if (word == "SHF!") {
     return builder.create<forth::SharedStoreF16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "BF@") {
+  }
+  if (word == "BF@") {
     return builder.create<forth::LoadBF16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "BF!") {
+  }
+  if (word == "BF!") {
     return builder.create<forth::StoreBF16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SBF@") {
+  }
+  if (word == "SBF@") {
     return builder.create<forth::SharedLoadBF16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SBF!") {
+  }
+  if (word == "SBF!") {
     return builder.create<forth::SharedStoreBF16Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "F32@") {
+  }
+  if (word == "F32@") {
     return builder.create<forth::LoadF32Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "F32!") {
+  }
+  if (word == "F32!") {
     return builder.create<forth::StoreF32Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SF32@") {
+  }
+  if (word == "SF32@") {
     return builder.create<forth::SharedLoadF32Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "SF32!") {
+  }
+  if (word == "SF32!") {
     return builder.create<forth::SharedStoreF32Op>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "TID-X") {
+  }
+  if (word == "TID-X") {
     return builder.create<forth::ThreadIdXOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "TID-Y") {
+  }
+  if (word == "TID-Y") {
     return builder.create<forth::ThreadIdYOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "TID-Z") {
+  }
+  if (word == "TID-Z") {
     return builder.create<forth::ThreadIdZOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "BID-X") {
+  }
+  if (word == "BID-X") {
     return builder.create<forth::BlockIdXOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "BID-Y") {
+  }
+  if (word == "BID-Y") {
     return builder.create<forth::BlockIdYOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "BID-Z") {
+  }
+  if (word == "BID-Z") {
     return builder.create<forth::BlockIdZOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "BDIM-X") {
+  }
+  if (word == "BDIM-X") {
     return builder.create<forth::BlockDimXOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "BDIM-Y") {
+  }
+  if (word == "BDIM-Y") {
     return builder.create<forth::BlockDimYOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "BDIM-Z") {
+  }
+  if (word == "BDIM-Z") {
     return builder.create<forth::BlockDimZOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "GDIM-X") {
+  }
+  if (word == "GDIM-X") {
     return builder.create<forth::GridDimXOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "GDIM-Y") {
+  }
+  if (word == "GDIM-Y") {
     return builder.create<forth::GridDimYOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "GDIM-Z") {
+  }
+  if (word == "GDIM-Z") {
     return builder.create<forth::GridDimZOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "GLOBAL-ID") {
+  }
+  if (word == "GLOBAL-ID") {
     return builder.create<forth::GlobalIdOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "BARRIER") {
+  }
+  if (word == "BARRIER") {
     builder.create<forth::BarrierOp>(loc);
     return inputStack;
-  } else if (word == "=") {
+  }
+  if (word == "=") {
     return builder.create<forth::EqIOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "<") {
+  }
+  if (word == "<") {
     return builder.create<forth::LtIOp>(loc, stackType, inputStack).getResult();
-  } else if (word == ">") {
+  }
+  if (word == ">") {
     return builder.create<forth::GtIOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "<>") {
+  }
+  if (word == "<>") {
     return builder.create<forth::NeIOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "<=") {
+  }
+  if (word == "<=") {
     return builder.create<forth::LeIOp>(loc, stackType, inputStack).getResult();
-  } else if (word == ">=") {
+  }
+  if (word == ">=") {
     return builder.create<forth::GeIOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "F=") {
+  }
+  if (word == "F=") {
     return builder.create<forth::EqFOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "F<") {
+  }
+  if (word == "F<") {
     return builder.create<forth::LtFOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "F>") {
+  }
+  if (word == "F>") {
     return builder.create<forth::GtFOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "F<>") {
+  }
+  if (word == "F<>") {
     return builder.create<forth::NeFOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "F<=") {
+  }
+  if (word == "F<=") {
     return builder.create<forth::LeFOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "F>=") {
+  }
+  if (word == "F>=") {
     return builder.create<forth::GeFOp>(loc, stackType, inputStack).getResult();
-  } else if (word == "S>F") {
+  }
+  if (word == "S>F") {
     return builder.create<forth::IToFOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "F>S") {
+  }
+  if (word == "F>S") {
     return builder.create<forth::FToIOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "0=") {
+  }
+  if (word == "0=") {
     return builder.create<forth::ZeroEqOp>(loc, stackType, inputStack)
         .getResult();
-  } else if (word == "I" || word == "J" || word == "K") {
+  }
+  if (word == "I" || word == "J" || word == "K") {
     int64_t depth = (word == "I") ? 0 : (word == "J") ? 1 : 2;
     if (static_cast<int64_t>(loopStack.size()) < depth + 1) {
       (void)emitError("'" + word.str() + "' requires " +
