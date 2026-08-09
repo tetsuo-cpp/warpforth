@@ -108,8 +108,6 @@ uv run ruff format gpu_test/
 - C++17 required
 - Use `clang-format` (config in `.clang-format`)
 - Run `check-clang-tidy` after C++ changes; do not apply fixes automatically
-- Add `NOLINT` suppressions only for documented false positives or deliberate
-  project exceptions
 
 ## Agent Instructions
 
