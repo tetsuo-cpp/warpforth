@@ -82,6 +82,21 @@ These tools can be composed for debugging or inspecting intermediate stages:
   ./build/bin/warpforth-translate --mlir-to-ptx
 ```
 
+The pipeline accepts standard MLIR pipeline options for its NVVM target and
+output format. For example, to target Ampere while retaining textual PTX
+output:
+
+```bash
+./build/bin/warpforth-opt \
+  --pass-pipeline='builtin.module(warpforth-pipeline{chip=sm_80 features=+ptx70 opt-level=3 compilation-target=isa})' \
+  kernel.mlir
+```
+
+Available options are `chip` (default `sm_70`), `features` (default `+ptx60`),
+`libdevice` (the configured libdevice path by default), `opt-level` (`0`, `1`,
+`2`, or `3`; default `2`), and `compilation-target` (`llvm`, `isa`, `bin`, or
+`fatbin`; default `isa`, textual PTX).
+
 ## Language Reference
 
 WarpForth supports stack operations, integer and float arithmetic, control flow, global and shared memory access, reduced-width memory types, user-defined words with local variables, and GPU-specific operations.
