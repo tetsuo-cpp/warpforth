@@ -14,14 +14,20 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 // Base class for standard stack-to-stack operations.
 //===----------------------------------------------------------------------===//
 
-class Forth_StackOpBase<string mnemonic, list<Trait> traits = []>
-    : Forth_Op<mnemonic, !listconcat([Pure], traits)> {
+class Forth_StackOpBase<string mnemonic, list<Trait> traits = [Pure]>
+    : Forth_Op<mnemonic, traits> {
   let arguments = (ins Forth_StackType:$input_stack);
   let results = (outs Forth_StackType:$output_stack);
   let assemblyFormat = [{
     $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
   }];
 }
+
+class Forth_LoadOpBase<string mnemonic>
+    : Forth_StackOpBase<mnemonic, [MemoryEffects<[MemRead]>]>;
+
+class Forth_StoreOpBase<string mnemonic>
+    : Forth_StackOpBase<mnemonic, [MemoryEffects<[MemWrite]>]>;
 
 //===----------------------------------------------------------------------===//
 // Stack manipulation operations.
@@ -333,7 +339,7 @@ def Forth_RshiftOp : Forth_StackOpBase<"rshift"> {
 // Memory operations.
 //===----------------------------------------------------------------------===//
 
-def Forth_LoadIOp : Forth_StackOpBase<"loadi"> {
+def Forth_LoadIOp : Forth_LoadOpBase<"loadi"> {
   let summary = "Load i64 value from memory buffer";
   let description = [{
     Pops an address from the stack, loads an i64 value from memory,
@@ -342,7 +348,7 @@ def Forth_LoadIOp : Forth_StackOpBase<"loadi"> {
   }];
 }
 
-def Forth_StoreIOp : Forth_StackOpBase<"storei"> {
+def Forth_StoreIOp : Forth_StoreOpBase<"storei"> {
   let summary = "Store i64 value to memory buffer";
   let description = [{
     Pops an address and value from the stack, stores the i64 value to memory.
@@ -350,7 +356,7 @@ def Forth_StoreIOp : Forth_StackOpBase<"storei"> {
   }];
 }
 
-def Forth_LoadFOp : Forth_StackOpBase<"loadf"> {
+def Forth_LoadFOp : Forth_LoadOpBase<"loadf"> {
   let summary = "Load f64 value from memory buffer";
   let description = [{
     Pops an address from the stack, loads an f64 value from memory,
@@ -359,7 +365,7 @@ def Forth_LoadFOp : Forth_StackOpBase<"loadf"> {
   }];
 }
 
-def Forth_StoreFOp : Forth_StackOpBase<"storef"> {
+def Forth_StoreFOp : Forth_StoreOpBase<"storef"> {
   let summary = "Store f64 value to memory buffer";
   let description = [{
     Pops an address and value (i64 bit pattern of f64) from the stack,
@@ -368,7 +374,7 @@ def Forth_StoreFOp : Forth_StackOpBase<"storef"> {
   }];
 }
 
-def Forth_SharedLoadIOp : Forth_StackOpBase<"shared_loadi"> {
+def Forth_SharedLoadIOp : Forth_LoadOpBase<"shared_loadi"> {
   let summary = "Load i64 value from shared memory buffer";
   let description = [{
     Pops an address from the stack, loads an i64 value from shared/workgroup memory,
@@ -377,7 +383,7 @@ def Forth_SharedLoadIOp : Forth_StackOpBase<"shared_loadi"> {
   }];
 }
 
-def Forth_SharedStoreIOp : Forth_StackOpBase<"shared_storei"> {
+def Forth_SharedStoreIOp : Forth_StoreOpBase<"shared_storei"> {
   let summary = "Store i64 value to shared memory buffer";
   let description = [{
     Pops an address and value from the stack, stores the i64 value to
@@ -386,7 +392,7 @@ def Forth_SharedStoreIOp : Forth_StackOpBase<"shared_storei"> {
   }];
 }
 
-def Forth_SharedLoadFOp : Forth_StackOpBase<"shared_loadf"> {
+def Forth_SharedLoadFOp : Forth_LoadOpBase<"shared_loadf"> {
   let summary = "Load f64 value from shared memory buffer";
   let description = [{
     Pops an address from the stack, loads an f64 value from shared/workgroup memory,
@@ -395,7 +401,7 @@ def Forth_SharedLoadFOp : Forth_StackOpBase<"shared_loadf"> {
   }];
 }
 
-def Forth_SharedStoreFOp : Forth_StackOpBase<"shared_storef"> {
+def Forth_SharedStoreFOp : Forth_StoreOpBase<"shared_storef"> {
   let summary = "Store f64 value to shared memory buffer";
   let description = [{
     Pops an address and value (i64 bit pattern of f64) from the stack,
@@ -409,28 +415,28 @@ def Forth_SharedStoreFOp : Forth_StackOpBase<"shared_storef"> {
 //===----------------------------------------------------------------------===//
 
 // --- i8 ---
-def Forth_LoadI8Op : Forth_StackOpBase<"load_i8"> {
+def Forth_LoadI8Op : Forth_LoadOpBase<"load_i8"> {
   let summary = "Load i8 value from memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i8, sign-extends to i64, pushes result.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_StoreI8Op : Forth_StackOpBase<"store_i8"> {
+def Forth_StoreI8Op : Forth_StoreOpBase<"store_i8"> {
   let summary = "Truncate i64 to i8 and store to memory";
   let description = [{
     Pops address and value, truncates i64 to i8, stores to memory.
     Forth semantics: ( x addr -- )
   }];
 }
-def Forth_SharedLoadI8Op : Forth_StackOpBase<"shared_load_i8"> {
+def Forth_SharedLoadI8Op : Forth_LoadOpBase<"shared_load_i8"> {
   let summary = "Load i8 from shared memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i8 from shared memory, sign-extends to i64.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_SharedStoreI8Op : Forth_StackOpBase<"shared_store_i8"> {
+def Forth_SharedStoreI8Op : Forth_StoreOpBase<"shared_store_i8"> {
   let summary = "Truncate i64 to i8 and store to shared memory";
   let description = [{
     Pops address and value, truncates i64 to i8, stores to shared memory.
@@ -439,28 +445,28 @@ def Forth_SharedStoreI8Op : Forth_StackOpBase<"shared_store_i8"> {
 }
 
 // --- i16 ---
-def Forth_LoadI16Op : Forth_StackOpBase<"load_i16"> {
+def Forth_LoadI16Op : Forth_LoadOpBase<"load_i16"> {
   let summary = "Load i16 value from memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i16, sign-extends to i64, pushes result.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_StoreI16Op : Forth_StackOpBase<"store_i16"> {
+def Forth_StoreI16Op : Forth_StoreOpBase<"store_i16"> {
   let summary = "Truncate i64 to i16 and store to memory";
   let description = [{
     Pops address and value, truncates i64 to i16, stores to memory.
     Forth semantics: ( x addr -- )
   }];
 }
-def Forth_SharedLoadI16Op : Forth_StackOpBase<"shared_load_i16"> {
+def Forth_SharedLoadI16Op : Forth_LoadOpBase<"shared_load_i16"> {
   let summary = "Load i16 from shared memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i16 from shared memory, sign-extends to i64.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_SharedStoreI16Op : Forth_StackOpBase<"shared_store_i16"> {
+def Forth_SharedStoreI16Op : Forth_StoreOpBase<"shared_store_i16"> {
   let summary = "Truncate i64 to i16 and store to shared memory";
   let description = [{
     Pops address and value, truncates i64 to i16, stores to shared memory.
@@ -469,28 +475,28 @@ def Forth_SharedStoreI16Op : Forth_StackOpBase<"shared_store_i16"> {
 }
 
 // --- i32 ---
-def Forth_LoadI32Op : Forth_StackOpBase<"load_i32"> {
+def Forth_LoadI32Op : Forth_LoadOpBase<"load_i32"> {
   let summary = "Load i32 value from memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i32, sign-extends to i64, pushes result.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_StoreI32Op : Forth_StackOpBase<"store_i32"> {
+def Forth_StoreI32Op : Forth_StoreOpBase<"store_i32"> {
   let summary = "Truncate i64 to i32 and store to memory";
   let description = [{
     Pops address and value, truncates i64 to i32, stores to memory.
     Forth semantics: ( x addr -- )
   }];
 }
-def Forth_SharedLoadI32Op : Forth_StackOpBase<"shared_load_i32"> {
+def Forth_SharedLoadI32Op : Forth_LoadOpBase<"shared_load_i32"> {
   let summary = "Load i32 from shared memory, sign-extend to i64";
   let description = [{
     Pops an address, loads an i32 from shared memory, sign-extends to i64.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_SharedStoreI32Op : Forth_StackOpBase<"shared_store_i32"> {
+def Forth_SharedStoreI32Op : Forth_StoreOpBase<"shared_store_i32"> {
   let summary = "Truncate i64 to i32 and store to shared memory";
   let description = [{
     Pops address and value, truncates i64 to i32, stores to shared memory.
@@ -499,28 +505,28 @@ def Forth_SharedStoreI32Op : Forth_StackOpBase<"shared_store_i32"> {
 }
 
 // --- f16 ---
-def Forth_LoadF16Op : Forth_StackOpBase<"load_f16"> {
+def Forth_LoadF16Op : Forth_LoadOpBase<"load_f16"> {
   let summary = "Load f16 from memory, extend to f64, bitcast to i64";
   let description = [{
     Pops an address, loads f16, extends to f64, bitcasts to i64.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_StoreF16Op : Forth_StackOpBase<"store_f16"> {
+def Forth_StoreF16Op : Forth_StoreOpBase<"store_f16"> {
   let summary = "Bitcast i64 to f64, truncate to f16, store to memory";
   let description = [{
     Pops address and value, bitcasts i64 to f64, truncates to f16, stores.
     Forth semantics: ( x addr -- )
   }];
 }
-def Forth_SharedLoadF16Op : Forth_StackOpBase<"shared_load_f16"> {
+def Forth_SharedLoadF16Op : Forth_LoadOpBase<"shared_load_f16"> {
   let summary = "Load f16 from shared memory, extend to f64, bitcast to i64";
   let description = [{
     Pops an address, loads f16 from shared memory, extends to f64, bitcasts to i64.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_SharedStoreF16Op : Forth_StackOpBase<"shared_store_f16"> {
+def Forth_SharedStoreF16Op : Forth_StoreOpBase<"shared_store_f16"> {
   let summary = "Bitcast i64 to f64, truncate to f16, store to shared memory";
   let description = [{
     Pops address and value, bitcasts i64 to f64, truncates to f16, stores to shared memory.
@@ -529,28 +535,28 @@ def Forth_SharedStoreF16Op : Forth_StackOpBase<"shared_store_f16"> {
 }
 
 // --- bf16 ---
-def Forth_LoadBF16Op : Forth_StackOpBase<"load_bf16"> {
+def Forth_LoadBF16Op : Forth_LoadOpBase<"load_bf16"> {
   let summary = "Load bf16 from memory, extend to f64, bitcast to i64";
   let description = [{
     Pops an address, loads bf16, extends to f64, bitcasts to i64.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_StoreBF16Op : Forth_StackOpBase<"store_bf16"> {
+def Forth_StoreBF16Op : Forth_StoreOpBase<"store_bf16"> {
   let summary = "Bitcast i64 to f64, truncate to bf16, store to memory";
   let description = [{
     Pops address and value, bitcasts i64 to f64, truncates to bf16, stores.
     Forth semantics: ( x addr -- )
   }];
 }
-def Forth_SharedLoadBF16Op : Forth_StackOpBase<"shared_load_bf16"> {
+def Forth_SharedLoadBF16Op : Forth_LoadOpBase<"shared_load_bf16"> {
   let summary = "Load bf16 from shared memory, extend to f64, bitcast to i64";
   let description = [{
     Pops an address, loads bf16 from shared memory, extends to f64, bitcasts to i64.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_SharedStoreBF16Op : Forth_StackOpBase<"shared_store_bf16"> {
+def Forth_SharedStoreBF16Op : Forth_StoreOpBase<"shared_store_bf16"> {
   let summary = "Bitcast i64 to f64, truncate to bf16, store to shared memory";
   let description = [{
     Pops address and value, bitcasts i64 to f64, truncates to bf16, stores to shared memory.
@@ -559,28 +565,28 @@ def Forth_SharedStoreBF16Op : Forth_StackOpBase<"shared_store_bf16"> {
 }
 
 // --- f32 ---
-def Forth_LoadF32Op : Forth_StackOpBase<"load_f32"> {
+def Forth_LoadF32Op : Forth_LoadOpBase<"load_f32"> {
   let summary = "Load f32 from memory, extend to f64, bitcast to i64";
   let description = [{
     Pops an address, loads f32, extends to f64, bitcasts to i64.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_StoreF32Op : Forth_StackOpBase<"store_f32"> {
+def Forth_StoreF32Op : Forth_StoreOpBase<"store_f32"> {
   let summary = "Bitcast i64 to f64, truncate to f32, store to memory";
   let description = [{
     Pops address and value, bitcasts i64 to f64, truncates to f32, stores.
     Forth semantics: ( x addr -- )
   }];
 }
-def Forth_SharedLoadF32Op : Forth_StackOpBase<"shared_load_f32"> {
+def Forth_SharedLoadF32Op : Forth_LoadOpBase<"shared_load_f32"> {
   let summary = "Load f32 from shared memory, extend to f64, bitcast to i64";
   let description = [{
     Pops an address, loads f32 from shared memory, extends to f64, bitcasts to i64.
     Forth semantics: ( addr -- value )
   }];
 }
-def Forth_SharedStoreF32Op : Forth_StackOpBase<"shared_store_f32"> {
+def Forth_SharedStoreF32Op : Forth_StoreOpBase<"shared_store_f32"> {
   let summary = "Bitcast i64 to f64, truncate to f32, store to shared memory";
   let description = [{
     Pops address and value, bitcasts i64 to f64, truncates to f32, stores to shared memory.
