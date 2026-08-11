@@ -1,5 +1,5 @@
 \ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --warpforth-pipeline | %FileCheck %s
-\ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --convert-forth-to-memref --convert-scf-to-cf --convert-forth-to-gpu | %FileCheck %s --check-prefix=MID
+\ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --convert-forth-to-memref --convert-scf-to-cf --convert-forth-to-gpu | %FileCheck %s --check-prefix=MID --implicit-check-not="arith.constant true"
 
 \ Verify that LEAVE through the full pipeline produces a gpu.binary
 \ CHECK: gpu.binary @warpforth_module
@@ -8,7 +8,6 @@
 \ MID: gpu.module @warpforth_module
 \ MID: gpu.func @main(%arg0: memref<4xi64> {forth.param_name = "DATA"}) kernel
 \ MID: cf.br
-\ MID: cf.cond_br
 \ MID: gpu.return
 
 \! kernel main

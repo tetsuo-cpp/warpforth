@@ -7,8 +7,7 @@
 \ CHECK-NEXT:  %[[S2:.*]] = forth.constant %[[S1]](0 : i64) : !forth.stack -> !forth.stack
 \ CHECK:       cf.br ^bb1(%{{.*}} : !forth.stack)
 \ CHECK:     ^bb1(%[[B1:.*]]: !forth.stack):
-\ CHECK-NEXT:  %[[TRUE:.*]] = arith.constant true
-\ CHECK-NEXT:  cf.cond_br %[[TRUE]], ^bb[[EXIT:[0-9]+]](%[[B1]] : !forth.stack), ^bb{{[0-9]+}}(%[[B1]] : !forth.stack)
+\ CHECK-NEXT:  cf.br ^bb[[EXIT:[0-9]+]](%[[B1]] : !forth.stack)
 \ CHECK:     ^bb[[EXIT]](%[[B3:.*]]: !forth.stack):
 \ CHECK-NEXT:  return
 

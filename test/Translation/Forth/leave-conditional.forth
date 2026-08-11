@@ -16,7 +16,7 @@
 
 \ LEAVE branch: unconditional jump to exit
 \ CHECK:     ^bb[[LEAVE]](%{{.*}}: !forth.stack):
-\ CHECK:       cf.cond_br %true, ^bb[[EXIT]](%{{.*}} : !forth.stack), ^bb[[DEAD:[0-9]+]](%{{.*}} : !forth.stack)
+\ CHECK:       cf.br ^bb[[EXIT]](%{{.*}} : !forth.stack)
 
 \ Join (THEN merge): 1 DROP, crossing test, loop back to body or exit
 \ CHECK:     ^bb[[JOIN]](%{{.*}}: !forth.stack):
@@ -24,8 +24,9 @@
 \ CHECK:       arith.cmpi slt
 \ CHECK:       cf.cond_br
 
-\ Dead block from LEAVE
-\ CHECK:     ^bb[[DEAD]](%{{.*}}: !forth.stack):
+\ Unreachable continuation from LEAVE
+\ CHECK:     ^bb{{[0-9]+}}:  // no predecessors
+\ CHECK:       forth.stack
 \ CHECK:       cf.br ^bb[[JOIN]]
 
 \! kernel main

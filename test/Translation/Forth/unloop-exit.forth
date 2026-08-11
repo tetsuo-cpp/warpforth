@@ -11,7 +11,7 @@
 \ CHECK: ^bb[[#EXIT:]](%{{.*}}: !forth.stack):
 \ CHECK: return
 \ CHECK: ^bb[[#THEN]](%[[T:.*]]: !forth.stack):
-\ CHECK: cf.cond_br %true, ^bb[[#RET:]](%[[T]]{{.*}})
+\ CHECK: cf.br ^bb[[#RET:]](%[[T]] : !forth.stack)
 \ CHECK: ^bb[[#RET]](%[[R:.*]]: !forth.stack):
 \ CHECK: return %[[R]] : !forth.stack
 

@@ -15,6 +15,7 @@
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -924,6 +925,7 @@ LogicalResult ForthParser::parseBody(Value &stack) {
       consume();
     } else if (currentToken.kind == Token::Kind::Word) {
       Location loc = getLoc();
+      llvm::SMLoc tokenLoc = currentToken.location;
       StringRef word = currentToken.text;
 
       //=== IF ===
@@ -959,10 +961,10 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 
         // Pop the false-path block (from IF) - this becomes else-body start.
         if (cfStack.empty())
-          return emitError("ELSE without matching IF");
+          return emitErrorAt(tokenLoc, "ELSE without matching IF");
         auto [tag, joinBlock] = cfStack.pop_back_val();
         if (tag != CFTag::Orig)
-          return emitError("ELSE without matching IF");
+          return emitErrorAt(tokenLoc, "ELSE without matching IF");
 
         // Push merge block for THEN to pick up.
         cfStack.push_back({CFTag::Orig, mergeBlock});
@@ -977,10 +979,10 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 
         // Pop the join/merge block.
         if (cfStack.empty())
-          return emitError("THEN without matching IF");
+          return emitErrorAt(tokenLoc, "THEN without matching IF");
         auto [tag, joinBlock] = cfStack.pop_back_val();
         if (tag != CFTag::Orig)
-          return emitError("THEN without matching IF");
+          return emitErrorAt(tokenLoc, "THEN without matching IF");
 
         // Branch from current block to join.
         builder.create<cf::BranchOp>(loc, joinBlock, ValueRange{stack});
@@ -1014,10 +1016,10 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         auto [s1, flag] = emitPopFlag(loc, stack);
 
         if (cfStack.empty())
-          return emitError("UNTIL without matching BEGIN");
+          return emitErrorAt(tokenLoc, "UNTIL without matching BEGIN");
         auto [tag, loopBlock] = cfStack.pop_back_val();
         if (tag != CFTag::Dest)
-          return emitError("UNTIL without matching BEGIN");
+          return emitErrorAt(tokenLoc, "UNTIL without matching BEGIN");
 
         auto *exitBlock = createStackBlock(parentRegion, loc);
 
@@ -1037,10 +1039,10 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         auto [s1, flag] = emitPopFlag(loc, stack);
 
         if (cfStack.empty())
-          return emitError("WHILE without matching BEGIN");
+          return emitErrorAt(tokenLoc, "WHILE without matching BEGIN");
         auto [tag, loopBlock] = cfStack.pop_back_val();
         if (tag != CFTag::Dest)
-          return emitError("WHILE without matching BEGIN");
+          return emitErrorAt(tokenLoc, "WHILE without matching BEGIN");
 
         auto *bodyBlock = createStackBlock(parentRegion, loc);
         auto *exitBlock = createStackBlock(parentRegion, loc);
@@ -1063,20 +1065,20 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 
         // Pop loop header (from WHILE's re-push).
         if (cfStack.empty())
-          return emitError("REPEAT without matching WHILE");
+          return emitErrorAt(tokenLoc, "REPEAT without matching WHILE");
         auto [destTag, loopBlock] = cfStack.pop_back_val();
         if (destTag != CFTag::Dest)
-          return emitError("REPEAT without matching WHILE");
+          return emitErrorAt(tokenLoc, "REPEAT without matching WHILE");
 
         // Branch back to loop header.
         builder.create<cf::BranchOp>(loc, loopBlock, ValueRange{stack});
 
         // Pop exit block (from WHILE).
         if (cfStack.empty())
-          return emitError("REPEAT without matching WHILE");
+          return emitErrorAt(tokenLoc, "REPEAT without matching WHILE");
         auto [origTag, exitBlock] = cfStack.pop_back_val();
         if (origTag != CFTag::Orig)
-          return emitError("REPEAT without matching WHILE");
+          return emitErrorAt(tokenLoc, "REPEAT without matching WHILE");
 
         // Continue after exit.
         builder.setInsertionPointToStart(exitBlock);
@@ -1087,30 +1089,27 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         consume();
 
         if (loopStack.empty()) {
-          return emitError("LEAVE without matching DO");
+          return emitErrorAt(tokenLoc, "LEAVE without matching DO");
         }
 
         Region *parentRegion = builder.getInsertionBlock()->getParent();
         auto &ctx = loopStack.back();
 
-        // Continue parsing in a dead block to avoid inserting after a
-        // terminator. Use a dummy cond_br to create a reachable dead block that
-        // carries a stack argument, keeping cf->memref type conversion
-        // consistent.
-        auto *deadBlock = createStackBlock(parentRegion, loc);
-        Value cond = builder.create<arith::ConstantOp>(
-            loc, builder.getI1Type(), builder.getBoolAttr(true));
-        builder.create<cf::CondBranchOp>(loc, cond, ctx.exit, ValueRange{stack},
-                                         deadBlock, ValueRange{stack});
+        // Branch to the loop exit, then continue parsing in an unreachable
+        // block to avoid inserting after a terminator. Give the continuation
+        // its own stack so 1:N conversion needs no predecessor operands.
+        auto *deadBlock = new Block();
+        parentRegion->push_back(deadBlock);
+        builder.create<cf::BranchOp>(loc, ctx.exit, ValueRange{stack});
         builder.setInsertionPointToStart(deadBlock);
-        stack = deadBlock->getArgument(0);
+        stack = builder.create<forth::StackOp>(loc, stackType);
 
         //=== UNLOOP ===
       } else if (word == "UNLOOP") {
         consume();
 
         if (loopStack.empty()) {
-          return emitError("UNLOOP without matching DO");
+          return emitErrorAt(tokenLoc, "UNLOOP without matching DO");
         }
 
         // No-op: loop control uses CFG blocks and a memref counter, not the
@@ -1122,7 +1121,7 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         consume();
 
         if (!inWordDefinition) {
-          return emitError("EXIT outside word definition");
+          return emitErrorAt(tokenLoc, "EXIT outside word definition");
         }
 
         Region *parentRegion = builder.getInsertionBlock()->getParent();
@@ -1135,16 +1134,13 @@ LogicalResult ForthParser::parseBody(Value &stack) {
           builder.create<func::ReturnOp>(loc, returnBlock->getArgument(0));
         }
 
-        // Use a dummy cond_br to keep the dead block structurally reachable,
-        // matching the pattern used by LEAVE.
-        auto *deadBlock = createStackBlock(parentRegion, loc);
-        Value cond = builder.create<arith::ConstantOp>(
-            loc, builder.getI1Type(), builder.getBoolAttr(true));
-        builder.create<cf::CondBranchOp>(loc, cond, returnBlock,
-                                         ValueRange{stack}, deadBlock,
-                                         ValueRange{stack});
+        // Branch to the return block, then continue parsing in an unreachable
+        // block with its own stack, matching the pattern used by LEAVE.
+        auto *deadBlock = new Block();
+        parentRegion->push_back(deadBlock);
+        builder.create<cf::BranchOp>(loc, returnBlock, ValueRange{stack});
         builder.setInsertionPointToStart(deadBlock);
-        stack = deadBlock->getArgument(0);
+        stack = builder.create<forth::StackOp>(loc, stackType);
 
         //=== DO ===
       } else if (word == "DO") {
@@ -1188,7 +1184,7 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         consume();
 
         if (loopStack.empty()) {
-          return emitError("LOOP without matching DO");
+          return emitErrorAt(tokenLoc, "LOOP without matching DO");
         }
 
         auto ctx = loopStack.pop_back_val();
@@ -1201,7 +1197,7 @@ LogicalResult ForthParser::parseBody(Value &stack) {
         consume();
 
         if (loopStack.empty()) {
-          return emitError("+LOOP without matching DO");
+          return emitErrorAt(tokenLoc, "+LOOP without matching DO");
         }
 
         auto ctx = loopStack.pop_back_val();
@@ -1323,8 +1319,12 @@ LogicalResult ForthParser::parseLocals(Value &stack) {
 
 LogicalResult ForthParser::parseWordDefinition() {
   Location loc = getLoc();
-  auto savedInsertionPoint = builder.saveInsertionPoint();
+  OpBuilder::InsertionGuard insertionGuard(builder);
   inWordDefinition = true;
+  auto wordDefinitionGuard = llvm::make_scope_exit([&] {
+    inWordDefinition = false;
+    localVars.clear();
+  });
 
   consume(); // consume ':'
 
@@ -1366,12 +1366,6 @@ LogicalResult ForthParser::parseWordDefinition() {
   wordDefs.insert(wordName);
 
   consume(); // consume ';'
-
-  inWordDefinition = false;
-  localVars.clear();
-
-  // Restore insertion point
-  builder.restoreInsertionPoint(savedInsertionPoint);
   return success();
 }
 

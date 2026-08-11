@@ -1,4 +1,4 @@
 \ RUN: %not %warpforth-translate --forth-to-mlir %s 2>&1 | %FileCheck %s
-\ CHECK: {{.*}}then-without-if-error.forth:4:1: error: THEN without matching IF
+\ CHECK: {{.*}}leave-without-do-error.forth:4:1: error: LEAVE without matching DO
 \! kernel main
-THEN
+LEAVE
