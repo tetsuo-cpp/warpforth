@@ -100,6 +100,7 @@ private:
   std::unordered_set<std::string> wordDefs;
   std::vector<ParamDecl> paramDecls;
   std::vector<SharedDecl> sharedDecls;
+  llvm::StringMap<Value> paramValues;
   llvm::StringMap<Value> sharedAllocs;
   llvm::StringMap<Value> localVars;
   std::string kernelName;

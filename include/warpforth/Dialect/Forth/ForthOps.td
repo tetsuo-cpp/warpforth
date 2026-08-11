@@ -589,15 +589,18 @@ def Forth_SharedStoreF32Op : Forth_StackOpBase<"shared_store_f32"> {
 }
 
 def Forth_ParamRefOp : Forth_Op<"param_ref", [Pure]> {
-  let summary = "Push kernel parameter address onto stack";
+  let summary = "Push a kernel parameter onto the stack";
   let description = [{
-    Pushes the byte address of a named kernel parameter onto the stack.
-    Forth semantics: ( -- addr )
+    Pushes an array parameter's byte address or a scalar parameter's value onto
+    the stack.
+    Forth semantics: ( -- value )
   }];
-  let arguments = (ins Forth_StackType:$input_stack, StrAttr:$param_name);
+  let arguments = (ins Forth_StackType:$input_stack,
+                       AnyTypeOf<[I64MemRef, F64MemRef, I64, F64]>:$parameter);
   let results = (outs Forth_StackType:$output_stack);
   let assemblyFormat = [{
-    $input_stack $param_name attr-dict `:` type($input_stack) `->` type($output_stack)
+    $input_stack $parameter attr-dict `:` type($input_stack) `,`
+    type($parameter) `->` type($output_stack)
   }];
 }
 
