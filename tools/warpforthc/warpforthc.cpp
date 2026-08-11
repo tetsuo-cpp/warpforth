@@ -4,14 +4,24 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
+#include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
-#include "mlir/InitAllDialects.h"
-#include "mlir/InitAllExtensions.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassOptions.h"
-#include "mlir/Target/LLVMIR/Dialect/All.h"
+#include "mlir/Target/LLVM/NVVM/Target.h"
+#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/GPU/GPUToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "warpforth/Conversion/Passes.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
@@ -52,10 +62,20 @@ int main(int argc, char **argv) {
 
   // Parse Forth source to MLIR
   DialectRegistry registry;
-  registerAllDialects(registry);
-  registerAllExtensions(registry);
-  registerAllToLLVMIRTranslations(registry);
-  registry.insert<forth::ForthDialect>();
+  registry
+      .insert<forth::ForthDialect, arith::ArithDialect, cf::ControlFlowDialect,
+              func::FuncDialect, memref::MemRefDialect>();
+
+  arith::registerConvertArithToLLVMInterface(registry);
+  cf::registerConvertControlFlowToLLVMInterface(registry);
+  registerConvertFuncToLLVMInterface(registry);
+  registerConvertMemRefToLLVMInterface(registry);
+
+  registerBuiltinDialectTranslation(registry);
+  registerGPUDialectTranslation(registry);
+  registerLLVMDialectTranslation(registry);
+  registerNVVMDialectTranslation(registry);
+  NVVM::registerNVVMTargetInterfaceExternalModels(registry);
 
   MLIRContext context(registry);
   SourceMgrDiagnosticHandler diagHandler(sourceMgr, &context);
