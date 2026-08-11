@@ -1078,16 +1078,10 @@ struct FToIOpConversion : public OpConversionPattern<forth::FToIOp> {
   }
 };
 
-/// Template for converting GPU indexing ops to intrinsic ops.
-/// Creates an intrinsic op with the specified name and pushes the value onto
-/// the stack.
-template <typename ForthOp>
-struct IntrinsicOpConversion : public OpConversionPattern<ForthOp> {
-  IntrinsicOpConversion(const TypeConverter &typeConverter,
-                        MLIRContext *context, StringRef intrinsicName)
-      : OpConversionPattern<ForthOp>(typeConverter, context),
-        intrinsicName(intrinsicName) {}
-
+/// Converts a typed Forth GPU indexing op and pushes its i64 value.
+template <typename ForthOp, typename GPUOp, gpu::Dimension Dimension>
+struct GPUIndexOpConversion : public OpConversionPattern<ForthOp> {
+  using OpConversionPattern<ForthOp>::OpConversionPattern;
   using OneToNOpAdaptor =
       typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
 
@@ -1099,22 +1093,19 @@ struct IntrinsicOpConversion : public OpConversionPattern<ForthOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Create intrinsic op and push onto stack
-    Value intrinsicValue = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr(intrinsicName));
-    Value intrinsicI64 = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getI64Type(), intrinsicValue);
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, intrinsicI64);
+    Value gpuIndex =
+        rewriter.create<GPUOp>(loc, rewriter.getIndexType(), Dimension);
+    Value indexI64 = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getI64Type(), gpuIndex);
+    Value newSP = pushValue(loc, rewriter, memref, stackPtr, indexI64);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
     return success();
   }
-
-  std::string intrinsicName;
 };
 
 /// Conversion pattern for forth.global_id operation.
-/// Computes global_id = bid-x * bdim-x + tid-x using intrinsics.
+/// Computes global_id = bid-x * bdim-x + tid-x using typed GPU operations.
 struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
   GlobalIdOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<forth::GlobalIdOp>(typeConverter, context) {}
@@ -1128,13 +1119,12 @@ struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Create intrinsic ops for each component
-    Value bidX = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr("bid-x"));
-    Value bdimX = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr("bdim-x"));
-    Value tidX = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr("tid-x"));
+    Value bidX = rewriter.create<gpu::BlockIdOp>(loc, rewriter.getIndexType(),
+                                                 gpu::Dimension::x);
+    Value bdimX = rewriter.create<gpu::BlockDimOp>(loc, rewriter.getIndexType(),
+                                                   gpu::Dimension::x);
+    Value tidX = rewriter.create<gpu::ThreadIdOp>(loc, rewriter.getIndexType(),
+                                                  gpu::Dimension::x);
 
     // Compute: bid-x * bdim-x + tid-x
     Value product = rewriter.create<arith::MulIOp>(loc, bidX, bdimX);
@@ -1144,6 +1134,18 @@ struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
     Value newSP = pushValue(loc, rewriter, memref, stackPtr, globalIdI64);
 
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
+    return success();
+  }
+};
+
+/// Conversion pattern for forth.barrier operation.
+struct BarrierOpConversion : public OpConversionPattern<forth::BarrierOp> {
+  using OpConversionPattern<forth::BarrierOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(forth::BarrierOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<gpu::BarrierOp>(op);
     return success();
   }
 };
@@ -1325,14 +1327,10 @@ struct ConvertForthToMemRefPass
     // Mark Forth dialect as illegal (to be converted)
     target.addIllegalDialect<forth::ForthDialect>();
 
-    // Mark MemRef, Arith, LLVM, and CF dialects as legal
+    // Mark target dialects as legal.
     target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect,
-                           LLVM::LLVMDialect, cf::ControlFlowDialect,
-                           math::MathDialect>();
-
-    // Mark IntrinsicOp and BarrierOp as legal (to be lowered later)
-    target.addLegalOp<forth::IntrinsicOp>();
-    target.addLegalOp<forth::BarrierOp>();
+                           gpu::GPUDialect, LLVM::LLVMDialect,
+                           cf::ControlFlowDialect, math::MathDialect>();
 
     // Use dynamic legality for func operations to ensure they're properly
     // converted
@@ -1410,35 +1408,36 @@ struct ConvertForthToMemRefPass
         SharedLoadF32OpConversion, SharedStoreF32OpConversion,
         // Type conversions
         IToFOpConversion, FToIOpConversion,
-        // Control flow
-        PopFlagOpConversion, PopOpConversion, PushValueOpConversion>(
-        typeConverter, context);
+        // Control flow and synchronization
+        PopFlagOpConversion, PopOpConversion, PushValueOpConversion,
+        BarrierOpConversion>(typeConverter, context);
 
     // Add GPU indexing op conversion patterns
-    patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,
-                                                            context, "tid-x");
-    patterns.add<IntrinsicOpConversion<forth::ThreadIdYOp>>(typeConverter,
-                                                            context, "tid-y");
-    patterns.add<IntrinsicOpConversion<forth::ThreadIdZOp>>(typeConverter,
-                                                            context, "tid-z");
-    patterns.add<IntrinsicOpConversion<forth::BlockIdXOp>>(typeConverter,
-                                                           context, "bid-x");
-    patterns.add<IntrinsicOpConversion<forth::BlockIdYOp>>(typeConverter,
-                                                           context, "bid-y");
-    patterns.add<IntrinsicOpConversion<forth::BlockIdZOp>>(typeConverter,
-                                                           context, "bid-z");
-    patterns.add<IntrinsicOpConversion<forth::BlockDimXOp>>(typeConverter,
-                                                            context, "bdim-x");
-    patterns.add<IntrinsicOpConversion<forth::BlockDimYOp>>(typeConverter,
-                                                            context, "bdim-y");
-    patterns.add<IntrinsicOpConversion<forth::BlockDimZOp>>(typeConverter,
-                                                            context, "bdim-z");
-    patterns.add<IntrinsicOpConversion<forth::GridDimXOp>>(typeConverter,
-                                                           context, "gdim-x");
-    patterns.add<IntrinsicOpConversion<forth::GridDimYOp>>(typeConverter,
-                                                           context, "gdim-y");
-    patterns.add<IntrinsicOpConversion<forth::GridDimZOp>>(typeConverter,
-                                                           context, "gdim-z");
+    patterns.add<GPUIndexOpConversion<forth::ThreadIdXOp, gpu::ThreadIdOp,
+                                      gpu::Dimension::x>,
+                 GPUIndexOpConversion<forth::ThreadIdYOp, gpu::ThreadIdOp,
+                                      gpu::Dimension::y>,
+                 GPUIndexOpConversion<forth::ThreadIdZOp, gpu::ThreadIdOp,
+                                      gpu::Dimension::z>,
+                 GPUIndexOpConversion<forth::BlockIdXOp, gpu::BlockIdOp,
+                                      gpu::Dimension::x>,
+                 GPUIndexOpConversion<forth::BlockIdYOp, gpu::BlockIdOp,
+                                      gpu::Dimension::y>,
+                 GPUIndexOpConversion<forth::BlockIdZOp, gpu::BlockIdOp,
+                                      gpu::Dimension::z>,
+                 GPUIndexOpConversion<forth::BlockDimXOp, gpu::BlockDimOp,
+                                      gpu::Dimension::x>,
+                 GPUIndexOpConversion<forth::BlockDimYOp, gpu::BlockDimOp,
+                                      gpu::Dimension::y>,
+                 GPUIndexOpConversion<forth::BlockDimZOp, gpu::BlockDimOp,
+                                      gpu::Dimension::z>,
+                 GPUIndexOpConversion<forth::GridDimXOp, gpu::GridDimOp,
+                                      gpu::Dimension::x>,
+                 GPUIndexOpConversion<forth::GridDimYOp, gpu::GridDimOp,
+                                      gpu::Dimension::y>,
+                 GPUIndexOpConversion<forth::GridDimZOp, gpu::GridDimOp,
+                                      gpu::Dimension::z>>(typeConverter,
+                                                          context);
 
     // GlobalIdOp has custom pattern
     patterns.add<GlobalIdOpConversion>(typeConverter, context);

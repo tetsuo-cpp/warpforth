@@ -3,15 +3,11 @@ add_mlir_conversion_library(MLIRForthToGPUConversion
 
   DEPENDS
   MLIRConversionPassIncGen
-  MLIRForth
 
   LINK_LIBS PUBLIC
   MLIRIR
   MLIRPass
-  MLIRTransformUtils
   MLIRGPUDialect
   MLIRFuncDialect
   MLIRMemRefDialect
-  MLIRLLVMDialect
-  MLIRForth
 )

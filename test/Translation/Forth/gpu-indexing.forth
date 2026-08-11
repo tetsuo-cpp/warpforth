@@ -13,9 +13,10 @@
 \ CHECK: forth.grid_dim_y
 \ CHECK: forth.grid_dim_z
 \ CHECK: forth.global_id
+\ CHECK: forth.barrier
 \! kernel main
 TID-X TID-Y TID-Z
 BID-X BID-Y BID-Z
 BDIM-X BDIM-Y BDIM-Z
 GDIM-X GDIM-Y GDIM-Z
-GLOBAL-ID
+GLOBAL-ID BARRIER
