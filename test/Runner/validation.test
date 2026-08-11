@@ -1,0 +1,20 @@
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'i64[]:1,2x' 2>&1 | %FileCheck %s --check-prefix=INT-TRAILING
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'i64[]:9223372036854775808' 2>&1 | %FileCheck %s --check-prefix=INT-RANGE
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'i64[]:-9223372036854775809' 2>&1 | %FileCheck %s --check-prefix=INT-RANGE
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'f64[]:1.5x' 2>&1 | %FileCheck %s --check-prefix=FLOAT-TRAILING
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'f64[]:1e9999' 2>&1 | %FileCheck %s --check-prefix=FLOAT-RANGE
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'i64[]:1,,2' 2>&1 | %FileCheck %s --check-prefix=EMPTY
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'f64[]:1,' 2>&1 | %FileCheck %s --check-prefix=EMPTY
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'i64[]:1,2' --output-count 3 2>&1 | %FileCheck %s --check-prefix=COUNT-LARGE
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'i64[]:1,2' --output-count -1 2>&1 | %FileCheck %s --check-prefix=COUNT-NEGATIVE
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'i64[]:-9223372036854775808,9223372036854775807' --param 'f64:1.25e+2' --output-count 0 2>&1 | %FileCheck %s --check-prefix=VALID
+# RUN: %not %warpforth-runner-validate kernel.ptx --kernel main --param 'i64[]:+1,-2' --output-count 2 2>&1 | %FileCheck %s --check-prefix=VALID
+
+# INT-TRAILING: Error: invalid integer value '2x' in --param i64[]:1,2x: trailing characters
+# INT-RANGE: value is out of range for i64
+# FLOAT-TRAILING: Error: invalid float value '1.5x' in --param f64[]:1.5x: trailing characters
+# FLOAT-RANGE: Error: invalid float value '1e9999' in --param f64[]:1e9999: value is out of range for f64
+# EMPTY: empty comma-separated field
+# COUNT-LARGE: Error: --output-count 3 exceeds selected output array size 2
+# COUNT-NEGATIVE: Error: --output-count must not be negative
+# VALID: Error: CUDA execution unavailable in host-validation build

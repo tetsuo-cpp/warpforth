@@ -6,6 +6,6 @@ configure_file(
 
 add_custom_target(check-warpforth
   COMMAND ${LIT_COMMAND} ${CMAKE_CURRENT_BINARY_DIR} -v
-  DEPENDS warpforth-translate warpforth-opt
+  DEPENDS warpforth-translate warpforth-opt warpforth-runner-validate
   COMMENT "Running WarpForth lit tests"
 )

@@ -3,7 +3,7 @@ import lit.formats
 
 config.name = "WarpForth"
 config.test_format = lit.formats.ShTest(True)
-config.suffixes = [".forth", ".mlir"]
+config.suffixes = [".forth", ".mlir", ".test"]
 config.test_source_root = os.path.dirname(__file__)
 
 # Tool substitutions
@@ -12,6 +12,9 @@ config.substitutions.append(
 )
 config.substitutions.append(
     ("%warpforth-opt", os.path.join(config.warpforth_bin_root, "bin", "warpforth-opt"))
+)
+config.substitutions.append(
+    ("%warpforth-runner-validate", os.path.join(config.warpforth_bin_root, "bin", "warpforth-runner-validate"))
 )
 config.substitutions.append(
     ("%FileCheck", config.filecheck_path)
