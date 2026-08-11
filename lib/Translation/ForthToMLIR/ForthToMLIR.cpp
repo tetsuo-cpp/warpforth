@@ -1236,6 +1236,11 @@ LogicalResult ForthParser::parseBody(Value &stack) {
     return emitError("unclosed control flow (missing THEN, REPEAT, or UNTIL?)");
   }
 
+  if (!loopStack.empty()) {
+    loopStack.clear();
+    return emitError("unclosed DO (expected LOOP or +LOOP)");
+  }
+
   return success();
 }
 
