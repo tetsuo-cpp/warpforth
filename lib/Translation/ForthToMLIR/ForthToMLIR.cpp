@@ -419,15 +419,13 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
     }
   }
 
-  // Check if word is a param name (only valid outside word definitions)
+  // Check if word is a param name (only valid outside word definitions).
   if (!inWordDefinition) {
-    for (const auto &param : paramDecls) {
-      if (word == param.name) {
-        return builder
-            .create<forth::ParamRefOp>(loc, stackType, inputStack,
-                                       builder.getStringAttr(param.name))
-            .getResult();
-      }
+    auto it = paramValues.find(word);
+    if (it != paramValues.end()) {
+      return builder
+          .create<forth::ParamRefOp>(loc, stackType, inputStack, it->second)
+          .getOutputStack();
     }
   } else {
     for (const auto &param : paramDecls) {
@@ -1466,6 +1464,12 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
   // Create the entry block with arguments
   Block *entryBlock = funcOp.addEntryBlock();
   builder.setInsertionPointToStart(entryBlock);
+
+  // Resolve parameter names to their entry block arguments before parsing the
+  // kernel body. Param references then carry the argument as an SSA operand.
+  for (auto [param, argument] :
+       llvm::zip(paramDecls, entryBlock->getArguments()))
+    paramValues[param.name] = argument;
 
   // Emit shared memory allocations at kernel entry
   for (const auto &shared : sharedDecls) {

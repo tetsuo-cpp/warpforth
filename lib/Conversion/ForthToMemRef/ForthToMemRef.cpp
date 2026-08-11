@@ -715,7 +715,7 @@ struct ZeroEqOpConversion : public OpConversionPattern<forth::ZeroEqOp> {
 };
 
 /// Conversion pattern for forth.param_ref operation.
-/// Pushes the byte address of a named kernel parameter onto the stack.
+/// Pushes an array parameter's byte address or a scalar parameter's value.
 struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
   ParamRefOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<forth::ParamRefOp>(typeConverter, context) {}
@@ -728,40 +728,22 @@ struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
-
-    // Find the function argument with matching forth.param_name
-    auto funcOp = op->getParentOfType<func::FuncOp>();
-    if (!funcOp)
-      return rewriter.notifyMatchFailure(op, "not inside a func.func");
-
-    StringRef paramName = op.getParamName();
-    Value memrefArg;
-    for (unsigned i = 0; i < funcOp.getNumArguments(); ++i) {
-      auto nameAttr =
-          funcOp.getArgAttrOfType<StringAttr>(i, "forth.param_name");
-      if (nameAttr && nameAttr.getValue() == paramName) {
-        memrefArg = funcOp.getArgument(i);
-        break;
-      }
-    }
-    if (!memrefArg)
-      return rewriter.notifyMatchFailure(
-          op, "no function argument with param_name: " + paramName);
+    Value parameter = adaptor.getOperands()[1].front();
 
     Value valueToPush;
-    if (auto memrefType = dyn_cast<MemRefType>(memrefArg.getType())) {
+    if (isa<MemRefType>(parameter.getType())) {
       // Extract pointer as index, then cast to i64
       Value ptrIndex = rewriter.create<memref::ExtractAlignedPointerAsIndexOp>(
-          loc, memrefArg);
+          loc, parameter);
       valueToPush = rewriter.create<arith::IndexCastOp>(
           loc, rewriter.getI64Type(), ptrIndex);
-    } else if (memrefArg.getType().isInteger(64)) {
+    } else if (parameter.getType().isInteger(64)) {
       // Scalar i64 param: push value directly.
-      valueToPush = memrefArg;
-    } else if (memrefArg.getType().isF64()) {
+      valueToPush = parameter;
+    } else if (parameter.getType().isF64()) {
       // Scalar f64 param: bitcast to i64 for stack storage.
       valueToPush = rewriter.create<arith::BitcastOp>(
-          loc, rewriter.getI64Type(), memrefArg);
+          loc, rewriter.getI64Type(), parameter);
     } else {
       return rewriter.notifyMatchFailure(
           op, "unsupported param argument type for param_ref");
