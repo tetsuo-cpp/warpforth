@@ -1219,38 +1219,6 @@ struct PushValueOpConversion : public OpConversionPattern<forth::PushValueOp> {
   }
 };
 
-/// Custom FuncOp conversion that calls convertRegionTypes to convert ALL
-/// block args (including non-entry blocks used by CF branch ops).
-/// The built-in pattern only converts the entry block.
-struct FuncOpConversion : public OpConversionPattern<func::FuncOp> {
-  using OpConversionPattern::OpConversionPattern;
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
-
-  LogicalResult
-  matchAndRewrite(func::FuncOp funcOp, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto type = funcOp.getFunctionType();
-
-    TypeConverter::SignatureConversion result(type.getNumInputs());
-    SmallVector<Type, 1> newResults;
-    if (failed(getTypeConverter()->convertSignatureArgs(type.getInputs(),
-                                                        result)) ||
-        failed(getTypeConverter()->convertTypes(type.getResults(), newResults)))
-      return failure();
-
-    if (!funcOp.getFunctionBody().empty()) {
-      if (failed(rewriter.convertRegionTypes(&funcOp.getFunctionBody(),
-                                             *getTypeConverter(), &result)))
-        return failure();
-    }
-
-    auto newType = FunctionType::get(rewriter.getContext(),
-                                     result.getConvertedTypes(), newResults);
-    rewriter.modifyOpInPlace(funcOp, [&] { funcOp.setType(newType); });
-    return success();
-  }
-};
-
 /// Conversion pattern for cf::BranchOp with 1:N type conversion.
 /// The built-in populateBranchOpInterfaceTypeConversionPattern uses the old
 /// ArrayRef<Value> signature and crashes on 1:N conversions.
@@ -1425,9 +1393,12 @@ struct ConvertForthToMemRefPass
     // GlobalIdOp has custom pattern
     patterns.add<GlobalIdOpConversion>(typeConverter, context);
 
-    // Custom FuncOp + branch patterns for 1:N type conversion
-    patterns.add<FuncOpConversion, BranchOpConversion, CondBranchOpConversion>(
-        typeConverter, context);
+    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
+        patterns, typeConverter);
+
+    // Custom branch patterns are required for 1:N type conversion.
+    patterns.add<BranchOpConversion, CondBranchOpConversion>(typeConverter,
+                                                             context);
     populateCallOpTypeConversionPattern(patterns, typeConverter);
     populateReturnOpTypeConversionPattern(patterns, typeConverter);
 
