@@ -3,7 +3,7 @@
 \ CHECK: func.func private @EARLY_EXIT(%[[A:.*]]: !forth.stack) -> !forth.stack
 \ CHECK:   cf.cond_br %{{.*}}, ^[[THEN:bb.*]](%{{.*}}), ^[[JOIN:bb.*]](%{{.*}})
 \ CHECK: ^[[THEN]](%[[T:.*]]: !forth.stack):
-\ CHECK:   cf.cond_br %true, ^[[RET:bb.*]](%[[T]]{{.*}}), ^[[DEAD:bb.*]](%[[T]]
+\ CHECK:   cf.br ^[[RET:bb.*]](%[[T]] : !forth.stack)
 \ CHECK: ^[[JOIN]](%{{.*}}: !forth.stack):
 \ CHECK:   return %{{.*}} : !forth.stack
 \ CHECK: ^[[RET]](%[[R:.*]]: !forth.stack):

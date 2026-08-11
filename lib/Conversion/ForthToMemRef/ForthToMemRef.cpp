@@ -18,6 +18,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
 
 namespace mlir {
@@ -1269,6 +1270,13 @@ struct ConvertForthToMemRefPass
   void runOnOperation() override {
     auto *context = &getContext();
     auto module = getOperation();
+
+    // Dialect conversion does not rewrite unreachable blocks. Remove parser
+    // continuations before converting !forth.stack values 1:N.
+    IRRewriter rewriter(context);
+    module.walk([&](func::FuncOp funcOp) {
+      (void)eraseUnreachableBlocks(rewriter, funcOp->getRegions());
+    });
 
     ConversionTarget target(*context);
 
