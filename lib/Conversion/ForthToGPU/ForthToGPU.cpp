@@ -91,7 +91,8 @@ struct BarrierOpConversion : public OpConversionPattern<forth::BarrierOp> {
 };
 
 /// Applies conversion patterns to a function.
-static void applyConversionPatterns(Operation *op, MLIRContext *context) {
+static LogicalResult applyConversionPatterns(Operation *op,
+                                             MLIRContext *context) {
   ConversionTarget target(*context);
 
   // Mark forth.intrinsic and forth.barrier as illegal - they must be converted
@@ -105,9 +106,7 @@ static void applyConversionPatterns(Operation *op, MLIRContext *context) {
   RewritePatternSet patterns(context);
   patterns.add<IntrinsicOpConversion, BarrierOpConversion>(context);
 
-  if (failed(applyPartialConversion(op, target, std::move(patterns)))) {
-    return;
-  }
+  return applyPartialConversion(op, target, std::move(patterns));
 }
 
 /// Pass implementation that wraps func.func operations in a single gpu.module
@@ -130,13 +129,17 @@ struct ConvertForthToGPUPass
         rewriter.create<gpu::GPUModuleOp>(module.getLoc(), "warpforth_module");
 
     for (auto funcOp : funcsToConvert) {
-      convertFuncToGPU(funcOp, gpuModule, rewriter);
+      if (failed(convertFuncToGPU(funcOp, gpuModule, rewriter))) {
+        signalPassFailure();
+        return;
+      }
     }
   }
 
 private:
-  gpu::GPUFuncOp createGPUFunc(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
-                               IRRewriter &rewriter) {
+  FailureOr<gpu::GPUFuncOp> createGPUFunc(func::FuncOp funcOp,
+                                          gpu::GPUModuleOp gpuModule,
+                                          IRRewriter &rewriter) {
     rewriter.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
     auto gpuFunc = rewriter.create<gpu::GPUFuncOp>(
         funcOp.getLoc(), funcOp.getName(), funcOp.getFunctionType());
@@ -202,25 +205,34 @@ private:
     }
 
     // Apply conversion patterns to convert forth.intrinsic ops
-    applyConversionPatterns(gpuFunc, funcOp.getContext());
+    if (failed(applyConversionPatterns(gpuFunc, funcOp.getContext()))) {
+      rewriter.eraseOp(gpuFunc);
+      return failure();
+    }
 
     return gpuFunc;
   }
 
-  void convertFuncToGPU(func::FuncOp funcOp, gpu::GPUModuleOp gpuModule,
-                        IRRewriter &rewriter) {
+  LogicalResult convertFuncToGPU(func::FuncOp funcOp,
+                                 gpu::GPUModuleOp gpuModule,
+                                 IRRewriter &rewriter) {
     bool isKernel = funcOp->hasAttr("forth.kernel");
 
     if (isKernel) {
-      auto gpuFunc = createGPUFunc(funcOp, gpuModule, rewriter);
-      gpuFunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
-                       rewriter.getUnitAttr());
+      FailureOr<gpu::GPUFuncOp> gpuFunc =
+          createGPUFunc(funcOp, gpuModule, rewriter);
+      if (failed(gpuFunc))
+        return failure();
+      (*gpuFunc)->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
+                          rewriter.getUnitAttr());
       rewriter.eraseOp(funcOp);
     } else {
       funcOp->moveBefore(&gpuModule.getBodyRegion().front(),
                          gpuModule.getBodyRegion().front().end());
-      applyConversionPatterns(funcOp, funcOp.getContext());
+      if (failed(applyConversionPatterns(funcOp, funcOp.getContext())))
+        return failure();
     }
+    return success();
   }
 };
 
