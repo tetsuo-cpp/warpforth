@@ -138,20 +138,8 @@ bool ForthLexer::isFloat(const std::string &str) const {
   if (str.empty())
     return false;
 
-  // Try to parse as a double. A valid float must contain a '.' or 'e'/'E'.
-  bool hasDotOrExp = false;
-  for (char c : str) {
-    if (c == '.' || c == 'e' || c == 'E') {
-      hasDotOrExp = true;
-      break;
-    }
-  }
-  if (!hasDotOrExp)
-    return false;
-
-  char *end = nullptr;
-  std::strtod(str.c_str(), &end);
-  return end == str.c_str() + str.size();
+  double value;
+  return llvm::to_float(str, value);
 }
 
 Token ForthLexer::nextToken() {
@@ -180,11 +168,10 @@ Token ForthLexer::nextToken() {
 
   std::string text(tokenStart, curPtr - tokenStart);
   Token::Kind kind;
-  if (isFloat(text)) {
-    kind = Token::Kind::Float;
-    // Don't uppercase float tokens (preserve original text for strtod)
-  } else if (isNumber(text)) {
+  if (isNumber(text)) {
     kind = Token::Kind::Number;
+  } else if (isFloat(text)) {
+    kind = Token::Kind::Float;
   } else {
     kind = Token::Kind::Word;
     text = toUpperCase(text);
