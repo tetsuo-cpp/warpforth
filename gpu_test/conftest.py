@@ -96,6 +96,8 @@ class VastSession:
         self.ssh_port: int | None = None
         self._atexit_registered = False
         self._creation_ambiguous = False
+        self._ssh_key_dir: tempfile.TemporaryDirectory[str] | None = None
+        self.ssh_private_key: Path | None = None
 
     def __enter__(self) -> Self:
         self._log_existing_instances()
@@ -103,18 +105,65 @@ class VastSession:
         atexit.register(self._atexit_cleanup)
         self._atexit_registered = True
         try:
+            self._prepare_ssh_key()
             self._launch()
             self._wait_for_ssh()
         except BaseException:
-            if self._destroy():
-                self._unregister_atexit()
+            try:
+                if self._destroy():
+                    self._unregister_atexit()
+            finally:
+                self._cleanup_ssh_key()
             raise
         else:
             return self
 
     def __exit__(self, *_: object) -> None:
-        if self._destroy():
-            self._unregister_atexit()
+        try:
+            if self._destroy():
+                self._unregister_atexit()
+        finally:
+            self._cleanup_ssh_key()
+
+    def _prepare_ssh_key(self) -> None:
+        """Generate an ephemeral SSH identity for this test session."""
+        self._ssh_key_dir = tempfile.TemporaryDirectory(prefix="warpforth-ssh-")
+        self.ssh_private_key = Path(self._ssh_key_dir.name) / "id_ed25519"
+        subprocess.run(
+            [
+                "ssh-keygen",
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-f",
+                str(self.ssh_private_key),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    def _attach_ssh_key(self) -> None:
+        """Attach this session's ephemeral public key to its Vast instance."""
+        if self.instance_id is None or self.ssh_private_key is None:
+            msg = "Cannot attach SSH key before instance and identity creation"
+            raise RuntimeError(msg)
+
+        public_key = self.ssh_private_key.with_suffix(".pub").read_text().strip()
+        result = self.sdk.attach_ssh(instance_id=self.instance_id, ssh_key=public_key)
+        if not isinstance(result, dict) or result.get("success") is False:
+            msg = f"Failed to attach ephemeral SSH key to instance {self.instance_id}"
+            raise RuntimeError(msg)
+        logger.info("Attached ephemeral SSH key to instance %s", self.instance_id)
+
+    def _cleanup_ssh_key(self) -> None:
+        """Remove this session's ephemeral local SSH key material."""
+        if self._ssh_key_dir is not None:
+            self._ssh_key_dir.cleanup()
+            self._ssh_key_dir = None
+            self.ssh_private_key = None
 
     def _show_instances(self) -> list[dict] | None:
         """Return the current account instances, or None if listing fails."""
@@ -282,7 +331,7 @@ class VastSession:
                         self.ssh_host,
                         self.ssh_port,
                     )
-                    # Wait for sshd to actually accept connections, then compile runner
+                    self._attach_ssh_key()
                     self._wait_for_sshd()
                     self._compile_runner()
                     return
@@ -399,12 +448,24 @@ class VastSession:
             self.instance_label,
             self.instance_id,
         )
-        self._destroy()
+        try:
+            self._destroy()
+        finally:
+            self._cleanup_ssh_key()
 
-    def _ssh_cmd(self) -> list[str]:
-        """Build base SSH command with connection options."""
+    def _ssh_options(self) -> list[str]:
+        if self.ssh_private_key is None:
+            msg = "Ephemeral SSH identity is not available"
+            raise RuntimeError(msg)
         return [
-            "ssh",
+            "-i",
+            str(self.ssh_private_key),
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "PreferredAuthentications=publickey",
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
@@ -415,6 +476,13 @@ class VastSession:
             "ConnectionAttempts=3",
             "-o",
             "LogLevel=ERROR",
+        ]
+
+    def _ssh_cmd(self) -> list[str]:
+        """Build base SSH command with connection options."""
+        return [
+            "ssh",
+            *self._ssh_options(),
             "-p",
             str(self.ssh_port),
             f"root@{self.ssh_host}",
@@ -439,16 +507,7 @@ class VastSession:
         subprocess.run(
             [
                 "scp",
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "UserKnownHostsFile=/dev/null",
-                "-o",
-                "ConnectTimeout=10",
-                "-o",
-                "ConnectionAttempts=3",
-                "-o",
-                "LogLevel=ERROR",
+                *self._ssh_options(),
                 "-P",
                 str(self.ssh_port),
                 str(local_path),

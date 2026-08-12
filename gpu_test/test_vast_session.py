@@ -29,6 +29,8 @@ class FakeVastAI:
         self.constructor_kwargs: dict[str, object] = {}
         self.hide_after_create = False
         self.hide_next_listing = False
+        self.attached_keys: list[tuple[int, str]] = []
+        self.attach_result: dict[str, bool] = {"success": True}
 
     def show_instances(self) -> list[dict[str, object]]:
         if self.hide_next_listing:
@@ -71,6 +73,10 @@ class FakeVastAI:
         ]
         return {"success": True}
 
+    def attach_ssh(self, *, instance_id: int, ssh_key: str) -> dict[str, bool]:
+        self.attached_keys.append((instance_id, ssh_key))
+        return self.attach_result
+
 
 def configure_session_test(
     monkeypatch: pytest.MonkeyPatch,
@@ -79,8 +85,11 @@ def configure_session_test(
 ) -> None:
     """Install deterministic SDK, sleep, and SSH behavior for one test."""
 
-    def no_wait(_session: VastSession) -> None:
-        return
+    def no_wait(session: VastSession) -> None:
+        for instance in sdk.instances:
+            if instance.get("id") == session.instance_id:
+                instance["actual_status"] = "running"
+        session._attach_ssh_key()
 
     def create_sdk(_api_key: str, **kwargs: object) -> FakeVastAI:
         sdk.constructor_kwargs = kwargs
@@ -98,13 +107,29 @@ def test_concurrent_sessions_destroy_only_their_own_instance(
     configure_session_test(monkeypatch, sdk)
 
     with VastSession("key") as first:
+        first_key_path = first.ssh_private_key
         with VastSession("key") as second:
+            second_key_path = second.ssh_private_key
             assert first.instance_label != second.instance_label
             assert {instance["id"] for instance in sdk.instances} == {100, 101}
+            assert [instance_id for instance_id, _key in sdk.attached_keys] == [100, 101]
+            assert sdk.attached_keys[0][1] != sdk.attached_keys[1][1]
+            assert first._ssh_cmd()[1:5] == [
+                "-i",
+                str(first_key_path),
+                "-o",
+                "IdentitiesOnly=yes",
+            ]
+            assert "BatchMode=yes" in first._ssh_cmd()
+            assert "PreferredAuthentications=publickey" in first._ssh_cmd()
         assert {instance["id"] for instance in sdk.instances} == {100}
+        assert second_key_path is not None
+        assert not second_key_path.exists()
 
     assert sdk.instances == []
     assert sdk.destroyed == [101, 100]
+    assert first_key_path is not None
+    assert not first_key_path.exists()
 
 
 def test_startup_logs_existing_instances_without_destroying_them(
@@ -179,6 +204,23 @@ def test_setup_interrupt_destroys_the_owned_instance(monkeypatch: pytest.MonkeyP
 
     assert sdk.instances == []
     assert sdk.destroyed == [100]
+
+
+def test_attach_failure_destroys_instance_and_removes_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdk = FakeVastAI()
+    sdk.attach_result = {"success": False}
+    configure_session_test(monkeypatch, sdk)
+    session = VastSession("key")
+
+    with pytest.raises(RuntimeError, match="Failed to attach ephemeral SSH key"), session:
+        pytest.fail("session setup unexpectedly completed")
+
+    assert sdk.instances == []
+    assert sdk.destroyed == [100]
+    assert session.ssh_private_key is None
+    assert session._ssh_key_dir is None
 
 
 def test_cleanup_verifies_instance_absence(monkeypatch: pytest.MonkeyPatch) -> None:
