@@ -6,13 +6,16 @@ dependencies = [
     "lit>=18.1.0",
     "numpy",
     "pytest",
-    "vastai-sdk",
+    "requests",
+    "vastai>=1.5.2",
 ]
 
 [dependency-groups]
 dev = ["ruff", "pytest-timeout"]
 
 [tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "INFO"
 markers = ["gpu: marks tests requiring GPU execution via Vast.ai"]
 timeout = 600
 testpaths = ["gpu_test"]
