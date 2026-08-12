@@ -44,9 +44,6 @@ class FakeVastAI:
     def create_instance(self, *, label: str, **kwargs: object) -> dict[str, object]:
         self.create_calls.append({"label": label, **kwargs})
         offer_id = int(str(kwargs["id"]))
-        if offer_id in self.rejected_offers:
-            return {"success": False}
-
         instance_id = self.next_id
         self.next_id += 1
         self.instances.append(
@@ -58,6 +55,8 @@ class FakeVastAI:
             }
         )
         self.hide_next_listing = self.hide_after_create
+        if offer_id in self.rejected_offers:
+            return {"success": False}
         if self.create_error is not None:
             raise self.create_error
         return {"success": True, "new_contract": instance_id}
@@ -161,7 +160,7 @@ def test_startup_logs_existing_instances_without_destroying_them(
     assert "will not be destroyed" in caplog.text
 
 
-def test_definitively_rejected_offer_tries_the_next_offer(
+def test_rejected_response_reconciles_without_creating_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sdk = FakeVastAI()
@@ -170,10 +169,11 @@ def test_definitively_rejected_offer_tries_the_next_offer(
 
     with VastSession("key") as session:
         assert session.instance_id == 100
-        assert sdk.create_calls[1]["runtype"] == "ssh_direc ssh_proxy"
+        assert sdk.create_calls[0]["runtype"] == "ssh_direc ssh_proxy"
         assert sdk.constructor_kwargs == {"retry": 1}
 
     assert sdk.destroyed == [100]
+    assert len(sdk.create_calls) == 1
 
 
 def test_ambiguous_create_failure_reconciles_by_unique_label(
