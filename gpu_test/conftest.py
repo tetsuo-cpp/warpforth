@@ -231,54 +231,45 @@ class VastSession:
             msg = "No suitable GPU offers found on Vast.ai"
             raise RuntimeError(msg)
 
-        candidates = offers if isinstance(offers, list) else [offers]
-        for offer in candidates:
-            offer_id = int(offer["id"]) if isinstance(offer, dict) else int(offer)
-            logger.info("Launching instance from offer %s", offer_id)
-            self._creation_ambiguous = True
-            try:
-                result = self.sdk.create_instance(
-                    id=offer_id,
-                    image="nvidia/cuda:12.4.0-devel-ubuntu22.04",
-                    disk=10.0,
-                    runtype="ssh_direc ssh_proxy",
-                    label=self.instance_label,
-                )
-            except RequestException:
-                logger.warning(
-                    "Instance creation result is ambiguous; reconciling label=%s",
-                    self.instance_label,
-                )
-                self._reconcile_instance()
-                return
-
-            if (
-                isinstance(result, dict)
-                and result.get("success") is True
-                and result.get("new_contract")
-            ):
-                self.instance_id = int(result["new_contract"])
-                self._creation_ambiguous = False
-                logger.info(
-                    "This GPU test session owns instance id=%s label=%s",
-                    self.instance_id,
-                    self.instance_label,
-                )
-                return
-            if isinstance(result, dict) and result.get("success") is False:
-                self._creation_ambiguous = False
-                logger.warning("Offer %s was rejected by Vast.ai; trying another offer", offer_id)
-                continue
-
+        offer = offers[0] if isinstance(offers, list) else offers
+        offer_id = int(offer["id"]) if isinstance(offer, dict) else int(offer)
+        logger.info("Launching instance from offer %s", offer_id)
+        self._creation_ambiguous = True
+        try:
+            result = self.sdk.create_instance(
+                id=offer_id,
+                image="nvidia/cuda:12.4.0-devel-ubuntu22.04",
+                disk=10.0,
+                runtype="ssh_direc ssh_proxy",
+                label=self.instance_label,
+            )
+        except RequestException:
             logger.warning(
-                "Instance creation response did not contain an ID; reconciling label=%s",
+                "Instance creation result is ambiguous; reconciling label=%s",
                 self.instance_label,
             )
             self._reconcile_instance()
             return
 
-        msg = "Vast.ai rejected all suitable GPU offers"
-        raise RuntimeError(msg)
+        if (
+            isinstance(result, dict)
+            and result.get("success") is True
+            and result.get("new_contract")
+        ):
+            self.instance_id = int(result["new_contract"])
+            self._creation_ambiguous = False
+            logger.info(
+                "This GPU test session owns instance id=%s label=%s",
+                self.instance_id,
+                self.instance_label,
+            )
+            return
+
+        logger.warning(
+            "Instance creation response did not contain an ID; reconciling label=%s",
+            self.instance_label,
+        )
+        self._reconcile_instance()
 
     def _reconcile_instance(self) -> None:
         """Find this run's instance by its exact unique label."""
