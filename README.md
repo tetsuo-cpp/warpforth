@@ -136,6 +136,11 @@ with `warpforth-test-` but never destroys instances owned by another run.
 Running multiple processes therefore increases Vast.ai usage and cost;
 pytest-xdist also rents one instance per worker.
 
+Each process generates an ephemeral SSH key and attaches only its public key to
+the instance it owns. The private key remains in a local temporary directory
+until teardown, so ad hoc machines and CI require only `VASTAI_API_KEY`; no
+account-level Vast.ai SSH key configuration is required.
+
 Normal teardown verifies that the process's instance was removed. A hard kill
 or machine failure can still bypass cleanup. If startup logs report a possible
 orphan, inspect the instance ID with `uv run vastai show instances` and remove
