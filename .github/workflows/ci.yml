@@ -57,3 +57,6 @@ jobs:
 
       - name: Ruff check
         run: uv run ruff check gpu_test/ && uv run ruff format --check gpu_test/
+
+      - name: Test GPU infrastructure
+        run: uv run pytest -q -m "not gpu"

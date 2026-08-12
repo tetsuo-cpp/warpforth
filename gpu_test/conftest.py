@@ -9,10 +9,13 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
+from requests import RequestException
 from vastai import VastAI
 
 if TYPE_CHECKING:
@@ -28,7 +31,7 @@ RUNNER_SRC = PROJECT_ROOT / "tools" / "warpforth-runner" / "warpforth-runner.cpp
 MAX_COST_PER_HOUR = 0.50
 POLL_INTERVAL_S = 10
 POLL_TIMEOUT_S = 300
-INSTANCE_LABEL = "warpforth-test"
+INSTANCE_LABEL_PREFIX = "warpforth-test-"
 REMOTE_TMP = "/tmp"  # noqa: S108
 
 
@@ -85,42 +88,93 @@ class VastSession:
     """
 
     def __init__(self, api_key: str) -> None:
-        self.sdk = VastAI(api_key)
+        self.sdk = VastAI(api_key, retry=1)
+        timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+        self.instance_label = f"{INSTANCE_LABEL_PREFIX}{timestamp}-{uuid4().hex}"
         self.instance_id: int | None = None
         self.ssh_host: str | None = None
         self.ssh_port: int | None = None
+        self._atexit_registered = False
+        self._creation_ambiguous = False
 
     def __enter__(self) -> Self:
-        self._cleanup_orphans()
-        self._launch()
-        self._wait_for_ssh()
+        self._log_existing_instances()
+        logger.info("This GPU test session owns label=%s", self.instance_label)
         atexit.register(self._atexit_cleanup)
-        return self
+        self._atexit_registered = True
+        try:
+            self._launch()
+            self._wait_for_ssh()
+        except BaseException:
+            if self._destroy():
+                self._unregister_atexit()
+            raise
+        else:
+            return self
 
     def __exit__(self, *_: object) -> None:
-        self._destroy()
+        if self._destroy():
+            self._unregister_atexit()
 
-    def _cleanup_orphans(self) -> None:
-        """Destroy any leftover instances with our label."""
+    def _show_instances(self) -> list[dict] | None:
+        """Return the current account instances, or None if listing fails."""
         try:
             instances = self.sdk.show_instances()
-            if not isinstance(instances, list):
-                return
-            for inst in instances:
-                if isinstance(inst, dict) and inst.get("label") == INSTANCE_LABEL:
-                    logger.warning("Destroying orphan instance %s", inst.get("id"))
-                    try:
-                        self.sdk.destroy_instance(id=int(inst["id"]))
-                    except Exception:
-                        logger.exception("Failed to destroy orphan %s", inst.get("id"))
         except Exception:
-            logger.exception("Failed to check for orphans")
+            logger.exception("Failed to list Vast.ai instances")
+            return None
+
+        if not isinstance(instances, list):
+            logger.warning("Vast.ai returned an invalid instance listing")
+            return None
+        return [inst for inst in instances if isinstance(inst, dict)]
+
+    def _log_existing_instances(self) -> None:
+        """Log existing WarpForth instances without modifying them."""
+        instances = self._show_instances()
+        if instances is None:
+            logger.warning("Could not check for existing WarpForth Vast.ai instances")
+            return
+
+        matching = [
+            inst
+            for inst in instances
+            if str(inst.get("label", "")).startswith(INSTANCE_LABEL_PREFIX)
+        ]
+        if not matching:
+            logger.info("No existing WarpForth Vast.ai instances found")
+            return
+
+        total_cost = 0.0
+        for inst in matching:
+            cost = float(inst.get("dph_total") or 0.0)
+            total_cost += cost
+            start_date = inst.get("start_date")
+            age = "unknown"
+            if isinstance(start_date, int | float):
+                age = f"{max(0.0, time.time() - start_date) / 60:.0f}m"
+            logger.warning(
+                "Existing WarpForth Vast.ai instance: id=%s label=%s status=%s "
+                "gpu=%s dph=$%.3f age=%s ownership=active run or orphan candidate",
+                inst.get("id"),
+                inst.get("label"),
+                inst.get("actual_status", inst.get("status", "unknown")),
+                inst.get("gpu_name", "unknown"),
+                cost,
+                age,
+            )
+        logger.warning(
+            "Found %d existing WarpForth Vast.ai instance(s), total known cost=$%.3f/hr; "
+            "they may belong to other active test runs and will not be destroyed",
+            len(matching),
+            total_cost,
+        )
 
     def _launch(self) -> None:
         """Find the cheapest suitable offer and launch an instance."""
         query = (
             f"num_gpus=1 rentable=True rented=False compute_cap>=700"
-            f" reliability2>=0.95 inet_up>=100 dph<={MAX_COST_PER_HOUR}"
+            f" reliability>=0.95 inet_up>=100 dph<={MAX_COST_PER_HOUR}"
         )
         offers = self.sdk.search_offers(query=query, order="dph", limit=5)
 
@@ -128,35 +182,79 @@ class VastSession:
             msg = "No suitable GPU offers found on Vast.ai"
             raise RuntimeError(msg)
 
-        # Pick the cheapest offer
-        offer = offers[0] if isinstance(offers, list) else offers
-        offer_id = int(offer["id"]) if isinstance(offer, dict) else int(offer)
+        candidates = offers if isinstance(offers, list) else [offers]
+        for offer in candidates:
+            offer_id = int(offer["id"]) if isinstance(offer, dict) else int(offer)
+            logger.info("Launching instance from offer %s", offer_id)
+            self._creation_ambiguous = True
+            try:
+                result = self.sdk.create_instance(
+                    id=offer_id,
+                    image="nvidia/cuda:12.4.0-devel-ubuntu22.04",
+                    disk=10.0,
+                    runtype="ssh_direc ssh_proxy",
+                    label=self.instance_label,
+                )
+            except RequestException:
+                logger.warning(
+                    "Instance creation result is ambiguous; reconciling label=%s",
+                    self.instance_label,
+                )
+                self._reconcile_instance()
+                return
 
-        logger.info("Launching instance from offer %s", offer_id)
+            if (
+                isinstance(result, dict)
+                and result.get("success") is True
+                and result.get("new_contract")
+            ):
+                self.instance_id = int(result["new_contract"])
+                self._creation_ambiguous = False
+                logger.info(
+                    "This GPU test session owns instance id=%s label=%s",
+                    self.instance_id,
+                    self.instance_label,
+                )
+                return
+            if isinstance(result, dict) and result.get("success") is False:
+                self._creation_ambiguous = False
+                logger.warning("Offer %s was rejected by Vast.ai; trying another offer", offer_id)
+                continue
 
-        # sdk.create_instance() has a bug where it doesn't return the response,
-        # so we find our instance by label via show_instances() instead.
-        self.sdk.create_instance(
-            id=offer_id,
-            image="nvidia/cuda:12.4.0-devel-ubuntu22.04",
-            disk=10.0,
-            ssh=True,
-            direct=True,
-            label=INSTANCE_LABEL,
-        )
+            logger.warning(
+                "Instance creation response did not contain an ID; reconciling label=%s",
+                self.instance_label,
+            )
+            self._reconcile_instance()
+            return
 
-        instances = self.sdk.show_instances()
-        if isinstance(instances, list):
-            for inst in instances:
-                if isinstance(inst, dict) and inst.get("label") == INSTANCE_LABEL:
-                    self.instance_id = int(inst["id"])
-                    break
+        msg = "Vast.ai rejected all suitable GPU offers"
+        raise RuntimeError(msg)
 
-        if self.instance_id is None:
-            msg = "Instance creation failed — not found in show_instances"
-            raise RuntimeError(msg)
+    def _reconcile_instance(self) -> None:
+        """Find this run's instance by its exact unique label."""
+        deadline = time.monotonic() + POLL_TIMEOUT_S
+        while time.monotonic() < deadline:
+            instances = self._show_instances()
+            if instances is not None:
+                matches = [inst for inst in instances if inst.get("label") == self.instance_label]
+                if len(matches) > 1:
+                    ids = [inst.get("id") for inst in matches]
+                    msg = f"Multiple instances found for unique label {self.instance_label}: {ids}"
+                    raise RuntimeError(msg)
+                if matches:
+                    self.instance_id = int(matches[0]["id"])
+                    self._creation_ambiguous = False
+                    logger.info(
+                        "This GPU test session owns instance id=%s label=%s",
+                        self.instance_id,
+                        self.instance_label,
+                    )
+                    return
+            time.sleep(POLL_INTERVAL_S)
 
-        logger.info("Instance %s created", self.instance_id)
+        msg = f"Could not reconcile instance with label {self.instance_label} after creation"
+        raise TimeoutError(msg)
 
     def _wait_for_ssh(self) -> None:
         """Poll until the instance is running and SSH is available."""
@@ -222,36 +320,86 @@ class VastSession:
         )
         self.ssh_run(nvcc_cmd, timeout=60)
 
-    def _destroy(self) -> None:
-        """Destroy the instance, retrying up to 3 times."""
-        if self.instance_id is None:
-            return
+    def _record_labeled_instance_ids(
+        self,
+        instances: list[dict],
+        instance_ids: set[int],
+    ) -> None:
+        """Record instances owned by this session's exact unique label."""
+        labeled_ids = {
+            int(inst["id"])
+            for inst in instances
+            if inst.get("label") == self.instance_label and inst.get("id") is not None
+        }
+        instance_ids.update(labeled_ids)
+        if labeled_ids:
+            self._creation_ambiguous = False
 
+    def _destroy(self) -> bool:
+        """Destroy only this session's instances and verify their absence."""
+        instance_ids = {self.instance_id} if self.instance_id is not None else set()
         retries = 3
         for attempt in range(retries):
-            try:
-                self.sdk.destroy_instance(id=self.instance_id)
-            except Exception:
-                logger.exception(
-                    "Destroy attempt %d/%d failed for instance %s",
-                    attempt + 1,
-                    retries,
-                    self.instance_id,
-                )
-                if attempt < retries - 1:
-                    time.sleep(5)
-            else:
-                logger.info("Instance %s destroyed", self.instance_id)
-                self.instance_id = None
-                return
+            instances = self._show_instances()
+            if instances is not None:
+                self._record_labeled_instance_ids(instances, instance_ids)
+                if not self._creation_ambiguous and not instance_ids:
+                    logger.info(
+                        "Verified cleanup for Vast.ai label=%s instance_ids=%s",
+                        self.instance_label,
+                        sorted(instance_ids),
+                    )
+                    self.instance_id = None
+                    return True
 
-        logger.error("Failed to destroy instance %s after %d attempts!", self.instance_id, retries)
+            for instance_id in instance_ids:
+                try:
+                    self.sdk.destroy_instance(id=instance_id)
+                except Exception:
+                    logger.exception(
+                        "Destroy attempt %d/%d failed for instance %s",
+                        attempt + 1,
+                        retries,
+                        instance_id,
+                    )
+
+            instances = self._show_instances()
+            if instances is not None:
+                self._record_labeled_instance_ids(instances, instance_ids)
+                listed_ids = {int(inst["id"]) for inst in instances if inst.get("id") is not None}
+                if not self._creation_ambiguous and not instance_ids & listed_ids:
+                    logger.info(
+                        "Verified cleanup for Vast.ai label=%s instance_ids=%s",
+                        self.instance_label,
+                        sorted(instance_ids),
+                    )
+                    self.instance_id = None
+                    return True
+
+            if attempt < retries - 1:
+                time.sleep(5)
+
+        logger.error(
+            "Could not verify cleanup for Vast.ai label=%s instance_ids=%s; "
+            "check the Vast.ai account and destroy these instances manually",
+            self.instance_label,
+            sorted(instance_ids),
+        )
+        return False
+
+    def _unregister_atexit(self) -> None:
+        if self._atexit_registered:
+            atexit.unregister(self._atexit_cleanup)
+            self._atexit_registered = False
 
     def _atexit_cleanup(self) -> None:
-        """Last-resort cleanup registered with atexit."""
-        if self.instance_id is not None:
-            logger.warning("atexit: destroying instance %s", self.instance_id)
-            self._destroy()
+        """Last-resort cleanup registered before instance creation."""
+        logger.warning(
+            "atexit: checking for Vast.ai instances with label=%s instance_id=%s",
+            self.instance_label,
+            self.instance_id,
+        )
+        self._destroy()
 
     def _ssh_cmd(self) -> list[str]:
         """Build base SSH command with connection options."""
