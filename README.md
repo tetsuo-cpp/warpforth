@@ -128,20 +128,3 @@ cmake --build build --target check-warpforth
 # Run end-to-end GPU tests (requires Vast.ai API key)
 VASTAI_API_KEY=xxx uv run pytest -v -m gpu
 ```
-
-Each GPU test process rents its own uniquely labeled Vast.ai instance, so GPU
-tests can run concurrently from separate checkouts or Amp threads using the
-same Vast.ai account. Each process logs existing instances whose labels start
-with `warpforth-test-` but never destroys instances owned by another run.
-Running multiple processes therefore increases Vast.ai usage and cost;
-pytest-xdist also rents one instance per worker.
-
-Each process generates an ephemeral SSH key and attaches only its public key to
-the instance it owns. The private key remains in a local temporary directory
-until teardown, so ad hoc machines and CI require only `VASTAI_API_KEY`; no
-account-level Vast.ai SSH key configuration is required.
-
-Normal teardown verifies that the process's instance was removed. A hard kill
-or machine failure can still bypass cleanup. If startup logs report a possible
-orphan, inspect the instance ID with `uv run vastai show instances` and remove
-only the confirmed orphan with `uv run vastai destroy instance <id>`.
