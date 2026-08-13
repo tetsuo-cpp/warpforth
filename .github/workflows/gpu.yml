@@ -1,0 +1,82 @@
+name: GPU
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [canon]
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  LLVM_VERSION: "20"
+
+jobs:
+  gpu-test:
+    if: >-
+      (github.event_name == 'pull_request' && github.event.label.name == 'gpu-test' &&
+      github.actor == github.repository_owner && github.triggering_actor == github.repository_owner &&
+      github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success')
+    concurrency:
+      group: gpu-ci
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Install LLVM ${{ env.LLVM_VERSION }} and MLIR
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          sudo add-apt-repository -y "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main"
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-${LLVM_VERSION} \
+            llvm-${LLVM_VERSION}-dev \
+            libmlir-${LLVM_VERSION}-dev \
+            mlir-${LLVM_VERSION}-tools
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-${LLVM_VERSION} \
+            -DCMAKE_CXX_COMPILER=clang++-${LLVM_VERSION} \
+            -DMLIR_DIR=/usr/lib/llvm-${LLVM_VERSION}/lib/cmake/mlir \
+            -DLLVM_DIR=/usr/lib/llvm-${LLVM_VERSION}/lib/cmake/llvm
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run GPU tests on Vast.ai
+        env:
+          VASTAI_API_KEY: ${{ secrets.VASTAI_API_KEY }}
+        run: |
+          if [ -z "$VASTAI_API_KEY" ]; then
+            echo "VASTAI_API_KEY repository secret is not configured" >&2
+            exit 1
+          fi
+          uv run pytest -v -m gpu
+
+      - name: Remove GPU test trigger label
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --method DELETE \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels/gpu-test"
