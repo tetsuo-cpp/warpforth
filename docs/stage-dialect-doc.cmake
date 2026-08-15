@@ -1,0 +1,3 @@
+file(READ "${INPUT}" DIALECT_DOC)
+string(REPLACE "\n[TOC]\n" "\n" DIALECT_DOC "${DIALECT_DOC}")
+file(WRITE "${OUTPUT}" "${DIALECT_DOC}")

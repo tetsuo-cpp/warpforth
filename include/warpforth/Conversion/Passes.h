@@ -24,10 +24,15 @@ struct WarpForthPipelineOptions
     : public PassPipelineOptions<WarpForthPipelineOptions> {
   WarpForthPipelineOptions();
 
+  /// NVVM target chip, such as `sm_70`.
   PassOptions::Option<std::string> chip;
+  /// NVVM target features, such as `+ptx60`.
   PassOptions::Option<std::string> features;
+  /// Path to the CUDA libdevice bitcode library.
   PassOptions::Option<std::string> libdevicePath;
+  /// NVVM target optimization level.
   PassOptions::Option<llvm::CodeGenOptLevel> optLevel;
+  /// GPU output format: LLVM bitcode, assembly, binary, or fat binary.
   PassOptions::Option<gpu::CompilationTarget> compilationTarget;
 };
 

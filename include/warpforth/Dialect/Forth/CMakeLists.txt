@@ -1,2 +1,5 @@
 add_mlir_dialect(ForthOps forth)
-add_mlir_doc(ForthDialect ForthDialect Dialects/ -gen-dialect-doc)
+
+set(LLVM_TARGET_DEFINITIONS ForthOps.td)
+mlir_tablegen(ForthDialect.md -gen-dialect-doc)
+add_public_tablegen_target(ForthDialectDocGen)

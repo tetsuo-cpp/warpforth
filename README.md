@@ -117,7 +117,7 @@ WarpForth compiles Forth through a series of MLIR dialect lowerings, each replac
 
 ## Demo
 
-The `demo/` directory contains a GPT-2 text generation demo that routes scaled dot-product attention through a WarpForth-compiled kernel. See [demo/README.md](demo/README.md) for setup instructions.
+The `demo/` directory contains a GPT-2 text generation demo that routes scaled dot-product attention through a WarpForth-compiled kernel. See [docs/demo.md](docs/demo.md) for setup instructions.
 
 ## Testing
 

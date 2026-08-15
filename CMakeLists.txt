@@ -34,6 +34,11 @@ add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
 
+option(WARPFORTH_ENABLE_DOCS "Build WarpForth documentation" OFF)
+if(WARPFORTH_ENABLE_DOCS)
+  add_subdirectory(docs)
+endif()
+
 # Add clang-tidy target after the TableGen targets it depends on are defined.
 find_program(CLANG_TIDY_EXECUTABLE
   NAMES clang-tidy-${LLVM_VERSION_MAJOR} clang-tidy
