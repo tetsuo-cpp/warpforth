@@ -109,6 +109,11 @@ uv run ruff format gpu_test/
 - Use `clang-format` (config in `.clang-format`)
 - Run `check-clang-tidy` after C++ changes; do not apply fixes automatically
 
+## Commit and PR Titles
+
+- Use Conventional Commits format for every commit message and PR title: `<type>(<scope>): <description>` (the scope is optional)
+- Prefer the established subsystem scopes, such as `translate`, `dialect`, `conversion`, `pipeline`, and `runner`
+
 ## Agent Instructions
 
 - Use context7 MCP for MLIR API documentation: query with `/websites/mlir_llvm` for MLIR dialects, operations, types, and conversion patterns
