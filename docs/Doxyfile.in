@@ -1,0 +1,29 @@
+PROJECT_NAME           = "WarpForth"
+PROJECT_BRIEF          = "C++ API Reference"
+OUTPUT_DIRECTORY       = "@WARPFORTH_DOC_HTML_DIR@/api"
+INPUT                  = "@PROJECT_SOURCE_DIR@/docs/api.md" \
+                         "@PROJECT_SOURCE_DIR@/include/warpforth" \
+                         "@PROJECT_SOURCE_DIR@/lib" \
+                         "@PROJECT_SOURCE_DIR@/tools"
+INCLUDE_PATH           = "@PROJECT_SOURCE_DIR@/include" \
+                         "@PROJECT_BINARY_DIR@/include"
+STRIP_FROM_PATH        = "@PROJECT_SOURCE_DIR@"
+STRIP_FROM_INC_PATH    = "@PROJECT_SOURCE_DIR@/include"
+USE_MDFILE_AS_MAINPAGE = "@PROJECT_SOURCE_DIR@/docs/api.md"
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.cpp
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+JAVADOC_AUTOBRIEF      = YES
+QUIET                  = YES
+WARNINGS               = NO
+GENERATE_HTML          = YES
+HTML_OUTPUT            = .
+GENERATE_TREEVIEW      = YES
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = YES
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+GENERATE_LATEX         = NO
+HAVE_DOT               = NO

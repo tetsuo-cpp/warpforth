@@ -29,6 +29,7 @@ jobs:
             clang-${LLVM_VERSION} \
             clang-format-${LLVM_VERSION} \
             clang-tidy-${LLVM_VERSION} \
+            doxygen \
             llvm-${LLVM_VERSION}-dev \
             libmlir-${LLVM_VERSION}-dev \
             mlir-${LLVM_VERSION}-tools
@@ -36,7 +37,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
 
       - name: Install Python dependencies
-        run: uv sync
+        run: uv sync --group docs
 
       - name: Configure
         run: |
@@ -45,13 +46,17 @@ jobs:
             -DCMAKE_C_COMPILER=clang-${LLVM_VERSION} \
             -DCMAKE_CXX_COMPILER=clang++-${LLVM_VERSION} \
             -DMLIR_DIR=/usr/lib/llvm-${LLVM_VERSION}/lib/cmake/mlir \
-            -DLLVM_DIR=/usr/lib/llvm-${LLVM_VERSION}/lib/cmake/llvm
+            -DLLVM_DIR=/usr/lib/llvm-${LLVM_VERSION}/lib/cmake/llvm \
+            -DWARPFORTH_ENABLE_DOCS=ON
 
       - name: Build
         run: cmake --build build
 
       - name: Test
         run: cmake --build build --target check-warpforth
+
+      - name: Build documentation
+        run: cmake --build build --target docs-warpforth
 
       - name: Check C++ with clang-tidy
         run: cmake --build build --target check-clang-tidy

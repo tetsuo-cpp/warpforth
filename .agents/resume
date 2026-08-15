@@ -7,6 +7,7 @@ command -v cmake >/dev/null
 command -v clang-20 >/dev/null
 command -v clang++-20 >/dev/null
 command -v clang-tidy-20 >/dev/null
+command -v doxygen >/dev/null
 command -v run-clang-tidy-20.py >/dev/null
 command -v uv >/dev/null
 test -f "$llvm_root/lib/cmake/mlir/MLIRConfig.cmake"

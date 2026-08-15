@@ -12,6 +12,11 @@ dependencies = [
 
 [dependency-groups]
 dev = ["ruff", "pytest-timeout"]
+docs = [
+    "furo",
+    "myst-parser",
+    "sphinx",
+]
 
 [tool.pytest.ini_options]
 log_cli = true

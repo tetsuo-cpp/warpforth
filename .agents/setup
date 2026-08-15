@@ -24,6 +24,7 @@ install_system_dependencies() {
     clang-tidy-20
     cmake
     curl
+    doxygen
     gnupg
     libmlir-20-dev
     llvm-20-dev
