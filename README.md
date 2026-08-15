@@ -2,6 +2,8 @@
 
 An MLIR-based Forth compiler for programming GPU kernels. WarpForth defines a custom MLIR dialect for Forth stack operations and lowers through a pipeline of passes to PTX assembly.
 
+See the [documentation](https://tetsuo-cpp.github.io/warpforth/).
+
 ## Dependencies
 
 - LLVM/MLIR
