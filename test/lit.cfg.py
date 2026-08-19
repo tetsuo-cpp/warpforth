@@ -14,6 +14,9 @@ config.substitutions.append(
     ("%warpforth-opt", os.path.join(config.warpforth_bin_root, "bin", "warpforth-opt"))
 )
 config.substitutions.append(
+    ("%warpforthc", os.path.join(config.warpforth_bin_root, "bin", "warpforthc"))
+)
+config.substitutions.append(
     ("%FileCheck", config.filecheck_path)
 )
 config.substitutions.append(

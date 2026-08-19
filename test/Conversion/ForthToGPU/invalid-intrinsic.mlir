@@ -2,11 +2,11 @@
 // RUN: %FileCheck %s < %t.err
 // RUN: test ! -s %t.out
 
-// CHECK: failed to legalize operation 'forth.intrinsic'
+// CHECK: invalid-intrinsic.forth:12:7: error: failed to legalize operation 'forth.intrinsic'
 
 module {
   func.func private @main() attributes {forth.kernel} {
-    %0 = forth.intrinsic "unknown" : index
+    %0 = forth.intrinsic "unknown" : index loc("invalid-intrinsic.forth":12:7)
     return
   }
 }
