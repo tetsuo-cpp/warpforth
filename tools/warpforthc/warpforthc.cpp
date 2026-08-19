@@ -12,6 +12,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
@@ -44,7 +45,9 @@ static llvm::cl::opt<std::string>
 
 int main(int argc, char **argv) {
   llvm::InitLLVM y(argc, argv);
+  warpforth::registerConversionPasses();
   registerMLIRContextCLOptions();
+  registerAsmPrinterCLOptions();
   registerPassManagerCLOptions();
   llvm::cl::ParseCommandLineOptions(argc, argv,
                                     "WarpForth compiler: Forth to PTX\n");
@@ -88,7 +91,8 @@ int main(int argc, char **argv) {
 
   // Run the compilation pipeline
   PassManager pm(&context);
-  (void)applyPassManagerCLOptions(pm);
+  if (failed(applyPassManagerCLOptions(pm)))
+    return 1;
   warpforth::buildWarpForthPipeline(pm);
   if (failed(pm.run(*module))) {
     llvm::errs() << "error: compilation pipeline failed\n";
