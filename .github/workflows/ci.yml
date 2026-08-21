@@ -30,9 +30,27 @@ jobs:
             clang-format-${LLVM_VERSION} \
             clang-tidy-${LLVM_VERSION} \
             doxygen \
+            libclang-${LLVM_VERSION}-dev \
             llvm-${LLVM_VERSION}-dev \
             libmlir-${LLVM_VERSION}-dev \
-            mlir-${LLVM_VERSION}-tools
+            mlir-${LLVM_VERSION}-tools \
+            ninja-build
+
+      - name: Build include-what-you-use
+        run: |
+          git init "${RUNNER_TEMP}/iwyu-src"
+          git -C "${RUNNER_TEMP}/iwyu-src" remote add origin \
+            https://github.com/include-what-you-use/include-what-you-use.git
+          git -C "${RUNNER_TEMP}/iwyu-src" fetch --depth 1 origin \
+            6e08906c66b3009f2d590e4bd40d60fa303bf803
+          git -C "${RUNNER_TEMP}/iwyu-src" checkout --detach FETCH_HEAD
+          cmake -S "${RUNNER_TEMP}/iwyu-src" -B "${RUNNER_TEMP}/iwyu-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/usr/lib/llvm-${LLVM_VERSION} \
+            -DCMAKE_INSTALL_PREFIX="${RUNNER_TEMP}/iwyu"
+          cmake --build "${RUNNER_TEMP}/iwyu-build" --parallel 2
+          cmake --install "${RUNNER_TEMP}/iwyu-build"
+          echo "${RUNNER_TEMP}/iwyu/bin" >> "$GITHUB_PATH"
 
       - uses: astral-sh/setup-uv@v4
 
@@ -60,6 +78,9 @@ jobs:
 
       - name: Check C++ with clang-tidy
         run: cmake --build build --target check-clang-tidy
+
+      - name: Check C++ includes
+        run: cmake --build build --target check-iwyu
 
       - name: Check C++ formatting
         run: cmake --build build --target check-format

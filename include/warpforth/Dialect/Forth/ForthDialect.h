@@ -7,13 +7,10 @@
 #ifndef WARPFORTH_DIALECT_FORTH_FORTHDIALECT_H
 #define WARPFORTH_DIALECT_FORTH_FORTHDIALECT_H
 
-#include "mlir/Bytecode/BytecodeOpInterface.h"
-#include "mlir/IR/Dialect.h"
-#include "mlir/IR/OpDefinition.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Bytecode/BytecodeOpInterface.h"    // IWYU pragma: keep
+#include "mlir/Interfaces/SideEffectInterfaces.h" // IWYU pragma: keep
 
-#include "warpforth/Dialect/Forth/ForthOpsDialect.h.inc"
+#include "warpforth/Dialect/Forth/ForthOpsDialect.h.inc" // IWYU pragma: keep
 
 #define GET_TYPEDEF_CLASSES
 #include "warpforth/Dialect/Forth/ForthOpsTypes.h.inc"
