@@ -31,6 +31,7 @@ class FakeVastAI:
         self.hide_next_listing = False
         self.attached_keys: list[tuple[int, str]] = []
         self.attach_result: dict[str, bool] = {"success": True}
+        self.search_calls: list[dict[str, object]] = []
 
     def show_instances(self) -> list[dict[str, object]]:
         if self.hide_next_listing:
@@ -38,7 +39,8 @@ class FakeVastAI:
             return []
         return [dict(instance) for instance in self.instances]
 
-    def search_offers(self, **_kwargs: object) -> list[dict[str, int]]:
+    def search_offers(self, **kwargs: object) -> list[dict[str, int]]:
+        self.search_calls.append(kwargs)
         return [{"id": 1}, {"id": 2}]
 
     def create_instance(self, *, label: str, **kwargs: object) -> dict[str, object]:
@@ -158,6 +160,18 @@ def test_startup_logs_existing_instances_without_destroying_them(
     assert "total known cost=$0.250/hr" in caplog.text
     assert "id=41" not in caplog.text
     assert "will not be destroyed" in caplog.text
+
+
+def test_architecture_constrains_gpu_offer_compute_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdk = FakeVastAI()
+    configure_session_test(monkeypatch, sdk)
+
+    with VastSession("key", arch="sm_89"):
+        pass
+
+    assert "compute_cap>=890" in str(sdk.search_calls[0]["query"])
 
 
 def test_rejected_response_reconciles_without_creating_again(

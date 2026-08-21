@@ -53,7 +53,7 @@ CELLS C + !
 Compile to PTX:
 
 ```bash
-./build/bin/warpforthc matmul.forth -o matmul.ptx
+./build/bin/warpforthc matmul.forth -o matmul.ptx --arch sm_80
 ```
 
 Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output):
@@ -97,7 +97,8 @@ output:
 Available options are `chip` (default `sm_70`), `features` (default `+ptx60`),
 `libdevice` (the configured libdevice path by default), `opt-level` (`0`, `1`,
 `2`, or `3`; default `2`), and `compilation-target` (`llvm`, `isa`, `bin`, or
-`fatbin`; default `isa`, textual PTX).
+`fatbin`; default `isa`, textual PTX). The pipeline's `chip` option accepts the
+same architectures as `warpforthc --arch`.
 
 ## Language Reference
 
@@ -128,5 +129,8 @@ The `demo/` directory contains a GPT-2 text generation demo that routes scaled d
 cmake --build build --target check-warpforth
 
 # Run end-to-end GPU tests (requires Vast.ai API key)
-VASTAI_API_KEY=xxx uv run pytest -v -m gpu
+VASTAI_API_KEY=xxx uv run pytest -v -m gpu --arch sm_80
 ```
+
+The GPU tests pass `--arch` to `warpforthc` and only consider Vast.ai GPUs with
+a compatible compute capability.
