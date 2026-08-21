@@ -1,7 +1,7 @@
 \ RUN: %warpforth-translate --forth-to-mlir %s | %FileCheck %s
 
 \ Check f64 scalar param becomes f64 function argument
-\ CHECK: func.func private @main(%arg0: memref<256xf64> {forth.param_name = "DATA"}, %arg1: f64 {forth.param_name = "SCALE"})
+\ CHECK: func.func @main(%arg0: memref<256xf64> {forth.param_name = "DATA"}, %arg1: f64 {forth.param_name = "SCALE"}) attributes {forth.kernel}
 
 \ Check param refs work
 \ CHECK: forth.param_ref %{{.*}} %arg0 : !forth.stack, memref<256xf64> -> !forth.stack
