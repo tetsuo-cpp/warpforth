@@ -5,7 +5,7 @@
 \ CHECK:   forth.addi
 \ CHECK:   return %{{.*}} : !forth.stack
 \ CHECK: }
-\ CHECK: func.func private @main()
+\ CHECK: func.func @main() attributes {forth.kernel}
 \ CHECK:   call @DOUBLE(%{{.*}}) : (!forth.stack) -> !forth.stack
 \! kernel main
 : DOUBLE DUP + ;

@@ -1433,7 +1433,7 @@ OwningOpRef<ModuleOp> ForthParser::parseModule() {
 
   auto funcType = builder.getFunctionType(argTypes, {});
   auto funcOp = builder.create<func::FuncOp>(loc, kernelName, funcType);
-  funcOp.setPrivate();
+  funcOp.setPublic();
   funcOp->setAttr("forth.kernel", builder.getUnitAttr());
 
   // Annotate arguments with param names

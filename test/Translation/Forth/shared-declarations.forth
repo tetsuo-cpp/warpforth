@@ -1,7 +1,7 @@
 \ RUN: %warpforth-translate --forth-to-mlir %s | %FileCheck %s
 
 \ Verify shared memory declarations produce tagged alloca and pointer push sequence
-\ CHECK: func.func private @main(%arg0: memref<256xi64> {forth.param_name = "DATA"})
+\ CHECK: func.func @main(%arg0: memref<256xi64> {forth.param_name = "DATA"}) attributes {forth.kernel}
 \ CHECK: memref.alloca() {forth.shared_name = "SCRATCH"} : memref<256xi64>
 \ CHECK: memref.extract_aligned_pointer_as_index
 \ CHECK: arith.index_cast
