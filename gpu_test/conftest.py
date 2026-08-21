@@ -33,6 +33,8 @@ POLL_INTERVAL_S = 10
 POLL_TIMEOUT_S = 300
 INSTANCE_LABEL_PREFIX = "warpforth-test-"
 REMOTE_TMP = "/tmp"  # noqa: S108
+DEFAULT_ARCHITECTURE = "sm_70"
+SUPPORTED_ARCHITECTURES = ("sm_70", "sm_75", "sm_80", "sm_86", "sm_89", "sm_90")
 
 
 @dataclass
@@ -52,11 +54,12 @@ class CompileError(Exception):
 class Compiler:
     """Wraps the local warpforthc binary to compile Forth source to PTX."""
 
-    def __init__(self, binary: Path = WARPFORTHC) -> None:
+    def __init__(self, binary: Path = WARPFORTHC, arch: str = DEFAULT_ARCHITECTURE) -> None:
         if not binary.exists():
             msg = f"warpforthc not found at {binary}; run: cmake --build build"
             raise FileNotFoundError(msg)
         self.binary = binary
+        self.arch = arch
 
     def compile_source(self, forth_src: str) -> str:
         """Compile Forth source code to PTX, returning PTX as a string."""
@@ -66,7 +69,7 @@ class Compiler:
 
         try:
             result = subprocess.run(
-                [self.binary, src_path],
+                [self.binary, src_path, "--arch", self.arch],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -87,8 +90,9 @@ class VastSession:
     readiness, and unconditional cleanup on exit.
     """
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, arch: str = DEFAULT_ARCHITECTURE) -> None:
         self.sdk = VastAI(api_key, retry=1)
+        self.arch = arch
         timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
         self.instance_label = f"{INSTANCE_LABEL_PREFIX}{timestamp}-{uuid4().hex}"
         self.instance_id: int | None = None
@@ -221,8 +225,9 @@ class VastSession:
 
     def _launch(self) -> None:
         """Find the cheapest suitable offer and launch an instance."""
+        minimum_compute_capability = int(self.arch.removeprefix("sm_")) * 10
         query = (
-            f"num_gpus=1 rentable=True rented=False compute_cap>=700"
+            f"num_gpus=1 rentable=True rented=False compute_cap>={minimum_compute_capability}"
             f" reliability>=0.95 inet_up>=100 dph<={MAX_COST_PER_HOUR}"
         )
         offers = self.sdk.search_offers(query=query, order="dph", limit=5)
@@ -689,18 +694,27 @@ class KernelRunner:
 # --- Fixtures ---
 
 
-@pytest.fixture(scope="session")
-def compiler() -> Compiler:
-    return Compiler()
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--arch",
+        choices=SUPPORTED_ARCHITECTURES,
+        default=DEFAULT_ARCHITECTURE,
+        help="GPU architecture used for PTX compilation and Vast.ai selection",
+    )
 
 
 @pytest.fixture(scope="session")
-def gpu_session() -> Generator[VastSession]:
+def compiler(pytestconfig: pytest.Config) -> Compiler:
+    return Compiler(arch=pytestconfig.getoption("arch"))
+
+
+@pytest.fixture(scope="session")
+def gpu_session(pytestconfig: pytest.Config) -> Generator[VastSession]:
     api_key = os.environ.get("VASTAI_API_KEY")
     if not api_key:
         pytest.skip("VASTAI_API_KEY not set")
 
-    with VastSession(api_key) as session:
+    with VastSession(api_key, arch=pytestconfig.getoption("arch")) as session:
         yield session
 
 

@@ -18,9 +18,28 @@
 #include "mlir/Transforms/Passes.h"
 #include "warpforth/Conversion/ForthToGPU/ForthToGPU.h"
 #include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace mlir {
 namespace warpforth {
+
+static constexpr llvm::StringLiteral supportedNVVMChips[] = {
+    "sm_70", "sm_75", "sm_80", "sm_86", "sm_89", "sm_90"};
+
+bool NVVMChipParser::parse(llvm::cl::Option &option, StringRef argName,
+                           StringRef arg, std::string &value) {
+  if (!llvm::is_contained(supportedNVVMChips, arg)) {
+    std::string supported;
+    llvm::raw_string_ostream os(supported);
+    llvm::interleaveComma(supportedNVVMChips, os);
+    return option.error("unsupported GPU architecture '" + arg +
+                            "'; supported architectures: " + os.str(),
+                        argName);
+  }
+  value = arg.str();
+  return false;
+}
 
 WarpForthPipelineOptions::WarpForthPipelineOptions()
     : chip(*this, "chip", llvm::cl::desc("NVVM target chip"),

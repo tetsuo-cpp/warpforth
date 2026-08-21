@@ -43,6 +43,10 @@ static llvm::cl::opt<std::string>
     outputFilename("o", llvm::cl::desc("Output filename"),
                    llvm::cl::value_desc("filename"), llvm::cl::init("-"));
 
+static llvm::cl::opt<std::string, false, warpforth::NVVMChipParser>
+    targetArchitecture("arch", llvm::cl::desc("GPU architecture"),
+                       llvm::cl::value_desc("sm_XX"), llvm::cl::init("sm_70"));
+
 int main(int argc, char **argv) {
   llvm::InitLLVM y(argc, argv);
   warpforth::registerConversionPasses();
@@ -93,7 +97,9 @@ int main(int argc, char **argv) {
   PassManager pm(&context);
   if (failed(applyPassManagerCLOptions(pm)))
     return 1;
-  warpforth::buildWarpForthPipeline(pm);
+  warpforth::WarpForthPipelineOptions pipelineOptions;
+  pipelineOptions.chip = targetArchitecture.getValue();
+  warpforth::buildWarpForthPipeline(pm, pipelineOptions);
   if (failed(pm.run(*module))) {
     llvm::errs() << "error: compilation pipeline failed\n";
     return 1;
