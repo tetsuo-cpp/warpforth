@@ -63,6 +63,28 @@ add_custom_target(check-clang-tidy
   VERBATIM
 )
 
+find_program(IWYU_EXECUTABLE NAMES include-what-you-use)
+find_program(IWYU_TOOL_EXECUTABLE NAMES iwyu_tool.py iwyu_tool)
+if(IWYU_EXECUTABLE AND IWYU_TOOL_EXECUTABLE)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_custom_target(check-iwyu
+    COMMAND ${CMAKE_COMMAND} -E env IWYU_BINARY=${IWYU_EXECUTABLE}
+      ${Python3_EXECUTABLE}
+      ${IWYU_TOOL_EXECUTABLE}
+      -p ${PROJECT_BINARY_DIR}
+      -j 2
+      --
+      -Xiwyu --no_fwd_decls
+    DEPENDS
+      MLIRConversionPassIncGen
+      MLIRForthOpsIncGen
+    COMMENT "Checking C++ includes with include-what-you-use"
+    VERBATIM
+  )
+else()
+  message(STATUS "include-what-you-use not found, skipping check-iwyu target")
+endif()
+
 # Test infrastructure (lit + FileCheck)
 find_program(LIT_COMMAND NAMES lit llvm-lit
   HINTS ${CMAKE_SOURCE_DIR}/.venv/bin)

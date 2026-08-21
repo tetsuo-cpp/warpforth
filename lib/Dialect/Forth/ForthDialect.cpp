@@ -5,15 +5,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "warpforth/Dialect/Forth/ForthDialect.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/DialectImplementation.h"
-#include "mlir/IR/OpImplementation.h"
-#include "llvm/ADT/TypeSwitch.h"
+#include "mlir/IR/Builders.h"              // IWYU pragma: keep
+#include "mlir/IR/DialectImplementation.h" // IWYU pragma: keep
+#include "llvm/ADT/TypeSwitch.h"           // IWYU pragma: keep
 
 using namespace mlir;
 using namespace mlir::forth;
 
-#include "warpforth/Dialect/Forth/ForthOpsDialect.cpp.inc"
+#include "warpforth/Dialect/Forth/ForthOpsDialect.cpp.inc" // IWYU pragma: keep
 
 #define GET_TYPEDEF_CLASSES
 #include "warpforth/Dialect/Forth/ForthOpsTypes.cpp.inc"

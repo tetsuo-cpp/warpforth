@@ -16,6 +16,9 @@ cmake --build build --target check-warpforth
 
 # Run clang-tidy
 cmake --build build --target check-clang-tidy
+
+# Check for unused C++ includes
+cmake --build build --target check-iwyu
 ```
 
 Requires Clang 20 and MLIR/LLVM with `MLIR_DIR` and `LLVM_DIR` configured in
@@ -108,6 +111,7 @@ uv run ruff format gpu_test/
 - C++17 required
 - Use `clang-format` (config in `.clang-format`)
 - Run `check-clang-tidy` after C++ changes; do not apply fixes automatically
+- Run `check-iwyu` after changing C++ includes
 
 ## Commit and PR Titles
 

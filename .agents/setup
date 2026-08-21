@@ -26,6 +26,7 @@ install_system_dependencies() {
     curl
     doxygen
     gnupg
+    libclang-20-dev
     libmlir-20-dev
     llvm-20-dev
     mlir-20-tools
@@ -59,6 +60,34 @@ install_system_dependencies() {
   sudo apt-get update
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
 }
+
+install_iwyu() (
+  local iwyu_commit=6e08906c66b3009f2d590e4bd40d60fa303bf803
+  local source_dir
+  local build_dir
+
+  if command -v include-what-you-use >/dev/null 2>&1 &&
+      include-what-you-use --version 2>&1 | grep -q '0\.24'; then
+    echo "include-what-you-use 0.24 is already installed."
+    return
+  fi
+
+  source_dir="$(mktemp -d)"
+  build_dir="$(mktemp -d)"
+  trap 'rm -rf "$source_dir" "$build_dir"' EXIT
+
+  git -C "$source_dir" init
+  git -C "$source_dir" remote add origin \
+    https://github.com/include-what-you-use/include-what-you-use.git
+  git -C "$source_dir" fetch --depth 1 origin "$iwyu_commit"
+  git -C "$source_dir" checkout --detach FETCH_HEAD
+  cmake -S "$source_dir" -B "$build_dir" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH="$llvm_root" \
+    -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+  cmake --build "$build_dir" --parallel 2
+  cmake --install "$build_dir"
+)
 
 install_uv() {
   if command -v uv >/dev/null 2>&1; then
@@ -111,6 +140,7 @@ configure_build() {
 }
 
 run_step "Install system dependencies" install_system_dependencies
+run_step "Install include-what-you-use" install_iwyu
 run_step "Install uv" install_uv
 run_step "Install locked Python dependencies" uv sync --frozen --project "$repo_root"
 run_step "Configure login-shell environment" configure_login_shell

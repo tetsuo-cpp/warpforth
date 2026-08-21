@@ -8,23 +8,21 @@
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h" // IWYU pragma: keep
+#include "mlir/Dialect/Func/IR/FuncOps.h"            // IWYU pragma: keep
+#include "mlir/Dialect/MemRef/IR/MemRef.h"           // IWYU pragma: keep
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Pass/PassOptions.h"
 #include "mlir/Target/LLVM/NVVM/Target.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/GPU/GPUToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "warpforth/Conversion/Passes.h"
-#include "warpforth/Dialect/Forth/ForthDialect.h"
+#include "warpforth/Dialect/Forth/ForthDialect.h" // IWYU pragma: keep
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
 #include "warpforth/Translation/MLIRToPTX/MLIRToPTX.h"
 #include "llvm/Support/CommandLine.h"

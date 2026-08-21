@@ -4,13 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/IR/Dialect.h"
-#include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllTranslations.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
-#include "warpforth/Dialect/Forth/ForthDialect.h"
+#include "warpforth/Dialect/Forth/ForthDialect.h" // IWYU pragma: keep
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
 #include "warpforth/Translation/MLIRToPTX/MLIRToPTX.h"
 

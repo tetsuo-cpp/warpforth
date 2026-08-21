@@ -8,10 +8,8 @@
 #define WARPFORTH_CONVERSION_PASSES_H
 
 #include "mlir/Dialect/GPU/IR/CompilationInterfaces.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassOptions.h"
 #include "llvm/Support/CodeGen.h"
-#include <memory>
 #include <string>
 
 namespace mlir {
