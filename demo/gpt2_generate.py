@@ -15,14 +15,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from typing import TYPE_CHECKING
 
 import torch
 import transformers.models.gpt2.modeling_gpt2 as gpt2_module
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from warpforth import AttentionKernel
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-def make_warpforth_eager_attn(attn_kernel: AttentionKernel):
+
+def make_warpforth_eager_attn(
+    attn_kernel: AttentionKernel,
+) -> Callable[..., tuple[torch.Tensor, None]]:
     """Create a replacement for eager_attention_forward using the WarpForth kernel.
 
     The transformers eager_attention_forward signature is:
@@ -32,8 +38,15 @@ def make_warpforth_eager_attn(attn_kernel: AttentionKernel):
     (batch, seq_len, n_heads, head_dim).
     """
 
-    def warpforth_eager_attn(module, query, key, value, attention_mask=None, **kwargs):
-        _batch, n_heads, seq_len, head_dim = query.shape
+    def warpforth_eager_attn(
+        _module: object,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        _attention_mask: torch.Tensor | None = None,
+        **_kwargs: object,
+    ) -> tuple[torch.Tensor, None]:
+        _batch, n_heads, _seq_len, _head_dim = query.shape
         query = query.contiguous()
         key = key.contiguous()
         value = value.contiguous()
@@ -45,8 +58,6 @@ def make_warpforth_eager_attn(attn_kernel: AttentionKernel):
                 key[0, h],
                 value[0, h],
                 attn_output[0, h],
-                seq_len,
-                head_dim,
             )
 
         return attn_output.transpose(1, 2), None
@@ -54,7 +65,7 @@ def make_warpforth_eager_attn(attn_kernel: AttentionKernel):
     return warpforth_eager_attn
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="GPT-2 generation with WarpForth attention")
     parser.add_argument("--ptx", required=True, help="Path to compiled attention.ptx")
     parser.add_argument("--prompt", default="The meaning of life is", help="Input prompt")
