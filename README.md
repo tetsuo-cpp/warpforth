@@ -59,12 +59,21 @@ Compile to PTX:
 Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output):
 
 ```bash
-./build/bin/warpforth-runner matmul.ptx \
-  --param 'i64[]:1,2,3,4,5,6,7,8' \
-  --param 'i64[]:1,2,3,4,5,6,7,8,9,10,11,12' \
-  --param 'i64[]:0,0,0,0,0,0' \
-  --grid 6,1,1 --block 1,1,1 \
-  --output-param 2 --output-count 6
+cat > request.json <<EOF
+{
+  "ptx_base64": "$(base64 -w0 matmul.ptx)",
+  "kernel": "main",
+  "grid": [6, 1, 1],
+  "block": [1, 1, 1],
+  "params": [
+    {"type": "i64[]", "values": [1,2,3,4,5,6,7,8]},
+    {"type": "i64[]", "values": [1,2,3,4,5,6,7,8,9,10,11,12]},
+    {"type": "i64[]", "values": [0,0,0,0,0,0]}
+  ],
+  "outputs": [{"param": 2, "count": 6}]
+}
+EOF
+cat request.json | python3 gpu_test/runner.py
 ```
 
 ## Toolchain
@@ -74,7 +83,7 @@ Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output):
 | `warpforthc` | Compiles Forth source to PTX |
 | `warpforth-translate` | Translates from Forth source to MLIR and MLIR to PTX assembly |
 | `warpforth-opt` | Runs individual MLIR passes or entire pipeline |
-| `warpforth-runner` | Executes PTX kernels on a GPU for testing |
+| `gpu_test/runner.py` | Executes PTX kernels through a JSON stdin/stdout protocol |
 
 These tools can be composed for debugging or inspecting intermediate stages:
 

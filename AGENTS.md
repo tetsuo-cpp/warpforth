@@ -38,7 +38,7 @@ CMake.
 **Tools:**
 - `tools/warpforth-translate/warpforth-translate.cpp` - Translation tool entry point
 - `tools/warpforth-opt/warpforth-opt.cpp` - Optimization tool entry point
-- `tools/warpforth-runner/warpforth-runner.cpp` - PTX execution tool for GPU kernels
+- `gpu_test/runner.py` - JSON PTX execution tool for GPU kernels
 
 ## Tools Usage
 
@@ -56,7 +56,7 @@ CMake.
   ./build/bin/warpforth-translate --mlir-to-ptx > kernel.ptx
 
 # Execute PTX on GPU
-./warpforth-runner kernel.ptx --param i64[]:1,2,3 --param i64:42 --output-param 0 --output-count 3
+cat request.json | python3 gpu_test/runner.py
 ```
 
 ## Adding New Operations

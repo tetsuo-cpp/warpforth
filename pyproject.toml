@@ -3,6 +3,7 @@ name = "warpforth"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "cuda-python>=12.4,<13",
     "lit>=18.1.0",
     "numpy",
     "pytest",

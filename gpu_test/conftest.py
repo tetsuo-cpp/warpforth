@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import atexit
+import base64
+import json
 import logging
 import os
 import subprocess
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WARPFORTHC = PROJECT_ROOT / "build" / "bin" / "warpforthc"
-RUNNER_SRC = PROJECT_ROOT / "tools" / "warpforth-runner" / "warpforth-runner.cpp"
+RUNNER_SRC = PROJECT_ROOT / "gpu_test" / "runner.py"
 
 MAX_COST_PER_HOUR = 0.50
 POLL_INTERVAL_S = 10
@@ -329,7 +331,7 @@ class VastSession:
                     )
                     self._attach_ssh_key()
                     self._wait_for_sshd()
-                    self._compile_runner()
+                    self._install_runner()
                     return
 
             time.sleep(POLL_INTERVAL_S)
@@ -356,14 +358,15 @@ class VastSession:
         )
         raise TimeoutError(msg)
 
-    def _compile_runner(self) -> None:
-        """Upload warpforth-runner.cpp and compile it on the remote host."""
-        self.scp_upload(RUNNER_SRC, f"{REMOTE_TMP}/warpforth-runner.cpp")
-        nvcc_cmd = (
-            f"nvcc -o {REMOTE_TMP}/warpforth-runner"
-            f" {REMOTE_TMP}/warpforth-runner.cpp -lcuda -std=c++17"
+    def _install_runner(self) -> None:
+        """Install cuda-python and upload the runner to the remote host."""
+        install_cmd = (
+            "apt-get update -qq && "
+            "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pip && "
+            "python3 -m pip install -q 'cuda-python>=12.4,<13'"
         )
-        self.ssh_run(nvcc_cmd, timeout=60)
+        self.ssh_run(install_cmd, timeout=180)
+        self.scp_upload(RUNNER_SRC, f"{REMOTE_TMP}/warpforth-runner.py")
 
     def _record_labeled_instance_ids(
         self,
@@ -484,10 +487,11 @@ class VastSession:
             f"root@{self.ssh_host}",
         ]
 
-    def ssh_run(self, cmd: str, *, timeout: int = 120) -> str:
+    def ssh_run(self, cmd: str, *, input_text: str | None = None, timeout: int = 120) -> str:
         """Execute a command on the remote instance via SSH."""
         result = subprocess.run(
             [*self._ssh_cmd(), cmd],
+            input=input_text,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -620,7 +624,22 @@ class KernelRunner:
 
         params = params or {}
 
-        # Validate output_param
+        self._validate_output(decls, output_param)
+        ptx = self.compiler.compile_source(forth_source)
+        request = self._build_request(
+            ptx,
+            kernel_name,
+            decls,
+            params,
+            grid,
+            block,
+            output_param,
+            output_count,
+        )
+        return self._run_request(request)
+
+    @staticmethod
+    def _validate_output(decls: list[ParamDecl], output_param: int) -> None:
         if output_param < 0 or output_param >= len(decls):
             msg = f"output_param {output_param} out of range (have {len(decls)} params)"
             raise ValueError(msg)
@@ -629,27 +648,31 @@ class KernelRunner:
             msg = f"output_param {output_param} ('{name}') is a scalar and cannot be read back"
             raise ValueError(msg)
 
-        # Compile locally
-        ptx = self.compiler.compile_source(forth_source)
-
-        # Write PTX to temp file and upload
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ptx", delete=False) as f:
-            f.write(ptx)
-            ptx_path = Path(f.name)
-
-        try:
-            self.session.scp_upload(ptx_path, f"{REMOTE_TMP}/kernel.ptx")
-        finally:
-            ptx_path.unlink()
-
-        # Build remote command
-        cmd_parts = [
-            f"{REMOTE_TMP}/warpforth-runner",
-            f"{REMOTE_TMP}/kernel.ptx",
-            "--kernel",
-            kernel_name,
-        ]
-
+    @staticmethod
+    def _build_request(
+        ptx: str,
+        kernel_name: str,
+        decls: list[ParamDecl],
+        params: dict[str, list[int] | list[float] | int | float],
+        grid: tuple[int, int, int],
+        block: tuple[int, int, int],
+        output_param: int,
+        output_count: int | None,
+    ) -> dict[str, object]:
+        request: dict[str, object] = {
+            "ptx_base64": base64.b64encode(ptx.encode()).decode(),
+            "kernel": kernel_name,
+            "grid": list(grid),
+            "block": list(block),
+            "params": [],
+            "outputs": [
+                {
+                    "param": output_param,
+                    **({"count": output_count} if output_count is not None else {}),
+                }
+            ],
+        }
+        request_params: list[dict[str, object]] = []
         for decl in decls:
             if decl.is_array:
                 values = params.get(decl.name, [])
@@ -660,35 +683,43 @@ class KernelRunner:
                 buf = [zero] * decl.size
                 for i, v in enumerate(values):
                     buf[i] = v
-                cmd_parts.extend(["--param", f"{decl.base_type}[]:{','.join(str(v) for v in buf)}"])
+                request_params.append({"type": f"{decl.base_type}[]", "values": buf})
             else:
                 value = params.get(decl.name, 0.0 if decl.base_type == "f64" else 0)
                 if isinstance(value, list):
                     msg = f"Scalar param '{decl.name}' expects a scalar, got list"
                     raise TypeError(msg)
-                cmd_parts.extend(["--param", f"{decl.base_type}:{value}"])
+                request_params.append({"type": decl.base_type, "value": value})
+        request["params"] = request_params
+        return request
 
-        cmd_parts.extend(
-            [
-                "--grid",
-                f"{grid[0]},{grid[1]},{grid[2]}",
-                "--block",
-                f"{block[0]},{block[1]},{block[2]}",
-                "--output-param",
-                str(output_param),
-            ]
+    def _run_request(self, request: dict[str, object]) -> list[int] | list[float]:
+        stdout = self.session.ssh_run(
+            f"python3 {REMOTE_TMP}/warpforth-runner.py",
+            input_text=json.dumps(request),
+            timeout=120,
         )
-
-        if output_count is not None:
-            cmd_parts.extend(["--output-count", str(output_count)])
-
-        cmd = " ".join(cmd_parts)
-        stdout = self.session.ssh_run(cmd, timeout=120)
-
-        # Parse CSV output — type depends on the output param
-        out_type = decls[output_param].base_type
-        parse = float if out_type == "f64" else int
-        return [parse(v) for v in stdout.strip().split(",")]
+        try:
+            response = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            msg = f"warpforth-runner returned invalid JSON: {stdout!r}"
+            raise RuntimeError(msg) from exc
+        if response.get("status") != "ok":
+            msg = f"warpforth-runner failed: {response.get('error', 'unknown error')}"
+            raise RuntimeError(msg)
+        outputs = response.get("outputs")
+        if not isinstance(outputs, list) or len(outputs) != 1:
+            msg = "warpforth-runner returned an invalid outputs array"
+            raise RuntimeError(msg)
+        output = outputs[0]
+        if not isinstance(output, dict):
+            msg = "warpforth-runner output must be an object"
+            raise TypeError(msg)
+        values = output.get("values")
+        if not isinstance(values, list):
+            msg = "warpforth-runner output has no values array"
+            raise TypeError(msg)
+        return values
 
 
 # --- Fixtures ---
