@@ -552,10 +552,11 @@ def _parse_kernel_name(forth_source: str) -> str:
     """Parse '\\! kernel <name>' from Forth source header."""
     for keyword, parts in _iter_header_directives(forth_source):
         if keyword == "kernel":
-            if len(parts) < 2:
+            try:
+                return parts[1]
+            except IndexError:
                 msg = "Invalid header line: expected '\\! kernel <name>'"
-                raise ValueError(msg)
-            return parts[1]
+                raise ValueError(msg) from None
     msg = "Forth source has no '\\! kernel' declaration"
     raise ValueError(msg)
 
@@ -570,11 +571,11 @@ def _parse_param_declarations(forth_source: str) -> list[ParamDecl]:
     for keyword, parts in _iter_header_directives(forth_source):
         if keyword != "param":
             continue
-        if len(parts) < 3:
+        try:
+            name, type_spec = parts[1:3]
+        except ValueError:
             msg = "Invalid header line: expected '\\! param <name> <type>'"
-            raise ValueError(msg)
-        name = parts[1]
-        type_spec = parts[2]
+            raise ValueError(msg) from None
         if "[" in type_spec:
             base_type, size = _parse_array_type(type_spec)
             decls.append(ParamDecl(name=name, is_array=True, size=size, base_type=base_type))

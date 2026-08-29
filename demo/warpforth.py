@@ -34,9 +34,8 @@ class AttentionKernel:
         k: object,  # torch.Tensor (seq_len, head_dim) float32 CUDA
         v: object,  # torch.Tensor (seq_len, head_dim) float32 CUDA
         o: object,  # torch.Tensor (seq_len, head_dim) float32 CUDA
-        seq_len: int,
-        head_dim: int,
     ) -> None:
+        seq_len, head_dim = q.shape
         self._function(
             np.intp(q.data_ptr()),
             np.intp(k.data_ptr()),
