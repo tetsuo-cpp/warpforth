@@ -14,6 +14,17 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.gpu
 
 
+def test_multiple_outputs(kernel_runner: KernelRunner) -> None:
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n\\! param INTS i64[2]\n\\! param FLOATS f64[2]\n"
+            "42 INTS ! 3.25 FLOATS F!"
+        ),
+        outputs=[{"param": 1}, {"param": 0, "count": 1}],
+    )
+    assert result == [[3.25, 0.0], [42]]
+
+
 # --- Arithmetic ---
 
 
