@@ -10,6 +10,7 @@ See the [documentation](https://tetsuo-cpp.github.io/warpforth/).
 - CMake
 - C++17 compiler
 - CUDA toolkit (for GPU execution)
+- `cuda-python>=12.8,<13` and an NVIDIA driver (for GPU execution)
 - [uv](https://github.com/astral-sh/uv) (for Python test tooling)
 
 ## Building
@@ -56,16 +57,37 @@ Compile to PTX:
 ./build/bin/warpforthc matmul.forth -o matmul.ptx --arch sm_80
 ```
 
-Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output):
+Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output).
+Save the launch options in `request.json`:
+
+```json
+{
+  "kernel": "main",
+  "grid": [6, 1, 1],
+  "block": [1, 1, 1],
+  "params": [
+    {"type": "i64[]", "values": [1,2,3,4,5,6,7,8]},
+    {"type": "i64[]", "values": [1,2,3,4,5,6,7,8,9,10,11,12]},
+    {"type": "i64[]", "values": [0,0,0,0,0,0]}
+  ],
+  "outputs": [{"param": 2, "count": 6}]
+}
+```
 
 ```bash
-./build/bin/warpforth-runner matmul.ptx \
-  --param 'i64[]:1,2,3,4,5,6,7,8' \
-  --param 'i64[]:1,2,3,4,5,6,7,8,9,10,11,12' \
-  --param 'i64[]:0,0,0,0,0,0' \
-  --grid 6,1,1 --block 1,1,1 \
-  --output-param 2 --output-count 6
+uv run python gpu_test/warpforth_runner.py matmul.ptx request.json result.json
 ```
+
+`kernel` is required. `grid` and `block` default to
+`[1,1,1]`; `outputs` defaults to `[]`. Each parameter has type `i64` or `f64`
+with a scalar `value`, or type `i64[]` or `f64[]` with a nonempty array `values`.
+Each output selects an array parameter by zero-based `param` index and may
+specify `count` (default: the full array; zero is allowed). Multiple outputs
+are returned in request order. Values must be signed 64-bit integers or finite
+floats; nonfinite GPU results produce an error rather than invalid JSON.
+The runner writes `result.json` with `{"status":"ok","outputs":[{"param":2,"type":"i64[]","values":[70,80,90,158,184,210]}]}`.
+On failure it writes `{"status":"error","error":"..."}` to that file and exits
+with status 1. No request or result data is sent through stdin or stdout.
 
 ## Toolchain
 
@@ -74,7 +96,7 @@ Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output):
 | `warpforthc` | Compiles Forth source to PTX |
 | `warpforth-translate` | Translates from Forth source to MLIR and MLIR to PTX assembly |
 | `warpforth-opt` | Runs individual MLIR passes or entire pipeline |
-| `warpforth-runner` | Executes PTX kernels on a GPU for testing |
+| `gpu_test/warpforth_runner.py` | Executes PTX kernels on a GPU for testing |
 
 These tools can be composed for debugging or inspecting intermediate stages:
 
