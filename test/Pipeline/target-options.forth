@@ -3,6 +3,7 @@
 \ RUN: %not %warpforthc --arch sm_99 %s -o %t.ptx 2>&1 | %FileCheck %s --check-prefix=BAD-ARCH
 \ RUN: %warpforth-translate --forth-to-mlir %s | %not %warpforth-opt '--pass-pipeline=builtin.module(warpforth-pipeline{chip=sm_99})' 2>&1 | %FileCheck %s --check-prefix=BAD-ARCH
 \ RUN: %warpforth-translate --forth-to-mlir %s | %not %warpforth-opt '--pass-pipeline=builtin.module(warpforth-pipeline{opt-level=4})' 2>&1 | %FileCheck %s --check-prefix=BAD-OPT
+\ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt '--pass-pipeline=builtin.module(warpforth-pipeline{compilation-target=llvm})' 2>&1 | %FileCheck %s --check-prefix=LLVM
 \ RUN: %warpforth-translate --forth-to-mlir %s | %not %warpforth-opt '--pass-pipeline=builtin.module(warpforth-pipeline{compilation-target=bogus})' 2>&1 | %FileCheck %s --check-prefix=BAD-FORMAT
 
 \! kernel main
@@ -12,4 +13,5 @@
 \ ARCH: #nvvm.target<chip = "sm_80"
 \ BAD-ARCH: unsupported GPU architecture 'sm_99'; supported architectures: sm_70, sm_75, sm_80, sm_86, sm_89, sm_90
 \ BAD-OPT: for the --opt-level option: Cannot find option named '4'!
+\ LLVM: gpu.binary @warpforth_module [#gpu.object<#nvvm.target<{{.*}}>, offload = "BC\C0\DE
 \ BAD-FORMAT: for the --compilation-target option: Cannot find option named 'bogus'!
