@@ -26,7 +26,7 @@ def owned(sdk: VastAI, label: str) -> list[int]:
     instances = sdk.show_instances()
     if not isinstance(instances, list):
         msg = "Vast.ai returned an invalid instance listing"
-        raise RuntimeError(msg)
+        raise TypeError(msg)
     return [int(i["id"]) for i in instances if isinstance(i, dict) and i.get("label") == label]
 
 

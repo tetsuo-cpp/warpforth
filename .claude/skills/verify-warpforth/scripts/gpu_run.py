@@ -33,13 +33,15 @@ import math
 import os
 import sys
 import traceback
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(REPO))
 
-from gpu_test.conftest import Compiler, KernelRunner, VastSession  # noqa: E402
+from gpu_test.conftest import Compiler, KernelRunner, open_vast_device  # noqa: E402
+from warpforth_gpu.vast import VastSession  # noqa: E402
 
 
 def load_api_key() -> str | None:
@@ -99,9 +101,9 @@ def main() -> int:
     (out / "owned_label.txt").write_text(session.instance_label + "\n")
     print(f"evidence: {out}", flush=True)
     try:
-        with session:
+        runner = KernelRunner(lambda: open_vast_device(session), compiler)
+        with session, closing(runner):
             summary["instance_id"] = session.instance_id
-            runner = KernelRunner(session, compiler)
             for job in spec["jobs"]:
                 job_dir = out / job["name"]
                 job_dir.mkdir()

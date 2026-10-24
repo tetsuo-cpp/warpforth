@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from gpu_test.conftest import KernelRunner
 from gpu_test.fake_driver import FakeDriver
 from warpforth_gpu.client import Device, DeviceError, worker_command
 from warpforth_gpu.worker import parse_entries, serve
@@ -334,3 +335,48 @@ def test_worker_without_cuda_exits_and_the_client_reports_its_stderr() -> None:
         assert excinfo.value.code == "WORKER_EXITED"
         assert "cannot initialize CUDA" in excinfo.value.message
         assert device.closed
+
+
+MIXED_SOURCE = """\\! kernel mixed
+\\! param A i64[4]
+\\! param B f64[4]
+\\! param N i64
+\\! param X f64
+"""
+
+
+class FixedPtxCompiler:
+    def compile_source(self, _forth_src: str) -> str:
+        return MIXED_PTX
+
+
+def test_kernel_runner_reads_back_the_output_param_zero_padded_and_typed() -> None:
+    runner = KernelRunner(lambda: Device.spawn(fake_worker_argv()), FixedPtxCompiler())
+    try:
+        params = {"A": [5, -6], "B": [0.5], "N": 3, "X": 2}
+        floats = runner.run(MIXED_SOURCE, params=params, output_param=1)
+        ints = runner.run(MIXED_SOURCE, params=params, output_param=0, output_count=3)
+    finally:
+        runner.close()
+    assert floats == [0.5, 0.0, 0.0, 0.0]
+    assert all(isinstance(v, float) for v in floats)
+    assert ints == [5, -6, 0]
+    assert all(isinstance(v, int) for v in ints)
+
+
+def test_kernel_runner_opens_a_fresh_device_after_a_fatal_error() -> None:
+    worker_options = [{"launch_error": "CUDA_ERROR_ILLEGAL_ADDRESS"}, {}]
+    opened: list[Device] = []
+
+    def open_device() -> Device:
+        opened.append(Device.spawn(fake_worker_argv(**worker_options[len(opened)])))
+        return opened[-1]
+
+    runner = KernelRunner(open_device, FixedPtxCompiler())
+    try:
+        with pytest.raises(DeviceError, match="CUDA_ERROR_ILLEGAL_ADDRESS"):
+            runner.run(MIXED_SOURCE, params={"A": [1]})
+        assert runner.run(MIXED_SOURCE, params={"A": [1]}, output_count=1) == [1]
+    finally:
+        runner.close()
+    assert len(opened) == 2

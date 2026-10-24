@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 import pytest
 import requests
 
-from gpu_test import conftest as gpu_conftest
-from gpu_test.conftest import VastSession
+from warpforth_gpu import vast
+from warpforth_gpu.vast import VastSession
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -96,8 +96,8 @@ def configure_session_test(
         sdk.constructor_kwargs = kwargs
         return sdk
 
-    monkeypatch.setattr(gpu_conftest, "VastAI", create_sdk)
-    monkeypatch.setattr(gpu_conftest.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(vast, "VastAI", create_sdk)
+    monkeypatch.setattr(vast.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(VastSession, "_wait_for_ssh", wait_for_ssh or no_wait)
 
 
@@ -115,14 +115,14 @@ def test_concurrent_sessions_destroy_only_their_own_instance(
             assert {instance["id"] for instance in sdk.instances} == {100, 101}
             assert [instance_id for instance_id, _key in sdk.attached_keys] == [100, 101]
             assert sdk.attached_keys[0][1] != sdk.attached_keys[1][1]
-            assert first._ssh_cmd()[1:5] == [
+            assert first.ssh_argv()[1:5] == [
                 "-i",
                 str(first_key_path),
                 "-o",
                 "IdentitiesOnly=yes",
             ]
-            assert "BatchMode=yes" in first._ssh_cmd()
-            assert "PreferredAuthentications=publickey" in first._ssh_cmd()
+            assert "BatchMode=yes" in first.ssh_argv()
+            assert "PreferredAuthentications=publickey" in first.ssh_argv()
         assert {instance["id"] for instance in sdk.instances} == {100}
         assert second_key_path is not None
         assert not second_key_path.exists()
