@@ -282,7 +282,14 @@ LogicalResult ForthParser::parseHeader() {
           return emitErrorAt(lineLoc,
                              "kernel directive expects: \\! kernel <name>");
         }
-        kernelName = tokens[1].str();
+        llvm::StringRef name = tokens[1];
+        if (llvm::isDigit(name[0]) || name.find_if_not([](char c) {
+              return llvm::isAlnum(c) || c == '_';
+            }) != llvm::StringRef::npos) {
+          return emitErrorAt(lineLoc, "kernel name must be a valid identifier "
+                                      "([A-Za-z_][A-Za-z0-9_]*)");
+        }
+        kernelName = name.str();
       } else if (directive == "PARAM" || directive == "SHARED") {
         if (tokens.size() != 3) {
           return emitErrorAt(lineLoc,
@@ -1322,6 +1329,10 @@ LogicalResult ForthParser::parseWordDefinition() {
   }
 
   std::string wordName = mangleForthName(currentToken.text);
+  if (wordName == kernelName) {
+    return emitError("kernel name '" + kernelName + "' conflicts with word " +
+                     currentToken.text);
+  }
   consume(); // consume word name
 
   // Create function: !forth.stack -> !forth.stack
