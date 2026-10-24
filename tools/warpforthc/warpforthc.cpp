@@ -14,6 +14,7 @@
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVM/NVVM/Target.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/GPU/GPUToLLVMIRTranslation.h"
@@ -23,7 +24,6 @@
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
 #include "warpforth/Translation/MLIRToPTX/MLIRToPTX.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -52,15 +52,15 @@ int main(int argc, char **argv) {
                                     "WarpForth compiler: Forth to PTX\n");
 
   // Set up source manager with input file
-  auto inputFile = llvm::MemoryBuffer::getFileOrSTDIN(inputFilename);
-  if (auto ec = inputFile.getError()) {
-    llvm::errs() << "error: could not open input file '" << inputFilename
-                 << "': " << ec.message() << "\n";
+  std::string errorMessage;
+  auto inputFile = openInputFile(inputFilename, &errorMessage);
+  if (!inputFile) {
+    llvm::errs() << "error: " << errorMessage << "\n";
     return 1;
   }
 
   llvm::SourceMgr sourceMgr;
-  sourceMgr.AddNewSourceBuffer(std::move(*inputFile), llvm::SMLoc());
+  sourceMgr.AddNewSourceBuffer(std::move(inputFile), llvm::SMLoc());
 
   // Parse Forth source to MLIR
   DialectRegistry registry;
@@ -94,18 +94,16 @@ int main(int argc, char **argv) {
     return 1;
 
   // Extract PTX and write to output
-  std::error_code ec;
-  llvm::ToolOutputFile outputFile(outputFilename, ec, llvm::sys::fs::OF_Text);
-  if (ec) {
-    llvm::errs() << "error: could not open output file '" << outputFilename
-                 << "': " << ec.message() << "\n";
+  auto outputFile = openOutputFile(outputFilename, &errorMessage);
+  if (!outputFile) {
+    llvm::errs() << "error: " << errorMessage << "\n";
     return 1;
   }
 
-  if (failed(warpforth::extractPTXFromModule(*module, outputFile.os()))) {
+  if (failed(warpforth::extractPTXFromModule(*module, outputFile->os()))) {
     return 1;
   }
 
-  outputFile.keep();
+  outputFile->keep();
   return 0;
 }
