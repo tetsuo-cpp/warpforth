@@ -27,6 +27,7 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
 
@@ -41,6 +42,22 @@ static llvm::cl::opt<std::string>
 static llvm::cl::opt<std::string, false, warpforth::NVVMChipParser>
     targetArchitecture("arch", llvm::cl::desc("GPU architecture"),
                        llvm::cl::value_desc("sm_XX"), llvm::cl::init("sm_70"));
+
+static llvm::cl::opt<std::string>
+    optLevel("O", llvm::cl::desc("Optimization level (0, 1, 2, or 3)"),
+             llvm::cl::value_desc("level"), llvm::cl::Prefix,
+             llvm::cl::init(""));
+static llvm::cl::alias optLevelAlias("opt-level",
+                                     llvm::cl::desc("Alias for -O"),
+                                     llvm::cl::aliasopt(optLevel));
+
+static llvm::cl::opt<std::string>
+    targetFeatures("features", llvm::cl::desc("NVVM target features"),
+                   llvm::cl::value_desc("+ptxNN"), llvm::cl::init(""));
+
+static llvm::cl::opt<std::string>
+    libdevicePath("libdevice", llvm::cl::desc("Path to the libdevice bitcode"),
+                  llvm::cl::value_desc("path"), llvm::cl::init(""));
 
 int main(int argc, char **argv) {
   llvm::InitLLVM y(argc, argv);
@@ -85,6 +102,16 @@ int main(int argc, char **argv) {
   if (failed(applyPassManagerCLOptions(pm)))
     return 1;
   warpforth::WarpForthPipelineOptions pipelineOptions;
+  std::string overrides;
+  llvm::raw_string_ostream overridesOS(overrides);
+  if (!optLevel.empty())
+    overridesOS << " opt-level=" << optLevel;
+  if (!targetFeatures.empty())
+    overridesOS << " features=" << targetFeatures;
+  if (!libdevicePath.empty())
+    overridesOS << " libdevice=" << libdevicePath;
+  if (failed(pipelineOptions.parseFromString(overrides)))
+    return 1;
   pipelineOptions.chip = targetArchitecture.getValue();
   warpforth::buildWarpForthPipeline(pm, pipelineOptions);
   if (failed(pm.run(*module)))
