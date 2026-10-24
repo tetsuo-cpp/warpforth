@@ -51,7 +51,6 @@ int main(int argc, char **argv) {
   llvm::cl::ParseCommandLineOptions(argc, argv,
                                     "WarpForth compiler: Forth to PTX\n");
 
-  // Set up source manager with input file
   std::string errorMessage;
   auto inputFile = openInputFile(inputFilename, &errorMessage);
   if (!inputFile) {
@@ -62,7 +61,6 @@ int main(int argc, char **argv) {
   llvm::SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(inputFile), llvm::SMLoc());
 
-  // Parse Forth source to MLIR
   DialectRegistry registry;
   arith::registerConvertArithToLLVMInterface(registry);
   cf::registerConvertControlFlowToLLVMInterface(registry);
@@ -83,7 +81,6 @@ int main(int argc, char **argv) {
   if (!module)
     return 1;
 
-  // Run the compilation pipeline
   PassManager pm(&context);
   if (failed(applyPassManagerCLOptions(pm)))
     return 1;
@@ -93,16 +90,14 @@ int main(int argc, char **argv) {
   if (failed(pm.run(*module)))
     return 1;
 
-  // Extract PTX and write to output
   auto outputFile = openOutputFile(outputFilename, &errorMessage);
   if (!outputFile) {
     llvm::errs() << "error: " << errorMessage << "\n";
     return 1;
   }
 
-  if (failed(warpforth::extractPTXFromModule(*module, outputFile->os()))) {
+  if (failed(warpforth::extractPTXFromModule(*module, outputFile->os())))
     return 1;
-  }
 
   outputFile->keep();
   return 0;
