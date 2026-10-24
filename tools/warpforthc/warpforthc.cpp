@@ -8,10 +8,7 @@
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h" // IWYU pragma: keep
 #include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // IWYU pragma: keep
-#include "mlir/Dialect/MemRef/IR/MemRef.h" // IWYU pragma: keep
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
@@ -23,7 +20,6 @@
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "warpforth/Conversion/Passes.h"
-#include "warpforth/Dialect/Forth/ForthDialect.h" // IWYU pragma: keep
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
 #include "warpforth/Translation/MLIRToPTX/MLIRToPTX.h"
 #include "llvm/Support/CommandLine.h"
@@ -68,10 +64,6 @@ int main(int argc, char **argv) {
 
   // Parse Forth source to MLIR
   DialectRegistry registry;
-  registry
-      .insert<forth::ForthDialect, arith::ArithDialect, cf::ControlFlowDialect,
-              func::FuncDialect, memref::MemRefDialect>();
-
   arith::registerConvertArithToLLVMInterface(registry);
   cf::registerConvertControlFlowToLLVMInterface(registry);
   registerConvertFuncToLLVMInterface(registry);
