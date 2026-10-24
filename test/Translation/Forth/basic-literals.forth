@@ -4,5 +4,8 @@
 \ CHECK-NEXT: forth.constant %{{.*}}(42 : i64)
 \ CHECK-NEXT: forth.constant %{{.*}}(-7 : i64)
 \ CHECK-NEXT: forth.constant %{{.*}}(0 : i64)
+\ CHECK-NEXT: forth.constant %{{.*}}(5 : i64)
+\ CHECK-NEXT: forth.constant %{{.*}}(9223372036854775807 : i64)
+\ CHECK-NEXT: forth.constant %{{.*}}(-9223372036854775808 : i64)
 \! kernel main
-42 -7 0
+42 -7 0 +5 9223372036854775807 -9223372036854775808
