@@ -905,7 +905,7 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
         .getOutputStack();
   }
 
-  // Unknown word
+  (void)emitError("unknown word: " + word);
   return nullptr;
 }
 
@@ -1281,7 +1281,7 @@ LogicalResult ForthParser::parseBody(Value &stack) {
       } else {
         Value newStack = emitOperation(currentToken.text, stack, loc);
         if (!newStack)
-          return emitError("unknown word: " + currentToken.text);
+          return failure();
         stack = newStack;
         consume();
       }

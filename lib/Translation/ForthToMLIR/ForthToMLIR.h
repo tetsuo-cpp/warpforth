@@ -144,7 +144,7 @@ private:
   Location getLoc();
 
   /// Emit a Forth operation based on the current token.
-  /// Returns the updated stack value or nullptr on error.
+  /// Returns the updated stack value, or nullptr after emitting a diagnostic.
   Value emitOperation(StringRef word, Value inputStack, Location loc);
 
   /// Create a new block with a single !forth.stack argument, appended to
