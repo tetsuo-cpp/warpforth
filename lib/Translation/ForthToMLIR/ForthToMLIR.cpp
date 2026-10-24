@@ -144,12 +144,39 @@ bool ForthLexer::isNumber(const std::string &str) const {
   return true;
 }
 
+/// Float grammar: [+-]? (D+ '.' D* | '.' D+ | D+) ([eE] [+-]? D+)?, where a
+/// bare D+ needs the exponent. Spelled out rather than using strtod, which
+/// also accepts hex, nan and inf.
 bool ForthLexer::isFloat(const std::string &str) const {
-  if (str.empty())
+  size_t i = 0;
+  size_t n = str.size();
+  auto skipDigits = [&]() {
+    size_t start = i;
+    while (i < n && std::isdigit(static_cast<unsigned char>(str[i])))
+      ++i;
+    return i - start;
+  };
+
+  if (i < n && (str[i] == '+' || str[i] == '-'))
+    ++i;
+  size_t mantissaDigits = skipDigits();
+  bool hasDot = i < n && str[i] == '.';
+  if (hasDot) {
+    ++i;
+    mantissaDigits += skipDigits();
+  }
+  if (mantissaDigits == 0)
     return false;
 
-  double value;
-  return llvm::to_float(str, value);
+  bool hasExponent = i < n && (str[i] == 'e' || str[i] == 'E');
+  if (hasExponent) {
+    ++i;
+    if (i < n && (str[i] == '+' || str[i] == '-'))
+      ++i;
+    if (skipDigits() == 0)
+      return false;
+  }
+  return i == n && (hasDot || hasExponent);
 }
 
 Token ForthLexer::nextToken() {
