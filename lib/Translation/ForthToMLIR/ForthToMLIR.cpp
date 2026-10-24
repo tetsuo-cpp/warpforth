@@ -16,6 +16,7 @@
 #include "warpforth/Translation/ForthToMLIR/ForthToMLIR.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <cctype>
@@ -465,6 +466,132 @@ LogicalResult ForthParser::parseHeader() {
   return success();
 }
 
+using WordEmitter = Value (*)(OpBuilder &, Location, Value);
+
+template <typename OpT>
+static Value emitSimple(OpBuilder &builder, Location loc, Value inputStack) {
+  Type stackType = forth::StackType::get(builder.getContext());
+  return builder.create<OpT>(loc, stackType, inputStack).getResult();
+}
+
+// CELLS: multiply by 8 (sizeof i64 = sizeof f64) for byte addressing.
+static Value emitCells(OpBuilder &builder, Location loc, Value inputStack) {
+  Type stackType = forth::StackType::get(builder.getContext());
+  Value lit8 = builder
+                   .create<forth::ConstantOp>(loc, stackType, inputStack,
+                                              builder.getI64IntegerAttr(8))
+                   .getResult();
+  return builder.create<forth::MulIOp>(loc, stackType, lit8).getResult();
+}
+
+static Value emitBarrier(OpBuilder &builder, Location loc, Value inputStack) {
+  builder.create<forth::BarrierOp>(loc);
+  return inputStack;
+}
+
+static const llvm::StringMap<WordEmitter> &getBuiltinWords() {
+  static const llvm::StringMap<WordEmitter> words = {
+      {"CELLS", emitCells},
+      {"BARRIER", emitBarrier},
+      {"DUP", emitSimple<forth::DupOp>},
+      {"DROP", emitSimple<forth::DropOp>},
+      {"SWAP", emitSimple<forth::SwapOp>},
+      {"OVER", emitSimple<forth::OverOp>},
+      {"ROT", emitSimple<forth::RotOp>},
+      {"NIP", emitSimple<forth::NipOp>},
+      {"TUCK", emitSimple<forth::TuckOp>},
+      {"PICK", emitSimple<forth::PickOp>},
+      {"ROLL", emitSimple<forth::RollOp>},
+      {"+", emitSimple<forth::AddIOp>},
+      {"ADD", emitSimple<forth::AddIOp>},
+      {"-", emitSimple<forth::SubIOp>},
+      {"SUB", emitSimple<forth::SubIOp>},
+      {"*", emitSimple<forth::MulIOp>},
+      {"MUL", emitSimple<forth::MulIOp>},
+      {"/", emitSimple<forth::DivIOp>},
+      {"DIV", emitSimple<forth::DivIOp>},
+      {"F+", emitSimple<forth::AddFOp>},
+      {"F-", emitSimple<forth::SubFOp>},
+      {"F*", emitSimple<forth::MulFOp>},
+      {"F/", emitSimple<forth::DivFOp>},
+      {"FEXP", emitSimple<forth::ExpFOp>},
+      {"FSQRT", emitSimple<forth::SqrtFOp>},
+      {"FLOG", emitSimple<forth::LogFOp>},
+      {"FABS", emitSimple<forth::AbsFOp>},
+      {"FNEG", emitSimple<forth::NegFOp>},
+      {"FMAX", emitSimple<forth::MaxFOp>},
+      {"FMIN", emitSimple<forth::MinFOp>},
+      {"MOD", emitSimple<forth::ModOp>},
+      {"AND", emitSimple<forth::AndOp>},
+      {"OR", emitSimple<forth::OrOp>},
+      {"XOR", emitSimple<forth::XorOp>},
+      {"NOT", emitSimple<forth::NotOp>},
+      {"LSHIFT", emitSimple<forth::LshiftOp>},
+      {"RSHIFT", emitSimple<forth::RshiftOp>},
+      {"@", emitSimple<forth::LoadIOp>},
+      {"!", emitSimple<forth::StoreIOp>},
+      {"F@", emitSimple<forth::LoadFOp>},
+      {"F!", emitSimple<forth::StoreFOp>},
+      {"S@", emitSimple<forth::SharedLoadIOp>},
+      {"S!", emitSimple<forth::SharedStoreIOp>},
+      {"SF@", emitSimple<forth::SharedLoadFOp>},
+      {"SF!", emitSimple<forth::SharedStoreFOp>},
+      {"I8@", emitSimple<forth::LoadI8Op>},
+      {"I8!", emitSimple<forth::StoreI8Op>},
+      {"SI8@", emitSimple<forth::SharedLoadI8Op>},
+      {"SI8!", emitSimple<forth::SharedStoreI8Op>},
+      {"I16@", emitSimple<forth::LoadI16Op>},
+      {"I16!", emitSimple<forth::StoreI16Op>},
+      {"SI16@", emitSimple<forth::SharedLoadI16Op>},
+      {"SI16!", emitSimple<forth::SharedStoreI16Op>},
+      {"I32@", emitSimple<forth::LoadI32Op>},
+      {"I32!", emitSimple<forth::StoreI32Op>},
+      {"SI32@", emitSimple<forth::SharedLoadI32Op>},
+      {"SI32!", emitSimple<forth::SharedStoreI32Op>},
+      {"HF@", emitSimple<forth::LoadF16Op>},
+      {"HF!", emitSimple<forth::StoreF16Op>},
+      {"SHF@", emitSimple<forth::SharedLoadF16Op>},
+      {"SHF!", emitSimple<forth::SharedStoreF16Op>},
+      {"BF@", emitSimple<forth::LoadBF16Op>},
+      {"BF!", emitSimple<forth::StoreBF16Op>},
+      {"SBF@", emitSimple<forth::SharedLoadBF16Op>},
+      {"SBF!", emitSimple<forth::SharedStoreBF16Op>},
+      {"F32@", emitSimple<forth::LoadF32Op>},
+      {"F32!", emitSimple<forth::StoreF32Op>},
+      {"SF32@", emitSimple<forth::SharedLoadF32Op>},
+      {"SF32!", emitSimple<forth::SharedStoreF32Op>},
+      {"TID-X", emitSimple<forth::ThreadIdXOp>},
+      {"TID-Y", emitSimple<forth::ThreadIdYOp>},
+      {"TID-Z", emitSimple<forth::ThreadIdZOp>},
+      {"BID-X", emitSimple<forth::BlockIdXOp>},
+      {"BID-Y", emitSimple<forth::BlockIdYOp>},
+      {"BID-Z", emitSimple<forth::BlockIdZOp>},
+      {"BDIM-X", emitSimple<forth::BlockDimXOp>},
+      {"BDIM-Y", emitSimple<forth::BlockDimYOp>},
+      {"BDIM-Z", emitSimple<forth::BlockDimZOp>},
+      {"GDIM-X", emitSimple<forth::GridDimXOp>},
+      {"GDIM-Y", emitSimple<forth::GridDimYOp>},
+      {"GDIM-Z", emitSimple<forth::GridDimZOp>},
+      {"GLOBAL-ID", emitSimple<forth::GlobalIdOp>},
+      {"=", emitSimple<forth::EqIOp>},
+      {"<", emitSimple<forth::LtIOp>},
+      {">", emitSimple<forth::GtIOp>},
+      {"<>", emitSimple<forth::NeIOp>},
+      {"<=", emitSimple<forth::LeIOp>},
+      {">=", emitSimple<forth::GeIOp>},
+      {"F=", emitSimple<forth::EqFOp>},
+      {"F<", emitSimple<forth::LtFOp>},
+      {"F>", emitSimple<forth::GtFOp>},
+      {"F<>", emitSimple<forth::NeFOp>},
+      {"F<=", emitSimple<forth::LeFOp>},
+      {"F>=", emitSimple<forth::GeFOp>},
+      {"S>F", emitSimple<forth::IToFOp>},
+      {"F>S", emitSimple<forth::FToIOp>},
+      {"0=", emitSimple<forth::ZeroEqOp>},
+  };
+  return words;
+}
+
 Value ForthParser::emitOperation(StringRef word, Value inputStack,
                                  Location loc) {
   Type stackType = forth::StackType::get(context);
@@ -531,364 +658,11 @@ Value ForthParser::emitOperation(StringRef word, Value inputStack,
         .getResult(0);
   }
 
-  // CELLS: multiply by 8 (sizeof i64 = sizeof f64) for byte addressing
-  if (word == "CELLS") {
-    Value lit8 = builder
-                     .create<forth::ConstantOp>(loc, stackType, inputStack,
-                                                builder.getI64IntegerAttr(8))
-                     .getResult();
-    return builder.create<forth::MulIOp>(loc, stackType, lit8).getResult();
-  }
+  const auto &builtins = getBuiltinWords();
+  auto builtin = builtins.find(word);
+  if (builtin != builtins.end())
+    return builtin->second(builder, loc, inputStack);
 
-  // Built-in operations
-  if (word == "DUP") {
-    return builder.create<forth::DupOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "DROP") {
-    return builder.create<forth::DropOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SWAP") {
-    return builder.create<forth::SwapOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "OVER") {
-    return builder.create<forth::OverOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "ROT") {
-    return builder.create<forth::RotOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "NIP") {
-    return builder.create<forth::NipOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "TUCK") {
-    return builder.create<forth::TuckOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "PICK") {
-    return builder.create<forth::PickOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "ROLL") {
-    return builder.create<forth::RollOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "+" || word == "ADD") {
-    return builder.create<forth::AddIOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "-" || word == "SUB") {
-    return builder.create<forth::SubIOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "*" || word == "MUL") {
-    return builder.create<forth::MulIOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "/" || word == "DIV") {
-    return builder.create<forth::DivIOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "F+") {
-    return builder.create<forth::AddFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "F-") {
-    return builder.create<forth::SubFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "F*") {
-    return builder.create<forth::MulFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "F/") {
-    return builder.create<forth::DivFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "FEXP") {
-    return builder.create<forth::ExpFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "FSQRT") {
-    return builder.create<forth::SqrtFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "FLOG") {
-    return builder.create<forth::LogFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "FABS") {
-    return builder.create<forth::AbsFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "FNEG") {
-    return builder.create<forth::NegFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "FMAX") {
-    return builder.create<forth::MaxFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "FMIN") {
-    return builder.create<forth::MinFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "MOD") {
-    return builder.create<forth::ModOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "AND") {
-    return builder.create<forth::AndOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "OR") {
-    return builder.create<forth::OrOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "XOR") {
-    return builder.create<forth::XorOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "NOT") {
-    return builder.create<forth::NotOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "LSHIFT") {
-    return builder.create<forth::LshiftOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "RSHIFT") {
-    return builder.create<forth::RshiftOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "@") {
-    return builder.create<forth::LoadIOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "!") {
-    return builder.create<forth::StoreIOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "F@") {
-    return builder.create<forth::LoadFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "F!") {
-    return builder.create<forth::StoreFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "S@") {
-    return builder.create<forth::SharedLoadIOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "S!") {
-    return builder.create<forth::SharedStoreIOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SF@") {
-    return builder.create<forth::SharedLoadFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SF!") {
-    return builder.create<forth::SharedStoreFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "I8@") {
-    return builder.create<forth::LoadI8Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "I8!") {
-    return builder.create<forth::StoreI8Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SI8@") {
-    return builder.create<forth::SharedLoadI8Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SI8!") {
-    return builder.create<forth::SharedStoreI8Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "I16@") {
-    return builder.create<forth::LoadI16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "I16!") {
-    return builder.create<forth::StoreI16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SI16@") {
-    return builder.create<forth::SharedLoadI16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SI16!") {
-    return builder.create<forth::SharedStoreI16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "I32@") {
-    return builder.create<forth::LoadI32Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "I32!") {
-    return builder.create<forth::StoreI32Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SI32@") {
-    return builder.create<forth::SharedLoadI32Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SI32!") {
-    return builder.create<forth::SharedStoreI32Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "HF@") {
-    return builder.create<forth::LoadF16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "HF!") {
-    return builder.create<forth::StoreF16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SHF@") {
-    return builder.create<forth::SharedLoadF16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SHF!") {
-    return builder.create<forth::SharedStoreF16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "BF@") {
-    return builder.create<forth::LoadBF16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "BF!") {
-    return builder.create<forth::StoreBF16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SBF@") {
-    return builder.create<forth::SharedLoadBF16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SBF!") {
-    return builder.create<forth::SharedStoreBF16Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "F32@") {
-    return builder.create<forth::LoadF32Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "F32!") {
-    return builder.create<forth::StoreF32Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SF32@") {
-    return builder.create<forth::SharedLoadF32Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "SF32!") {
-    return builder.create<forth::SharedStoreF32Op>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "TID-X") {
-    return builder.create<forth::ThreadIdXOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "TID-Y") {
-    return builder.create<forth::ThreadIdYOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "TID-Z") {
-    return builder.create<forth::ThreadIdZOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "BID-X") {
-    return builder.create<forth::BlockIdXOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "BID-Y") {
-    return builder.create<forth::BlockIdYOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "BID-Z") {
-    return builder.create<forth::BlockIdZOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "BDIM-X") {
-    return builder.create<forth::BlockDimXOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "BDIM-Y") {
-    return builder.create<forth::BlockDimYOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "BDIM-Z") {
-    return builder.create<forth::BlockDimZOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "GDIM-X") {
-    return builder.create<forth::GridDimXOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "GDIM-Y") {
-    return builder.create<forth::GridDimYOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "GDIM-Z") {
-    return builder.create<forth::GridDimZOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "GLOBAL-ID") {
-    return builder.create<forth::GlobalIdOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "BARRIER") {
-    builder.create<forth::BarrierOp>(loc);
-    return inputStack;
-  }
-  if (word == "=") {
-    return builder.create<forth::EqIOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "<") {
-    return builder.create<forth::LtIOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == ">") {
-    return builder.create<forth::GtIOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "<>") {
-    return builder.create<forth::NeIOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "<=") {
-    return builder.create<forth::LeIOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == ">=") {
-    return builder.create<forth::GeIOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "F=") {
-    return builder.create<forth::EqFOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "F<") {
-    return builder.create<forth::LtFOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "F>") {
-    return builder.create<forth::GtFOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "F<>") {
-    return builder.create<forth::NeFOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "F<=") {
-    return builder.create<forth::LeFOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "F>=") {
-    return builder.create<forth::GeFOp>(loc, stackType, inputStack).getResult();
-  }
-  if (word == "S>F") {
-    return builder.create<forth::IToFOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "F>S") {
-    return builder.create<forth::FToIOp>(loc, stackType, inputStack)
-        .getResult();
-  }
-  if (word == "0=") {
-    return builder.create<forth::ZeroEqOp>(loc, stackType, inputStack)
-        .getResult();
-  }
   if (word == "I" || word == "J" || word == "K") {
     int64_t depth = (word == "I") ? 0 : (word == "J") ? 1 : 2;
     if (static_cast<int64_t>(loopStack.size()) < depth + 1) {
