@@ -124,6 +124,13 @@ struct ConvertForthToGPUPass
     rewriter.setInsertionPointToStart(&module.getBodyRegion().front());
     auto gpuModule =
         rewriter.create<gpu::GPUModuleOp>(module.getLoc(), "warpforth_module");
+    // The NVVM serializer translates to LLVM IR before it applies the NVPTX
+    // data layout. Without one here, i64 accesses get LLVM's default 4-byte
+    // ABI alignment and NVPTX splits them into two 32-bit memory operations.
+    gpuModule->setAttr(
+        LLVM::LLVMDialect::getDataLayoutAttrName(),
+        rewriter.getStringAttr(
+            "e-p6:32:32-i64:64-i128:128-v16:16-v32:32-n16:32:64"));
 
     for (auto funcOp : funcsToConvert) {
       if (failed(convertFuncToGPU(funcOp, gpuModule, rewriter))) {
