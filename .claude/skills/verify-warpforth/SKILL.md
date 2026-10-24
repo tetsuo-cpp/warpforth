@@ -8,7 +8,7 @@ description: Drive the real WarpForth toolchain to prove a change works. Compile
 WarpForth is a CLI compiler: the user writes a `.forth` kernel, runs `warpforthc` to get PTX, and runs that PTX on an NVIDIA GPU with `warpforth-runner`. There is no server or UI. This machine (macOS) has no CUDA GPU, no `nvcc`, no `ptxas`, so:
 
 - **Local surface** (free, always available): `warpforthc`, `warpforth-translate`, `warpforth-opt`. Proves parsing, diagnostics, lowering, and that PTX is emitted.
-- **GPU surface** (costs money, needs `VASTAI_API_KEY`): rents one Vast.ai GPU (cap $0.50/hr, `nvidia/cuda:12.4.0-devel-ubuntu22.04`), builds `warpforth-runner` there with `nvcc`, executes PTX, reads back a buffer. This is the only proof that a kernel computes the right values. **Ask the user before each GPU run**: it spends their money.
+- **GPU surface** (costs money, needs `VASTAI_API_KEY`): rents one Vast.ai GPU (cap $0.50/hr, `nvidia/cuda:12.4.0-devel-ubuntu22.04`, host driver must support CUDA 12.4), builds `warpforth-runner` there with `nvcc`, executes PTX, reads back a buffer. This is the only proof that a kernel computes the right values. **Ask the user before each GPU run**: it spends their money.
 
 Other surfaces, not mapped yet: the GPT-2 demo (`demo/`, `docs/demo.md`) needs a PyTorch Vast.ai image and a manual scp.
 
