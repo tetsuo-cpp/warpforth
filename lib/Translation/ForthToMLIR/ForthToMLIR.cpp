@@ -19,6 +19,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <cctype>
+#include <cmath>
 
 using namespace mlir;
 using namespace mlir::forth;
@@ -965,7 +966,11 @@ LogicalResult ForthParser::parseBody(Value &stack) {
 
     if (currentToken.kind == Token::Kind::Number) {
       Location tokenLoc = getLoc();
-      int64_t value = std::stoll(currentToken.text);
+      StringRef text = currentToken.text;
+      text.consume_front("+");
+      int64_t value;
+      if (text.getAsInteger(10, value))
+        return emitError("integer literal out of range for i64");
       stack = builder
                   .create<forth::ConstantOp>(tokenLoc, stackType, stack,
                                              builder.getI64IntegerAttr(value))
@@ -973,7 +978,9 @@ LogicalResult ForthParser::parseBody(Value &stack) {
       consume();
     } else if (currentToken.kind == Token::Kind::Float) {
       Location tokenLoc = getLoc();
-      double value = std::stod(currentToken.text);
+      double value;
+      if (!llvm::to_float(currentToken.text, value) || std::isinf(value))
+        return emitError("float literal out of range for f64");
       stack = builder
                   .create<forth::ConstantOp>(tokenLoc, stackType, stack,
                                              builder.getF64FloatAttr(value))
