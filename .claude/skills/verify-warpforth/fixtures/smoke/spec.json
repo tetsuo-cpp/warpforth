@@ -1,0 +1,16 @@
+{
+  "arch": "sm_70",
+  "jobs": [
+    {"name": "add", "source": "add.forth", "output_count": 4, "expect": [7, 0, 0, 0]},
+    {
+      "name": "matmul",
+      "source": "matmul.forth",
+      "params": {"A": [1, 2, 3, 4, 5, 6, 7, 8], "B": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]},
+      "grid": [6, 1, 1],
+      "output_param": 2,
+      "output_count": 6,
+      "expect": [70, 80, 90, 158, 184, 210]
+    },
+    {"name": "fsqrt", "source": "fsqrt.forth", "output_count": 1, "expect": [1.4142135623730951]}
+  ]
+}
