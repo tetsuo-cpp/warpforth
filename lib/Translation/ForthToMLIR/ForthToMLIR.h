@@ -12,7 +12,6 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/SourceMgr.h"
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 namespace mlir {
@@ -98,7 +97,7 @@ private:
   OpBuilder builder;
   ForthLexer lexer;
   Token currentToken;
-  std::unordered_set<std::string> wordDefs;
+  llvm::StringMap<llvm::SMLoc> wordDefs;
   std::vector<ParamDecl> paramDecls;
   std::vector<SharedDecl> sharedDecls;
   llvm::StringMap<Value> paramValues;
