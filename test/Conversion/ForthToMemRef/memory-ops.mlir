@@ -2,18 +2,18 @@
 
 // CHECK-LABEL: func.func private @main
 
-// load (@): pop address, inttoptr, llvm.load, store back
+// load (@): pop address, inttoptr global addrspace, llvm.load, store back
 // CHECK: memref.load %{{.*}}[%{{.*}}] : memref<256xi64>
-// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr
-// CHECK: llvm.load %{{.*}} : !llvm.ptr -> i64
+// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<1>
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<1> -> i64
 // CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<256xi64>
 
-// store (!): pop address, pop value, inttoptr, llvm.store
+// store (!): pop address, pop value, inttoptr global addrspace, llvm.store
 // CHECK: memref.load
 // CHECK: arith.subi
 // CHECK: memref.load
-// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr
-// CHECK: llvm.store %{{.*}}, %{{.*}} : i64, !llvm.ptr
+// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<1>
+// CHECK: llvm.store %{{.*}}, %{{.*}} : i64, !llvm.ptr<1>
 
 // shared load (S@): pop address, inttoptr shared addrspace, llvm.load
 // CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<3>

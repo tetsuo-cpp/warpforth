@@ -2,19 +2,19 @@
 
 // CHECK-LABEL: func.func private @main
 
-// loadf: load addr, inttoptr, llvm.load f64, bitcast f64->i64, store
+// loadf: load addr, inttoptr global addrspace, llvm.load f64, bitcast f64->i64, store
 // CHECK: memref.load
-// CHECK: llvm.inttoptr
-// CHECK: llvm.load %{{.*}} : !llvm.ptr -> f64
+// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<1>
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<1> -> f64
 // CHECK: arith.bitcast %{{.*}} : f64 to i64
 // CHECK: memref.store
 
-// storef: load addr, load value, inttoptr, bitcast i64->f64, llvm.store
+// storef: load addr, load value, inttoptr global addrspace, bitcast i64->f64, llvm.store
 // CHECK: memref.load
 // CHECK: memref.load
-// CHECK: llvm.inttoptr
+// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<1>
 // CHECK: arith.bitcast %{{.*}} : i64 to f64
-// CHECK: llvm.store %{{.*}}, %{{.*}} : f64
+// CHECK: llvm.store %{{.*}}, %{{.*}} : f64, !llvm.ptr<1>
 
 module {
   func.func private @main() {
