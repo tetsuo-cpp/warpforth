@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_COST_PER_HOUR = 0.50
+CUDA_VERSION = "12.4"
+CUDA_IMAGE = f"nvidia/cuda:{CUDA_VERSION}.0-devel-ubuntu22.04"
 POLL_INTERVAL_S = 10
 POLL_TIMEOUT_S = 300
 INSTANCE_LABEL_PREFIX = "warpforth-test-"
@@ -173,6 +175,7 @@ class VastSession:
         query = (
             f"num_gpus=1 rentable=True rented=False compute_cap>={minimum_compute_capability}"
             f" reliability>=0.95 inet_up>=100 dph<={MAX_COST_PER_HOUR}"
+            f" cuda_max_good>={CUDA_VERSION}"
         )
         offers = self.sdk.search_offers(query=query, order="dph", limit=5)
 
@@ -181,13 +184,20 @@ class VastSession:
             raise RuntimeError(msg)
 
         offer = offers[0] if isinstance(offers, list) else offers
-        offer_id = int(offer["id"]) if isinstance(offer, dict) else int(offer)
-        logger.info("Launching instance from offer %s", offer_id)
+        details = offer if isinstance(offer, dict) else {"id": offer}
+        offer_id = int(details["id"])
+        logger.info(
+            "Launching instance from offer %s: gpu=%s driver=%s cuda_max_good=%s",
+            offer_id,
+            details.get("gpu_name"),
+            details.get("driver_version"),
+            details.get("cuda_max_good"),
+        )
         self._creation_ambiguous = True
         try:
             result = self.sdk.create_instance(
                 id=offer_id,
-                image="nvidia/cuda:12.4.0-devel-ubuntu22.04",
+                image=CUDA_IMAGE,
                 disk=10.0,
                 runtype="ssh_direc ssh_proxy",
                 label=self.instance_label,
