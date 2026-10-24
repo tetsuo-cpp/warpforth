@@ -1405,6 +1405,13 @@ LogicalResult ForthParser::parseWordDefinition() {
     return emitError("kernel name '" + kernelName + "' conflicts with word " +
                      currentToken.text);
   }
+  llvm::SMLoc nameLoc = currentToken.location;
+  if (auto previous = wordDefs.find(wordName); previous != wordDefs.end()) {
+    (void)emitError("word '" + wordName + "' is already defined");
+    sourceMgr.PrintMessage(previous->second, llvm::SourceMgr::DK_Note,
+                           "previous definition is here");
+    return failure();
+  }
   consume(); // consume word name
 
   // Create function: !forth.stack -> !forth.stack
@@ -1435,7 +1442,7 @@ LogicalResult ForthParser::parseWordDefinition() {
   builder.create<func::ReturnOp>(loc, resultStack);
 
   // Register the word
-  wordDefs.insert(wordName);
+  wordDefs[wordName] = nameLoc;
 
   consume(); // consume ';'
   return success();
