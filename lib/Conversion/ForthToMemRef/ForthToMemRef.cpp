@@ -69,6 +69,33 @@ static Value pushValue(Location loc, ConversionPatternRewriter &rewriter,
   return newSP;
 }
 
+/// Base for patterns that rewrite one !forth.stack operand into one output
+/// stack. Subclasses emit the stack effect on the unpacked (memref, SP) pair
+/// and return the new SP.
+template <typename ForthOp>
+struct StackEffectConversion : public OpConversionPattern<ForthOp> {
+  using OpConversionPattern<ForthOp>::OpConversionPattern;
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+
+  virtual FailureOr<Value>
+  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr, ConversionPatternRewriter &rewriter) const = 0;
+
+  LogicalResult
+  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    FailureOr<Value> newSP =
+        rewriteStack(op, adaptor, memref, inputStack[1], rewriter);
+    if (failed(newSP))
+      return failure();
+    rewriter.replaceOpWithMultiple(op, {{memref, *newSP}});
+    return success();
+  }
+};
+
 /// Conversion pattern for forth.stack operation.
 /// Allocates a memref<256xi64> on the stack and initializes SP to 0.
 struct StackOpConversion : public OpConversionPattern<forth::StackOp> {
@@ -96,18 +123,14 @@ struct StackOpConversion : public OpConversionPattern<forth::StackOp> {
 
 /// Conversion pattern for forth.constant operation.
 /// Handles both integer and float constants.
-struct ConstantOpConversion : public OpConversionPattern<forth::ConstantOp> {
-  ConstantOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::ConstantOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct ConstantOpConversion : public StackEffectConversion<forth::ConstantOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::ConstantOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::ConstantOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     Value valueToPush;
     auto typedValue = cast<TypedAttr>(op.getValueAttr());
@@ -124,73 +147,58 @@ struct ConstantOpConversion : public OpConversionPattern<forth::ConstantOp> {
     }
     Value newSP = pushValue(loc, rewriter, memref, stackPtr, valueToPush);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
-    return success();
+    return newSP;
   }
 };
 
 /// Conversion pattern for forth.dup operation.
 /// Duplicates the value at the top of the stack: (a -- a a)
-struct DupOpConversion : public OpConversionPattern<forth::DupOp> {
-  DupOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::DupOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct DupOpConversion : public StackEffectConversion<forth::DupOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::DupOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::DupOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Load value at current SP and push duplicate
     Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
     Value newSP = pushValue(loc, rewriter, memref, stackPtr, topValue);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
-    return success();
+    return newSP;
   }
 };
 
 /// Conversion pattern for forth.drop operation.
 /// Removes the top element from the stack: (a -- )
-struct DropOpConversion : public OpConversionPattern<forth::DropOp> {
-  DropOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::DropOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct DropOpConversion : public StackEffectConversion<forth::DropOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::DropOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::DropOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Decrement SP
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value newSP = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
-    return success();
+    return newSP;
   }
 };
 
 /// Conversion pattern for forth.swap operation.
 /// Swaps the top two elements: (a b -- b a)
-struct SwapOpConversion : public OpConversionPattern<forth::SwapOp> {
-  SwapOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::SwapOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct SwapOpConversion : public StackEffectConversion<forth::SwapOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::SwapOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::SwapOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Load top two values
     Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
@@ -203,25 +211,20 @@ struct SwapOpConversion : public OpConversionPattern<forth::SwapOp> {
     rewriter.create<memref::StoreOp>(loc, secondValue, memref, stackPtr);
     rewriter.create<memref::StoreOp>(loc, topValue, memref, spMinus1);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
-    return success();
+    return stackPtr;
   }
 };
 
 /// Conversion pattern for forth.over operation.
 /// Copies the second element to top: (a b -- a b a)
-struct OverOpConversion : public OpConversionPattern<forth::OverOp> {
-  OverOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::OverOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct OverOpConversion : public StackEffectConversion<forth::OverOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::OverOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::OverOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Load second element (SP - 1) and push copy
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
@@ -229,25 +232,20 @@ struct OverOpConversion : public OpConversionPattern<forth::OverOp> {
     Value secondValue = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
     Value newSP = pushValue(loc, rewriter, memref, stackPtr, secondValue);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
-    return success();
+    return newSP;
   }
 };
 
 /// Conversion pattern for forth.rot operation.
 /// Rotates top three elements: (a b c -- b c a)
-struct RotOpConversion : public OpConversionPattern<forth::RotOp> {
-  RotOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::RotOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct RotOpConversion : public StackEffectConversion<forth::RotOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::RotOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::RotOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value two = rewriter.create<arith::ConstantIndexOp>(loc, 2);
@@ -266,25 +264,20 @@ struct RotOpConversion : public OpConversionPattern<forth::RotOp> {
     rewriter.create<memref::StoreOp>(loc, c, memref, spMinus1);
     rewriter.create<memref::StoreOp>(loc, a, memref, stackPtr);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
-    return success();
+    return stackPtr;
   }
 };
 
 /// Conversion pattern for forth.nip operation.
 /// Removes the second element: (a b -- b)
-struct NipOpConversion : public OpConversionPattern<forth::NipOp> {
-  NipOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::NipOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct NipOpConversion : public StackEffectConversion<forth::NipOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::NipOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::NipOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Load top value (b at SP)
     Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
@@ -295,25 +288,20 @@ struct NipOpConversion : public OpConversionPattern<forth::NipOp> {
     rewriter.create<memref::StoreOp>(loc, b, memref, spMinus1);
 
     // Net effect: SP-1 (removed one element)
-    rewriter.replaceOpWithMultiple(op, {{memref, spMinus1}});
-    return success();
+    return spMinus1;
   }
 };
 
 /// Conversion pattern for forth.tuck operation.
 /// Copies top before second: (a b -- b a b)
-struct TuckOpConversion : public OpConversionPattern<forth::TuckOp> {
-  TuckOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::TuckOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct TuckOpConversion : public StackEffectConversion<forth::TuckOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::TuckOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::TuckOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
 
@@ -329,25 +317,20 @@ struct TuckOpConversion : public OpConversionPattern<forth::TuckOp> {
     rewriter.create<memref::StoreOp>(loc, b, memref, newSP);
 
     // Net effect: SP+1 (added one element)
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
-    return success();
+    return newSP;
   }
 };
 
 /// Conversion pattern for forth.pick operation.
 /// Copies nth element to top: ( xn ... x0 n -- xn ... x0 xn )
-struct PickOpConversion : public OpConversionPattern<forth::PickOp> {
-  PickOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::PickOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct PickOpConversion : public StackEffectConversion<forth::PickOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::PickOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::PickOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Pop n from stack
     Value nI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
@@ -369,26 +352,21 @@ struct PickOpConversion : public OpConversionPattern<forth::PickOp> {
     rewriter.create<memref::StoreOp>(loc, pickedValue, memref, stackPtr);
 
     // Net effect: SP unchanged (popped n, pushed xn)
-    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
-    return success();
+    return stackPtr;
   }
 };
 
 /// Conversion pattern for forth.roll operation.
 /// Rotates nth element to top: ( xn ... x0 n -- xn-1 ... x0 xn )
 /// Uses a CF-based loop to shift elements down.
-struct RollOpConversion : public OpConversionPattern<forth::RollOp> {
-  RollOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::RollOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct RollOpConversion : public StackEffectConversion<forth::RollOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::RollOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::RollOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     auto indexType = rewriter.getIndexType();
 
@@ -442,8 +420,7 @@ struct RollOpConversion : public OpConversionPattern<forth::RollOp> {
     rewriter.create<memref::StoreOp>(loc, rolledValue, memref, spAfterPop);
 
     // Net effect: SP' = SP - 1 (consumed n)
-    rewriter.replaceOpWithMultiple(op, {{memref, spAfterPop}});
-    return success();
+    return spAfterPop;
   }
 };
 
@@ -451,20 +428,16 @@ struct RollOpConversion : public OpConversionPattern<forth::RollOp> {
 /// Pops two values, applies operation, pushes result: (a b -- result)
 /// When IsFloat=true, bitcasts i64->f64 before the op and f64->i64 after.
 template <typename ForthOp, typename ArithOp, bool IsFloat = false>
-struct BinaryArithOpConversion : public OpConversionPattern<ForthOp> {
-  BinaryArithOpConversion(const TypeConverter &typeConverter,
-                          MLIRContext *context)
-      : OpConversionPattern<ForthOp>(typeConverter, context) {}
-  using OneToNOpAdaptor =
-      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+struct BinaryArithOpConversion : public StackEffectConversion<ForthOp> {
+  using Base = StackEffectConversion<ForthOp>;
+  using Base::Base;
+  using typename Base::OneToNOpAdaptor;
 
-  LogicalResult
-  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
 
@@ -491,8 +464,7 @@ struct BinaryArithOpConversion : public OpConversionPattern<ForthOp> {
     rewriter.create<memref::StoreOp>(loc, result, memref, spMinus1);
 
     // New SP is SP-1 (net effect: two pops, one push)
-    rewriter.replaceOpWithMultiple(op, {{memref, spMinus1}});
-    return success();
+    return spMinus1;
   }
 };
 
@@ -530,20 +502,16 @@ using MinFOpConversion =
 /// Pops one value, applies operation, pushes result: (f -- result)
 /// Bitcasts i64->f64 before the op and f64->i64 after.
 template <typename ForthOp, typename MathOp>
-struct UnaryFloatOpConversion : public OpConversionPattern<ForthOp> {
-  UnaryFloatOpConversion(const TypeConverter &typeConverter,
-                         MLIRContext *context)
-      : OpConversionPattern<ForthOp>(typeConverter, context) {}
-  using OneToNOpAdaptor =
-      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+struct UnaryFloatOpConversion : public StackEffectConversion<ForthOp> {
+  using Base = StackEffectConversion<ForthOp>;
+  using Base::Base;
+  using typename Base::OneToNOpAdaptor;
 
-  LogicalResult
-  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Load value from top of stack
     Value a = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
@@ -562,8 +530,7 @@ struct UnaryFloatOpConversion : public OpConversionPattern<ForthOp> {
     // Store result at same position (SP unchanged — unary op)
     rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
-    return success();
+    return stackPtr;
   }
 };
 
@@ -579,20 +546,16 @@ using NegFOpConversion = UnaryFloatOpConversion<forth::NegFOp, arith::NegFOp>;
 /// When IsFloat=true, bitcasts i64->f64 before comparing.
 template <typename ForthOp, typename CmpOp, auto Predicate,
           bool IsFloat = false>
-struct BinaryCmpOpConversion : public OpConversionPattern<ForthOp> {
-  BinaryCmpOpConversion(const TypeConverter &typeConverter,
-                        MLIRContext *context)
-      : OpConversionPattern<ForthOp>(typeConverter, context) {}
-  using OneToNOpAdaptor =
-      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+struct BinaryCmpOpConversion : public StackEffectConversion<ForthOp> {
+  using Base = StackEffectConversion<ForthOp>;
+  using Base::Base;
+  using typename Base::OneToNOpAdaptor;
 
-  LogicalResult
-  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
 
@@ -619,8 +582,7 @@ struct BinaryCmpOpConversion : public OpConversionPattern<ForthOp> {
     rewriter.create<memref::StoreOp>(loc, result, memref, spMinus1);
 
     // New SP is SP-1 (net: two pops, one push)
-    rewriter.replaceOpWithMultiple(op, {{memref, spMinus1}});
-    return success();
+    return spMinus1;
   }
 };
 
@@ -654,18 +616,14 @@ using GeFOpConversion = BinaryCmpOpConversion<forth::GeFOp, arith::CmpFOp,
 
 /// Conversion pattern for forth.not operation (bitwise NOT).
 /// Unary: pops one value, XORs with -1 (all bits set), pushes result: (a -- ~a)
-struct NotOpConversion : public OpConversionPattern<forth::NotOp> {
-  NotOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::NotOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct NotOpConversion : public StackEffectConversion<forth::NotOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::NotOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::NotOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Load top value
     Value a = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
@@ -678,25 +636,20 @@ struct NotOpConversion : public OpConversionPattern<forth::NotOp> {
     // Store result at same position (SP unchanged)
     rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
-    return success();
+    return stackPtr;
   }
 };
 
 /// Conversion pattern for forth.zero_eq operation (0=).
 /// Unary: pops one value, pushes -1 if zero, 0 otherwise: (a -- flag)
-struct ZeroEqOpConversion : public OpConversionPattern<forth::ZeroEqOp> {
-  ZeroEqOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::ZeroEqOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct ZeroEqOpConversion : public StackEffectConversion<forth::ZeroEqOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::ZeroEqOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::ZeroEqOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Load top value
     Value a = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
@@ -714,25 +667,20 @@ struct ZeroEqOpConversion : public OpConversionPattern<forth::ZeroEqOp> {
     // Store result at same position (SP unchanged)
     rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
-    return success();
+    return stackPtr;
   }
 };
 
 /// Conversion pattern for forth.param_ref operation.
 /// Pushes an array parameter's byte address or a scalar parameter's value.
-struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
-  ParamRefOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::ParamRefOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct ParamRefOpConversion : public StackEffectConversion<forth::ParamRefOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::ParamRefOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::ParamRefOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
     Value parameter = adaptor.getOperands()[1].front();
 
     Value valueToPush;
@@ -757,8 +705,7 @@ struct ParamRefOpConversion : public OpConversionPattern<forth::ParamRefOp> {
     // Push onto stack
     Value newSP = pushValue(loc, rewriter, memref, stackPtr, valueToPush);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
-    return success();
+    return newSP;
   }
 };
 
@@ -802,20 +749,16 @@ inline constexpr bool isReducedFloat =
 /// AddressSpace selects global or workgroup memory.
 template <typename ForthOp, MemType MT = MemType::I64,
           unsigned AddressSpace = kGlobalAddressSpace>
-struct MemoryLoadOpConversion : public OpConversionPattern<ForthOp> {
-  MemoryLoadOpConversion(const TypeConverter &typeConverter,
-                         MLIRContext *context)
-      : OpConversionPattern<ForthOp>(typeConverter, context) {}
-  using OneToNOpAdaptor =
-      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+struct MemoryLoadOpConversion : public StackEffectConversion<ForthOp> {
+  using Base = StackEffectConversion<ForthOp>;
+  using Base::Base;
+  using typename Base::OneToNOpAdaptor;
 
-  LogicalResult
-  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     auto ptrType =
         LLVM::LLVMPointerType::get(rewriter.getContext(), AddressSpace);
@@ -848,8 +791,7 @@ struct MemoryLoadOpConversion : public OpConversionPattern<ForthOp> {
     // Store loaded value back at same position (replaces address)
     rewriter.create<memref::StoreOp>(loc, valueToPush, memref, stackPtr);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
-    return success();
+    return stackPtr;
   }
 };
 
@@ -899,20 +841,16 @@ using SharedLoadF32OpConversion =
 /// MemType selects the memory element type and the narrowing strategy.
 template <typename ForthOp, MemType MT = MemType::I64,
           unsigned AddressSpace = kGlobalAddressSpace>
-struct MemoryStoreOpConversion : public OpConversionPattern<ForthOp> {
-  MemoryStoreOpConversion(const TypeConverter &typeConverter,
-                          MLIRContext *context)
-      : OpConversionPattern<ForthOp>(typeConverter, context) {}
-  using OneToNOpAdaptor =
-      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+struct MemoryStoreOpConversion : public StackEffectConversion<ForthOp> {
+  using Base = StackEffectConversion<ForthOp>;
+  using Base::Base;
+  using typename Base::OneToNOpAdaptor;
 
-  LogicalResult
-  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     auto ptrType =
         LLVM::LLVMPointerType::get(rewriter.getContext(), AddressSpace);
@@ -949,8 +887,7 @@ struct MemoryStoreOpConversion : public OpConversionPattern<ForthOp> {
 
     // New stack pointer is SP-2 (popped both address and value)
     Value spMinus2 = rewriter.create<arith::SubIOp>(loc, spMinus1, one);
-    rewriter.replaceOpWithMultiple(op, {{memref, spMinus2}});
-    return success();
+    return spMinus2;
   }
 };
 
@@ -999,18 +936,14 @@ using SharedStoreF32OpConversion =
 
 /// Conversion pattern for forth.itof (S>F).
 /// Pops i64, converts to f64 via sitofp, bitcasts back to i64, pushes.
-struct IToFOpConversion : public OpConversionPattern<forth::IToFOp> {
-  IToFOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::IToFOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct IToFOpConversion : public StackEffectConversion<forth::IToFOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::IToFOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::IToFOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Load i64 value from top of stack
     Value i64Value = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
@@ -1026,25 +959,20 @@ struct IToFOpConversion : public OpConversionPattern<forth::IToFOp> {
     // Store result (SP unchanged — unary op)
     rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
-    return success();
+    return stackPtr;
   }
 };
 
 /// Conversion pattern for forth.ftoi (F>S).
 /// Pops i64 (f64 bits), bitcasts to f64, converts to i64 via fptosi, pushes.
-struct FToIOpConversion : public OpConversionPattern<forth::FToIOp> {
-  FToIOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::FToIOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct FToIOpConversion : public StackEffectConversion<forth::FToIOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::FToIOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::FToIOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Load i64 (f64 bit pattern) from top of stack
     Value i64Bits = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
@@ -1060,8 +988,7 @@ struct FToIOpConversion : public OpConversionPattern<forth::FToIOp> {
     // Store result (SP unchanged — unary op)
     rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, stackPtr}});
-    return success();
+    return stackPtr;
   }
 };
 
@@ -1069,22 +996,19 @@ struct FToIOpConversion : public OpConversionPattern<forth::FToIOp> {
 /// Creates an intrinsic op with the specified name and pushes the value onto
 /// the stack.
 template <typename ForthOp>
-struct IntrinsicOpConversion : public OpConversionPattern<ForthOp> {
+struct IntrinsicOpConversion : public StackEffectConversion<ForthOp> {
+  using Base = StackEffectConversion<ForthOp>;
+  using typename Base::OneToNOpAdaptor;
+
   IntrinsicOpConversion(const TypeConverter &typeConverter,
                         MLIRContext *context, StringRef intrinsicName)
-      : OpConversionPattern<ForthOp>(typeConverter, context),
-        intrinsicName(intrinsicName) {}
+      : Base(typeConverter, context), intrinsicName(intrinsicName) {}
 
-  using OneToNOpAdaptor =
-      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
-
-  LogicalResult
-  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Create intrinsic op and push onto stack
     Value intrinsicValue = rewriter.create<forth::IntrinsicOp>(
@@ -1093,8 +1017,7 @@ struct IntrinsicOpConversion : public OpConversionPattern<ForthOp> {
         loc, rewriter.getI64Type(), intrinsicValue);
     Value newSP = pushValue(loc, rewriter, memref, stackPtr, intrinsicI64);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
-    return success();
+    return newSP;
   }
 
   std::string intrinsicName;
@@ -1102,18 +1025,14 @@ struct IntrinsicOpConversion : public OpConversionPattern<ForthOp> {
 
 /// Conversion pattern for forth.global_id operation.
 /// Computes global_id = bid-x * bdim-x + tid-x using intrinsics.
-struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
-  GlobalIdOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::GlobalIdOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct GlobalIdOpConversion : public StackEffectConversion<forth::GlobalIdOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::GlobalIdOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::GlobalIdOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // Create intrinsic ops for each component
     Value bidX = rewriter.create<forth::IntrinsicOp>(
@@ -1130,17 +1049,14 @@ struct GlobalIdOpConversion : public OpConversionPattern<forth::GlobalIdOp> {
         loc, rewriter.getI64Type(), globalId);
     Value newSP = pushValue(loc, rewriter, memref, stackPtr, globalIdI64);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
-    return success();
+    return newSP;
   }
 };
 
 /// Conversion pattern for forth.pop_flag operation.
 /// Pops top of stack, compares != 0, returns (memref, newSP, i1 flag).
 struct PopFlagOpConversion : public OpConversionPattern<forth::PopFlagOp> {
-  PopFlagOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::PopFlagOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+  using OpConversionPattern::OpConversionPattern;
 
   LogicalResult
   matchAndRewrite(forth::PopFlagOp op, OneToNOpAdaptor adaptor,
@@ -1172,9 +1088,7 @@ struct PopFlagOpConversion : public OpConversionPattern<forth::PopFlagOp> {
 /// Conversion pattern for forth.pop operation.
 /// Pops top of stack, returns (memref, newSP, i64 value).
 struct PopOpConversion : public OpConversionPattern<forth::PopOp> {
-  PopOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::PopOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+  using OpConversionPattern::OpConversionPattern;
 
   LogicalResult
   matchAndRewrite(forth::PopOp op, OneToNOpAdaptor adaptor,
@@ -1200,27 +1114,22 @@ struct PopOpConversion : public OpConversionPattern<forth::PopOp> {
 
 /// Conversion pattern for forth.push_value operation.
 /// Pushes a dynamic i64 value onto the stack.
-struct PushValueOpConversion : public OpConversionPattern<forth::PushValueOp> {
-  PushValueOpConversion(const TypeConverter &typeConverter,
-                        MLIRContext *context)
-      : OpConversionPattern<forth::PushValueOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+struct PushValueOpConversion
+    : public StackEffectConversion<forth::PushValueOp> {
+  using StackEffectConversion::StackEffectConversion;
 
-  LogicalResult
-  matchAndRewrite(forth::PushValueOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  FailureOr<Value>
+  rewriteStack(forth::PushValueOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
 
     // The value operand (i64) passes through as-is (not a converted type).
     Value value = adaptor.getOperands()[1][0];
 
     Value newSP = pushValue(loc, rewriter, memref, stackPtr, value);
 
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}});
-    return success();
+    return newSP;
   }
 };
 
