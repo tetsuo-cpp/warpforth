@@ -69,7 +69,7 @@ ForthLexer::ForthLexer(llvm::SourceMgr &sourceMgr, unsigned bufferID)
   endPtr = buffer->getBufferEnd();
 }
 
-void ForthLexer::skipWhitespace() {
+bool ForthLexer::skipWhitespace() {
   while (curPtr < endPtr) {
     // Skip whitespace characters
     while (curPtr < endPtr && isWhitespace(*curPtr)) {
@@ -94,8 +94,19 @@ void ForthLexer::skipWhitespace() {
       }
     }
 
+    // Paren comment: '(' as a whole token, ending at the next ')'.
+    if (curPtr < endPtr && *curPtr == '(' &&
+        (curPtr + 1 >= endPtr || isWhitespace(curPtr[1]))) {
+      size_t close = llvm::StringRef(curPtr, endPtr - curPtr).find(')');
+      if (close == llvm::StringRef::npos)
+        return false;
+      curPtr += close + 1;
+      continue;
+    }
+
     break;
   }
+  return true;
 }
 
 bool ForthLexer::isWhitespace(char c) const {
@@ -142,7 +153,11 @@ bool ForthLexer::isFloat(const std::string &str) const {
 }
 
 Token ForthLexer::nextToken() {
-  skipWhitespace();
+  if (!skipWhitespace()) {
+    llvm::SMLoc loc = llvm::SMLoc::getFromPointer(curPtr);
+    curPtr = endPtr;
+    return Token(Token::Kind::Error, "unterminated comment: missing ')'", loc);
+  }
 
   if (curPtr >= endPtr) {
     return Token(Token::Kind::EndOfFile, "",
@@ -201,6 +216,8 @@ Location ForthParser::getLoc() {
 }
 
 LogicalResult ForthParser::emitError(const llvm::Twine &message) {
+  if (currentToken.kind == Token::Kind::Error)
+    return emitErrorAt(currentToken.location, currentToken.text);
   sourceMgr.PrintMessage(currentToken.location, llvm::SourceMgr::DK_Error,
                          message);
   return failure();
@@ -365,6 +382,27 @@ LogicalResult ForthParser::parseHeader() {
       }
 
       headerEndPtr = lineEnd < bufEnd ? lineEnd + 1 : lineEnd;
+    } else if (trimmed.starts_with("(") &&
+               (trimmed.size() == 1 || trimmed[1] == ' ' ||
+                trimmed[1] == '\t')) {
+      // A line holding only a paren comment (possibly spanning lines) is
+      // skipped like a '\' comment line. Anything else ends the header.
+      llvm::StringRef rest(trimmed.data(), bufEnd - trimmed.data());
+      size_t close = rest.find(')');
+      if (close == llvm::StringRef::npos) {
+        headerEnded = true;
+      } else {
+        const char *afterClose = rest.data() + close + 1;
+        lineEnd = afterClose;
+        while (lineEnd < bufEnd && *lineEnd != '\n' && *lineEnd != '\r')
+          ++lineEnd;
+        if (trim(llvm::StringRef(afterClose, lineEnd - afterClose)).empty()) {
+          if (!headerEnded)
+            headerEndPtr = lineEnd < bufEnd ? lineEnd + 1 : lineEnd;
+        } else {
+          headerEnded = true;
+        }
+      }
     } else if (trimmed.starts_with("\\")) {
       if (trimmed.size() == 1 || trimmed[1] == ' ' || trimmed[1] == '\t') {
         if (!headerEnded)

@@ -34,6 +34,20 @@ Required. Must appear first. Names the GPU kernel entry point.
 
 Declares GPU shared memory. Using the name as a word pushes its base address. Access with `S@`/`S!` (i64) or `SF@`/`SF!` (f64). Cannot be referenced inside word definitions.
 
+## Comments
+
+```forth
+\ Line comment: runs to the end of the line.
+: SQ ( n -- n*n ) DUP * ;
+( Paren comments
+  can span lines. )
+```
+
+- `\` starts a comment that runs to the end of the line.
+- `(` starts a comment that ends at the next `)`. It can span lines and is typically used for stack-effect annotations. An unterminated `(` comment is an error.
+- Both must be whole words: `\` or `(` followed by whitespace or the end of input. A word such as `(FOO)` is not a comment.
+- Lines holding only comments may appear before and between header directives.
+
 ## Literals
 
 ### Integer Literals

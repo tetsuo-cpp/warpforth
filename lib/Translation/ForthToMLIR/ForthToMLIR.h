@@ -39,7 +39,7 @@ struct SharedDecl {
 
 /// Simple token representing a Forth word or literal.
 struct Token {
-  enum class Kind { Number, Float, Word, Colon, Semicolon, EndOfFile };
+  enum class Kind { Number, Float, Word, Colon, Semicolon, Error, EndOfFile };
 
   Kind kind;
   std::string text;
@@ -70,8 +70,9 @@ private:
   const char *curPtr;
   const char *endPtr;
 
-  /// Skip whitespace and comments.
-  void skipWhitespace();
+  /// Skip whitespace and comments. Returns false at an unterminated '('
+  /// comment, leaving curPtr at the '('.
+  bool skipWhitespace();
 
   /// Check if a character is whitespace.
   bool isWhitespace(char c) const;
@@ -129,7 +130,8 @@ private:
   /// Advance to the next token.
   void consume();
 
-  /// Emit an error at the current location.
+  /// Emit an error at the current location. If the current token is a lexer
+  /// error, report that error instead of the message.
   LogicalResult emitError(const llvm::Twine &message);
 
   /// Emit an error at a specific buffer location.
