@@ -9,7 +9,7 @@ See the [documentation](https://tetsuo-cpp.github.io/warpforth/).
 - LLVM/MLIR
 - CMake
 - C++17 compiler
-- CUDA toolkit (for GPU execution)
+- An NVIDIA driver and Python 3 on the GPU host (for GPU execution)
 - [uv](https://github.com/astral-sh/uv) (for Python test tooling)
 
 ## Building
@@ -56,16 +56,29 @@ Compile to PTX:
 ./build/bin/warpforthc matmul.forth -o matmul.ptx --arch sm_80
 ```
 
-Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output):
+Run it on a machine with an NVIDIA GPU, with the repository root on the Python
+path (for example `PYTHONPATH=. uv run python run_matmul.py`). A is 2x4
+row-major, B is 4x3 row-major, C is 2x3 output:
 
-```bash
-./build/bin/warpforth-runner matmul.ptx \
-  --param 'i64[]:1,2,3,4,5,6,7,8' \
-  --param 'i64[]:1,2,3,4,5,6,7,8,9,10,11,12' \
-  --param 'i64[]:0,0,0,0,0,0' \
-  --grid 6,1,1 --block 1,1,1 \
-  --output-param 2 --output-count 6
+```python
+from pathlib import Path
+
+import numpy as np
+
+from warpforth_gpu.client import Device, worker_command
+
+with Device.spawn(worker_command()) as device:
+    kernel = device.load(Path("matmul.ptx").read_text()).kernel("main")
+    a = device.upload(np.arange(1, 9, dtype=np.int64))
+    b = device.upload(np.arange(1, 13, dtype=np.int64))
+    c = device.alloc(6 * 8)
+    kernel.launch(grid=(6, 1, 1), block=(1, 1, 1), args=[a, b, c])
+    print(c.read(np.int64))  # [ 70  80  90 158 184 210]
 ```
+
+`worker_command()` runs the device worker from its inlined source, so the
+same call works over SSH on a remote GPU host:
+`Device.spawn(["ssh", host, shlex.join(worker_command())])`.
 
 ## Toolchain
 
@@ -74,7 +87,7 @@ Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output):
 | `warpforthc` | Compiles Forth source to PTX |
 | `warpforth-translate` | Translates from Forth source to MLIR and MLIR to PTX assembly |
 | `warpforth-opt` | Runs individual MLIR passes or entire pipeline |
-| `warpforth-runner` | Executes PTX kernels on a GPU for testing |
+| `warpforth_gpu` | Python package that loads PTX and runs kernels on an NVIDIA GPU, locally or over SSH |
 
 These tools can be composed for debugging or inspecting intermediate stages:
 

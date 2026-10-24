@@ -1,6 +1,6 @@
 # GPU execution
 
-A user runs compiled PTX on an NVIDIA GPU with `warpforth-runner`, passing array and scalar parameters, a grid and block shape, and reads back one array parameter as comma-separated values. This is the only journey that proves a kernel computes the right numbers.
+A user runs compiled PTX on an NVIDIA GPU through `warpforth_gpu.client.Device`, uploading array buffers, passing scalar values, choosing a grid and block shape, and reading buffers back as numpy arrays. This is the only journey that proves a kernel computes the right numbers.
 
 ## Sub-features
 
@@ -12,7 +12,7 @@ A user runs compiled PTX on an NVIDIA GPU with `warpforth-runner`, passing array
 
 ## How to get to it (user POV)
 
-- Compile locally with `warpforthc`, then on a GPU host: `warpforth-runner kernel.ptx --kernel main --param 'i64[]:1,2,3' --param i64:42 --grid 6,1,1 --block 1,1,1 --output-param 0 --output-count 3`.
+- Compile locally with `warpforthc`, then on a GPU host, from the repo root: `Device.spawn(worker_command())`, `device.load(ptx).kernel("main").launch(grid=..., block=..., args=[device.upload(array), 42])`, `buffer.read(np.int64)`. For a remote host, prefix the ssh argv: `Device.spawn([*ssh_argv, shlex.join(worker_command())])`.
 - `uv run pytest -v -m gpu` (regression suite, same harness).
 
 ## Driving it with gpu_run.py
@@ -33,6 +33,7 @@ Preconditions:
 
 - Rental can fail with `No suitable GPU offers found` under the $0.50/hr cap; retry later or report it, don't raise the cap without the user.
 - `output_param` must index an array param; scalars cannot be read back.
+- A CUDA error during a launch (for example an illegal address) is fatal to the worker; `KernelRunner` starts a fresh one for the next job, and that job's `result.json` shows the `DeviceError`.
 - `params` values are padded with zeros to the declared array size; `expect` is a prefix match, so trailing zeros need not be listed.
 - Higher `arch` in the spec (e.g. `sm_90`) narrows offers to newer GPUs and raises cost and wait.
-- Instance boot plus `nvcc` takes minutes; run in the background and don't kill it mid-run. If you do, run `cleanup.py` on its evidence dir.
+- Instance boot takes minutes; run in the background and don't kill it mid-run. If you do, run `cleanup.py` on its evidence dir.

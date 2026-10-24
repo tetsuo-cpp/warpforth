@@ -38,7 +38,11 @@ CMake.
 **Tools:**
 - `tools/warpforth-translate/warpforth-translate.cpp` - Translation tool entry point
 - `tools/warpforth-opt/warpforth-opt.cpp` - Optimization tool entry point
-- `tools/warpforth-runner/warpforth-runner.cpp` - PTX execution tool for GPU kernels
+
+**GPU execution:**
+- `warpforth_gpu/worker.py` - Stdlib-only device worker; drives the CUDA driver via ctypes and speaks newline-delimited JSON on stdin/stdout
+- `warpforth_gpu/client.py` - `Device`, `Module`, `Kernel`, `Buffer` client for the worker
+- `warpforth_gpu/vast.py` - `VastSession`, rents a Vast.ai GPU and exposes `ssh_argv()`
 
 ## Tools Usage
 
@@ -54,9 +58,21 @@ CMake.
 ./build/bin/warpforth-translate --forth-to-mlir test/example.forth | \
   ./build/bin/warpforth-opt --warpforth-pipeline | \
   ./build/bin/warpforth-translate --mlir-to-ptx > kernel.ptx
+```
 
-# Execute PTX on GPU
-./warpforth-runner kernel.ptx --param i64[]:1,2,3 --param i64:42 --output-param 0 --output-count 3
+```python
+# Execute PTX on a GPU (locally; prepend ssh argv and shlex.join the command for a remote host)
+from pathlib import Path
+
+import numpy as np
+
+from warpforth_gpu.client import Device, worker_command
+
+with Device.spawn(worker_command()) as device:
+    kernel = device.load(Path("kernel.ptx").read_text()).kernel("main")
+    data = device.upload(np.array([1, 2, 3], dtype=np.int64))
+    kernel.launch(grid=(1, 1, 1), block=(3, 1, 1), args=[data, 42])
+    print(data.read(np.int64))
 ```
 
 ## Adding New Operations
@@ -79,15 +95,15 @@ Add corresponding conversion pattern in `lib/Conversion/ForthToMemRef/ForthToMem
 
 ## GPU Tests
 
-End-to-end GPU execution tests live in `gpu_test/`. They compile Forth kernels locally, rent a GPU on Vast.ai, and verify output.
+End-to-end GPU execution tests live in `gpu_test/`. They compile Forth kernels locally, rent a GPU on Vast.ai, run them through a device worker started over SSH, and verify output. `gpu_test/test_worker.py` covers the worker protocol locally with a fake driver.
 
 ```bash
 # Run GPU tests
 VASTAI_API_KEY=xxx uv run pytest -v -m gpu
 
 # Lint and format Python code
-uv run ruff check gpu_test/
-uv run ruff format gpu_test/
+uv run ruff check gpu_test/ warpforth_gpu/
+uv run ruff format gpu_test/ warpforth_gpu/
 ```
 
 ## Architecture Notes

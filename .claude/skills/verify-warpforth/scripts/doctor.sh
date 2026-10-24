@@ -29,7 +29,7 @@ rm -rf "$smoke"
 
 if [ "${1:-}" = "--remote" ]; then
   command -v uv >/dev/null && ok "uv on PATH" || bad "uv missing"
-  command -v ssh >/dev/null && command -v scp >/dev/null && ok "ssh/scp on PATH" || bad "ssh/scp missing"
+  command -v ssh >/dev/null && ok "ssh on PATH" || bad "ssh missing"
   uv run --quiet python - <<'PY' || fail=1
 import sys
 sys.path.insert(0, ".claude/skills/verify-warpforth/scripts")
