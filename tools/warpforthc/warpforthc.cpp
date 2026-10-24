@@ -88,10 +88,8 @@ int main(int argc, char **argv) {
   SourceMgrDiagnosticHandler diagHandler(sourceMgr, &context);
 
   auto module = forth::parseForthSource(sourceMgr, &context);
-  if (!module) {
-    llvm::errs() << "error: failed to parse Forth source\n";
+  if (!module)
     return 1;
-  }
 
   // Run the compilation pipeline
   PassManager pm(&context);
@@ -100,10 +98,8 @@ int main(int argc, char **argv) {
   warpforth::WarpForthPipelineOptions pipelineOptions;
   pipelineOptions.chip = targetArchitecture.getValue();
   warpforth::buildWarpForthPipeline(pm, pipelineOptions);
-  if (failed(pm.run(*module))) {
-    llvm::errs() << "error: compilation pipeline failed\n";
+  if (failed(pm.run(*module)))
     return 1;
-  }
 
   // Extract PTX and write to output
   std::error_code ec;
