@@ -30,6 +30,11 @@ namespace {
 
 // Stack configuration constants
 constexpr int64_t kStackSize = 256;
+// NVPTX global memory address space for LLVM ptr types. Global addresses are
+// numerically equal to their generic addresses, so inttoptr into this space is
+// valid and lets NVPTX emit ld.global/st.global after address arithmetic.
+constexpr unsigned kGlobalAddressSpace =
+    static_cast<unsigned>(NVVM::kGlobalMemorySpace);
 // NVPTX shared memory address space for LLVM ptr types.
 constexpr unsigned kWorkgroupAddressSpace =
     static_cast<unsigned>(NVVM::kSharedMemorySpace);
@@ -794,9 +799,9 @@ inline constexpr bool isReducedFloat =
 /// Generalized memory load template.
 /// Pops address from stack, loads value via pointer, pushes value.
 /// MemType selects the memory element type and the widening strategy.
-/// AddressSpace selects global (0) or workgroup memory.
+/// AddressSpace selects global or workgroup memory.
 template <typename ForthOp, MemType MT = MemType::I64,
-          unsigned AddressSpace = 0>
+          unsigned AddressSpace = kGlobalAddressSpace>
 struct MemoryLoadOpConversion : public OpConversionPattern<ForthOp> {
   MemoryLoadOpConversion(const TypeConverter &typeConverter,
                          MLIRContext *context)
@@ -893,7 +898,7 @@ using SharedLoadF32OpConversion =
 /// Pops address and value from stack, stores value to memory.
 /// MemType selects the memory element type and the narrowing strategy.
 template <typename ForthOp, MemType MT = MemType::I64,
-          unsigned AddressSpace = 0>
+          unsigned AddressSpace = kGlobalAddressSpace>
 struct MemoryStoreOpConversion : public OpConversionPattern<ForthOp> {
   MemoryStoreOpConversion(const TypeConverter &typeConverter,
                           MLIRContext *context)

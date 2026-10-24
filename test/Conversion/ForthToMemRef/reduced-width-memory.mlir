@@ -3,13 +3,13 @@
 // CHECK-LABEL: func.func private @main
 
 // --- i8 load: llvm.load i8, extsi to i64 ---
-// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr
-// CHECK-NEXT: llvm.load %{{.*}} : !llvm.ptr -> i8
+// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<1>
+// CHECK-NEXT: llvm.load %{{.*}} : !llvm.ptr<1> -> i8
 // CHECK-NEXT: arith.extsi %{{.*}} : i8 to i64
 
 // --- i8 store: trunci i64 to i8, llvm.store ---
 // CHECK: arith.trunci %{{.*}} : i64 to i8
-// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : i8, !llvm.ptr
+// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : i8, !llvm.ptr<1>
 
 // --- shared i8 load: ptr<3> ---
 // CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<3>
@@ -21,50 +21,50 @@
 // CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : i8, !llvm.ptr<3>
 
 // --- i16 load ---
-// CHECK: llvm.load %{{.*}} : !llvm.ptr -> i16
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<1> -> i16
 // CHECK-NEXT: arith.extsi %{{.*}} : i16 to i64
 
 // --- i16 store ---
 // CHECK: arith.trunci %{{.*}} : i64 to i16
-// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : i16, !llvm.ptr
+// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : i16, !llvm.ptr<1>
 
 // --- i32 load ---
-// CHECK: llvm.load %{{.*}} : !llvm.ptr -> i32
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<1> -> i32
 // CHECK-NEXT: arith.extsi %{{.*}} : i32 to i64
 
 // --- i32 store ---
 // CHECK: arith.trunci %{{.*}} : i64 to i32
-// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : i32, !llvm.ptr
+// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : i32, !llvm.ptr<1>
 
 // --- f16 load: llvm.load f16, extf to f64, bitcast to i64 ---
-// CHECK: llvm.load %{{.*}} : !llvm.ptr -> f16
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<1> -> f16
 // CHECK-NEXT: arith.extf %{{.*}} : f16 to f64
 // CHECK-NEXT: arith.bitcast %{{.*}} : f64 to i64
 
 // --- f16 store: bitcast i64 to f64, truncf to f16, llvm.store ---
 // CHECK: arith.bitcast %{{.*}} : i64 to f64
 // CHECK-NEXT: arith.truncf %{{.*}} : f64 to f16
-// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : f16, !llvm.ptr
+// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : f16, !llvm.ptr<1>
 
 // --- bf16 load ---
-// CHECK: llvm.load %{{.*}} : !llvm.ptr -> bf16
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<1> -> bf16
 // CHECK-NEXT: arith.extf %{{.*}} : bf16 to f64
 // CHECK-NEXT: arith.bitcast %{{.*}} : f64 to i64
 
 // --- bf16 store ---
 // CHECK: arith.bitcast %{{.*}} : i64 to f64
 // CHECK-NEXT: arith.truncf %{{.*}} : f64 to bf16
-// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : bf16, !llvm.ptr
+// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : bf16, !llvm.ptr<1>
 
 // --- f32 load ---
-// CHECK: llvm.load %{{.*}} : !llvm.ptr -> f32
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<1> -> f32
 // CHECK-NEXT: arith.extf %{{.*}} : f32 to f64
 // CHECK-NEXT: arith.bitcast %{{.*}} : f64 to i64
 
 // --- f32 store ---
 // CHECK: arith.bitcast %{{.*}} : i64 to f64
 // CHECK-NEXT: arith.truncf %{{.*}} : f64 to f32
-// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : f32, !llvm.ptr
+// CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} : f32, !llvm.ptr<1>
 
 module {
   func.func private @main() {
