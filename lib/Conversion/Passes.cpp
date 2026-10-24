@@ -16,6 +16,7 @@
 #include "warpforth/Conversion/ForthToGPU/ForthToGPU.h"
 #include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace mlir {
@@ -70,6 +71,22 @@ WarpForthPipelineOptions::WarpForthPipelineOptions()
                            clEnumValN(gpu::CompilationTarget::Fatbin, "fatbin",
                                       "Fat binary"))) {}
 
+// gpu-module-to-binary's `format` option accepts llvm/isa/bin/fatbin, but
+// stringifyCompilationTarget(Offload) yields "offload", which it rejects.
+static StringRef getBinaryFormat(gpu::CompilationTarget target) {
+  switch (target) {
+  case gpu::CompilationTarget::Offload:
+    return "llvm";
+  case gpu::CompilationTarget::Assembly:
+    return "isa";
+  case gpu::CompilationTarget::Binary:
+    return "bin";
+  case gpu::CompilationTarget::Fatbin:
+    return "fatbin";
+  }
+  llvm_unreachable("unknown gpu::CompilationTarget");
+}
+
 void buildWarpForthPipeline(OpPassManager &pm,
                             const WarpForthPipelineOptions &options) {
   // Stage 1: Lower Forth to MemRef (CF ops pass through as-is)
@@ -119,7 +136,7 @@ void buildWarpForthPipeline(OpPassManager &pm,
   // Stage 10: Compile GPU module to PTX binary
   GpuModuleToBinaryPassOptions binaryOptions;
   binaryOptions.compilationTarget =
-      gpu::stringifyCompilationTarget(options.compilationTarget.getValue());
+      getBinaryFormat(options.compilationTarget.getValue()).str();
   pm.addPass(createGpuModuleToBinaryPass(binaryOptions));
 }
 
