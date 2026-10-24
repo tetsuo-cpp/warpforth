@@ -31,11 +31,8 @@ LogicalResult mlir::warpforth::extractPTXFromModule(ModuleOp module,
     }
   });
 
-  if (!foundBinary) {
-    llvm::errs() << "error: no gpu.binary operations found in module\n";
-    llvm::errs() << "hint: run 'warpforth-opt --warpforth-pipeline' first\n";
-    return failure();
-  }
+  if (!foundBinary)
+    return module.emitError("no gpu.binary operations found in module");
 
   return success();
 }
@@ -43,15 +40,7 @@ LogicalResult mlir::warpforth::extractPTXFromModule(ModuleOp module,
 void mlir::warpforth::registerMLIRToPTXTranslation() {
   TranslateFromMLIRRegistration registration(
       "mlir-to-ptx", "Extract PTX assembly from gpu.binary operations",
-      [](Operation *op, llvm::raw_ostream &output) {
-        auto module = dyn_cast<ModuleOp>(op);
-        if (!module) {
-          llvm::errs() << "error: expected ModuleOp at top level\n";
-          return failure();
-        }
-        return warpforth::extractPTXFromModule(module, output);
-      },
-      [](DialectRegistry &registry) {
+      warpforth::extractPTXFromModule, [](DialectRegistry &registry) {
         registry.insert<gpu::GPUDialect, NVVM::NVVMDialect>();
       });
 }
