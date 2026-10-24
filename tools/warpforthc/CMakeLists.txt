@@ -12,6 +12,7 @@ target_link_libraries(warpforthc
   MLIRArithToLLVM
   MLIRBuiltinToLLVMIRTranslation
   MLIRControlFlowToLLVM
+  MLIRFuncInlinerExtension
   MLIRFuncToLLVM
   MLIRGPUToLLVMIRTranslation
   MLIRLLVMToLLVMIRTranslation

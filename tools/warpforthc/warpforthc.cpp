@@ -9,8 +9,9 @@
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h" // IWYU pragma: keep
-#include "mlir/Dialect/Func/IR/FuncOps.h"            // IWYU pragma: keep
-#include "mlir/Dialect/MemRef/IR/MemRef.h"           // IWYU pragma: keep
+#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // IWYU pragma: keep
+#include "mlir/Dialect/MemRef/IR/MemRef.h" // IWYU pragma: keep
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
@@ -75,6 +76,7 @@ int main(int argc, char **argv) {
   cf::registerConvertControlFlowToLLVMInterface(registry);
   registerConvertFuncToLLVMInterface(registry);
   registerConvertMemRefToLLVMInterface(registry);
+  func::registerInlinerExtension(registry);
 
   registerBuiltinDialectTranslation(registry);
   registerGPUDialectTranslation(registry);
