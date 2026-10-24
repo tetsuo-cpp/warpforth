@@ -174,6 +174,19 @@ def test_architecture_constrains_gpu_offer_compute_capability(
     assert "compute_cap>=890" in str(sdk.search_calls[0]["query"])
 
 
+def test_offers_require_a_driver_supporting_the_image_cuda_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdk = FakeVastAI()
+    configure_session_test(monkeypatch, sdk)
+
+    with VastSession("key"):
+        pass
+
+    assert "cuda_max_good>=12.4" in str(sdk.search_calls[0]["query"])
+    assert str(sdk.create_calls[0]["image"]).startswith("nvidia/cuda:12.4.")
+
+
 def test_rejected_response_reconciles_without_creating_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
