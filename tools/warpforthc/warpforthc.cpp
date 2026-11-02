@@ -59,6 +59,48 @@ static llvm::cl::opt<std::string>
     libdevicePath("libdevice", llvm::cl::desc("Path to the libdevice bitcode"),
                   llvm::cl::value_desc("path"), llvm::cl::init(""));
 
+enum class EmitKind { Mlir, Llvm, Ptx };
+
+// Not cl::Prefix: -O is a prefix option, and a prefix match on --emit would
+// also swallow LLVM's --emit-* flags.
+static llvm::cl::opt<EmitKind> emitKind(
+    "emit", llvm::cl::desc("Artifact to write instead of running every stage"),
+    llvm::cl::values(
+        clEnumValN(EmitKind::Mlir, "mlir", "Parsed Forth module as MLIR text"),
+        clEnumValN(EmitKind::Llvm, "llvm",
+                   "Lowered module in the LLVM dialect, as MLIR text"),
+        clEnumValN(EmitKind::Ptx, "ptx", "PTX assembly (default)")),
+    llvm::cl::init(EmitKind::Ptx));
+
+static void
+populatePipelineForEmit(PassManager &pm,
+                        const warpforth::WarpForthPipelineOptions &options,
+                        EmitKind kind) {
+  switch (kind) {
+  case EmitKind::Mlir:
+    return;
+  case EmitKind::Llvm:
+    warpforth::buildWarpForthLoweringPipeline(pm, options);
+    return;
+  case EmitKind::Ptx:
+    warpforth::buildWarpForthPipeline(pm, options);
+    return;
+  }
+}
+
+static LogicalResult writeEmitArtifact(ModuleOp module, EmitKind kind,
+                                       llvm::raw_ostream &os) {
+  switch (kind) {
+  case EmitKind::Mlir:
+  case EmitKind::Llvm:
+    module.print(os);
+    return success();
+  case EmitKind::Ptx:
+    return warpforth::extractPTXFromModule(module, os);
+  }
+  llvm_unreachable("unhandled EmitKind");
+}
+
 int main(int argc, char **argv) {
   llvm::InitLLVM y(argc, argv);
   warpforth::registerConversionPasses();
@@ -113,7 +155,7 @@ int main(int argc, char **argv) {
   if (failed(pipelineOptions.parseFromString(overrides)))
     return 1;
   pipelineOptions.chip = targetArchitecture.getValue();
-  warpforth::buildWarpForthPipeline(pm, pipelineOptions);
+  populatePipelineForEmit(pm, pipelineOptions, emitKind.getValue());
   if (failed(pm.run(*module)))
     return 1;
 
@@ -123,7 +165,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (failed(warpforth::extractPTXFromModule(*module, outputFile->os())))
+  if (failed(writeEmitArtifact(*module, emitKind.getValue(), outputFile->os())))
     return 1;
 
   outputFile->keep();
