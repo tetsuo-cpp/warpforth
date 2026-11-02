@@ -52,6 +52,11 @@ void buildWarpForthPipeline(OpPassManager &pm);
 void buildWarpForthPipeline(OpPassManager &pm,
                             const WarpForthPipelineOptions &options);
 
+/// Build the lowering stages of the WarpForth pipeline: Forth to a gpu.module
+/// whose body is in the LLVM/NVVM dialect, stopping before binary emission.
+void buildWarpForthLoweringPipeline(OpPassManager &pm,
+                                    const WarpForthPipelineOptions &options);
+
 } // namespace warpforth
 } // namespace mlir
 
