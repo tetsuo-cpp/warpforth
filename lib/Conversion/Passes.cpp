@@ -87,8 +87,8 @@ static StringRef getBinaryFormat(gpu::CompilationTarget target) {
   llvm_unreachable("unknown gpu::CompilationTarget");
 }
 
-void buildWarpForthPipeline(OpPassManager &pm,
-                            const WarpForthPipelineOptions &options) {
+void buildWarpForthLoweringPipeline(OpPassManager &pm,
+                                    const WarpForthPipelineOptions &options) {
   // Stage 1: Lower Forth to MemRef (CF ops pass through as-is)
   pm.addPass(createConvertForthToMemRefPass());
 
@@ -132,6 +132,11 @@ void buildWarpForthPipeline(OpPassManager &pm,
 
   // Stage 9: Reconcile type conversions
   pm.addPass(createReconcileUnrealizedCastsPass());
+}
+
+void buildWarpForthPipeline(OpPassManager &pm,
+                            const WarpForthPipelineOptions &options) {
+  buildWarpForthLoweringPipeline(pm, options);
 
   // Stage 10: Compile GPU module to PTX binary
   GpuModuleToBinaryPassOptions binaryOptions;
