@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from gpu_test.conftest import Compiler
+from gpu_test.infrastructure import Compiler
 
 
 def test_compiler_passes_architecture_to_warpforthc(tmp_path: Path) -> None:

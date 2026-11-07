@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 import pytest
 import requests
 
-from gpu_test import conftest as gpu_conftest
-from gpu_test.conftest import VastSession
+from gpu_test import infrastructure
+from gpu_test.infrastructure import VastSession
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -96,8 +96,8 @@ def configure_session_test(
         sdk.constructor_kwargs = kwargs
         return sdk
 
-    monkeypatch.setattr(gpu_conftest, "VastAI", create_sdk)
-    monkeypatch.setattr(gpu_conftest.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(infrastructure, "VastAI", create_sdk)
+    monkeypatch.setattr(infrastructure.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(VastSession, "_wait_for_ssh", wait_for_ssh or no_wait)
 
 
