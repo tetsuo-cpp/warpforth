@@ -53,9 +53,10 @@ Ops:
       "timing": {"warmup": int, "samples": int, "sample_ms": number},
       "environment": {"base_commit": str, "head_commit": str}, both optional.
 
-Only the output buffer is restored before each validation launch: the kernels treat
+Only the output buffer is restored before each bench validation launch: the kernels treat
 every other buffer as read-only, and the work per timed launch does not depend on the
-values, so timed batches need no restores.
+values, so timed batches need no restores. The correctness op restores every array
+buffer, because a kernel may write to a buffer that is also its input.
 """
 
 from __future__ import annotations
@@ -317,11 +318,15 @@ class CudaGpu:
         _check(self._drv.cuMemFree(ptr), "cuMemFree")
 
     def upload(self, ptr: object, data: np.ndarray) -> None:
-        _check(self._drv.cuMemcpyHtoD(ptr, data, data.nbytes), "cuMemcpyHtoD")
+        # cuda-python resolves the host argument by coercing it to an int first, and numpy 1.x
+        # turns a one-element array into 0, so a bare single-cell ndarray reaches the driver as
+        # a null pointer and the copy fails with CUDA error 1. A memoryview never takes that
+        # path, at any length.
+        _check(self._drv.cuMemcpyHtoD(ptr, memoryview(data), data.nbytes), "cuMemcpyHtoD")
 
     def download(self, ptr: object, count: int, dtype: np.dtype) -> np.ndarray:
         data = np.empty(count, dtype=dtype)
-        _check(self._drv.cuMemcpyDtoH(data, ptr, data.nbytes), "cuMemcpyDtoH")
+        _check(self._drv.cuMemcpyDtoH(memoryview(data), ptr, data.nbytes), "cuMemcpyDtoH")
         return data
 
     def copy_device(self, dst: object, src: object, nbytes: int) -> None:
@@ -826,6 +831,7 @@ def _run_correctness(request: dict[str, object], gpu: Gpu) -> dict[str, object]:
         func = gpu.function(module, spec.kernel)
         args: list[tuple[str, object]] = []
         ptr_of: dict[int, object] = {}
+        pristine: list[tuple[object, np.ndarray]] = []
         for index, param in enumerate(spec.params):
             if isinstance(param, ScalarValue):
                 args.append((param.type, param.value))
@@ -836,9 +842,16 @@ def _run_correctness(request: dict[str, object], gpu: Gpu) -> dict[str, object]:
             gpu.upload(ptr, data)
             args.append(("ptr", ptr))
             ptr_of[index] = ptr
-        # Same first-launch workaround as bench validation: launch twice, read once.
+            pristine.append((ptr, data))
+        # On the 13.2-era rental drivers the first launch of a freshly loaded module
+        # returns success but silently runs nothing, so this burn-in launch lands the lazy JIT
+        # and the second launch is the one that runs. A kernel may write to a buffer it also
+        # reads, so every array goes back to its uploaded bytes before the measured launch;
+        # otherwise the readback sees a kernel applied twice.
         gpu.launch(func, spec.launch, args)
         gpu.synchronize()
+        for ptr, data in pristine:
+            gpu.upload(ptr, data)
         gpu.launch(func, spec.launch, args)
         gpu.synchronize()
         out = spec.params[spec.output_param]

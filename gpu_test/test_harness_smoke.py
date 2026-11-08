@@ -17,6 +17,7 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -54,6 +55,15 @@ def _poison_kernel(args: list, _launch: object) -> None:
 def _copy_f64_kernel(args: list, _launch: object) -> None:
     n = int(args[0])
     args[2].view(np.float64)[:n] = args[1].view(np.float64)[:n]
+
+
+def _axpy_in_place_kernel(args: list, _launch: object) -> None:
+    """Y = ALPHA*X + Y, the case whose result buffer is also one of its inputs."""
+    n = int(args[0])
+    alpha = float(args[1])
+    x = args[2].view(np.float64)[:n]
+    y = args[3].view(np.float64)[:n]
+    y[:] = alpha * x + y
 
 
 def _matmul_kernel(args: list, _launch: object) -> None:
@@ -300,6 +310,100 @@ def test_correctness_mode_reads_back_f64_values() -> None:
         fake,
     )
     assert response["values"] == [1.5, -2.25]
+
+
+def test_correctness_launch_reads_back_one_application_of_an_in_place_kernel() -> None:
+    fake = FakeGpu()
+    fake.register("axpy", _axpy_in_place_kernel, 10.0)
+    response = remote_harness.handle_request(
+        {
+            "op": "correctness",
+            "ptx": "fake ptx",
+            "kernel": "axpy",
+            "params": [
+                {"type": "i64", "value": 2},
+                {"type": "f64", "value": 1.5},
+                {"type": "f64[]", "values": [2.0, 4.0]},
+                {"type": "f64[]", "values": [1.0, 1.0]},
+            ],
+            "grid": [1, 1, 1],
+            "block": [1, 1, 1],
+            "output_param": 3,
+            "output_count": 2,
+        },
+        fake,
+    )
+    assert response["values"] == [4.0, 7.0]
+
+
+class _BindingFakeDriver:
+    """Device memory plus the binding's host-argument rule, as measured on the rental.
+
+    cuda-python coerces its host argument to an int before it tries the buffer protocol, and
+    numpy 1.x turns a one-element array into 0. A bare single-element array therefore reaches
+    the driver as a null address and the copy fails with CUDA error 1, which is why every
+    single-cell buffer broke while bytes and memoryview worked at the same length.
+    """
+
+    ERROR_INVALID_VALUE = 1
+
+    def __init__(self) -> None:
+        self.memory: dict[int, bytearray] = {}
+        self.rejected: list[int] = []
+
+    def surface(self) -> SimpleNamespace:
+        """The object CudaGpu talks to, carrying the binding's own entry-point names."""
+        return SimpleNamespace(
+            cuMemAlloc=self.alloc,
+            cuMemFree=self.free,
+            cuMemcpyHtoD=self.to_device,
+            cuMemcpyDtoH=self.to_host,
+        )
+
+    def alloc(self, nbytes: int) -> tuple[int, int]:
+        ptr = len(self.memory) + 1
+        self.memory[ptr] = bytearray(nbytes)
+        return (0, ptr)
+
+    def free(self, ptr: int) -> tuple[int]:
+        del self.memory[ptr]
+        return (0,)
+
+    @classmethod
+    def _host_bytes(cls, src: object, nbytes: int) -> bytes | None:
+        if isinstance(src, np.ndarray) and src.size == 1:
+            return None
+        return bytes(memoryview(src))[:nbytes]
+
+    def to_device(self, ptr: int, src: object, nbytes: int) -> tuple[int]:
+        raw = self._host_bytes(src, nbytes)
+        if raw is None:
+            self.rejected.append(nbytes)
+            return (self.ERROR_INVALID_VALUE,)
+        self.memory[ptr][:nbytes] = raw
+        return (0,)
+
+    def to_host(self, dst: object, ptr: int, nbytes: int) -> tuple[int]:
+        if self._host_bytes(dst, nbytes) is None:
+            self.rejected.append(nbytes)
+            return (self.ERROR_INVALID_VALUE,)
+        memoryview(dst).cast("B")[:nbytes] = self.memory[ptr][:nbytes]
+        return (0,)
+
+
+def test_upload_and_download_accept_every_buffer_size() -> None:
+    driver = _BindingFakeDriver()
+    gpu = object.__new__(remote_harness.CudaGpu)
+    gpu._drv = driver.surface()  # noqa: SLF001 - the seam the wrappers reach the bindings through
+
+    for cells, dtype in ((1, np.float64), (1, np.int64), (2, np.float64), (1024, np.float64)):
+        data = np.arange(cells, dtype=dtype)
+        ptr = gpu.alloc(data.nbytes)
+        gpu.upload(ptr, data)
+        assert np.array_equal(gpu.download(ptr, cells, dtype), data), (cells, dtype)
+        gpu.free(ptr)
+
+    assert driver.rejected == []
 
 
 def test_bench_same_kernel_reports_a_gap_of_one_through_the_contract() -> None:
