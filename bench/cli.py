@@ -7,15 +7,17 @@ import logging
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from bench import acceptance, build, compare, gap
+from bench import acceptance, build, comment, compare, gap
 from bench.report import Report
 from benchmarks import manifest
 from gpu_test import bench_stats, infrastructure
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 logger = logging.getLogger("bench")
 REPO_ROOT = manifest.CASE_ROOT.parent
@@ -107,15 +109,14 @@ def run(args: argparse.Namespace) -> int:
 
 
 def compile_both(
-    cases: Sequence[manifest.Case], args: argparse.Namespace
-) -> tuple[build.Ref, build.Ref, dict[str, compare.BaseSide], list[gap.Item]]:
-    """Build both refs and compile every case with each binary inside that ref's worktree.
-
-    A worktree is torn down as soon as it has produced its PTX, so the two compilers never share a
-    build directory and nothing depends on where the temporary checkouts live.
+    cases: Sequence[manifest.Case],
+    base: build.Ref,
+    head: build.Ref,
+    args: argparse.Namespace,
+) -> tuple[dict[str, compare.BaseSide], list[gap.Item]]:
+    """A worktree is torn down as soon as it has produced its PTX, so the two compilers never
+    share a build directory and nothing depends on where the temporary checkouts live.
     """
-    base = build.resolve(REPO_ROOT, args.base)
-    head = build.resolve(REPO_ROOT, args.head)
     logger.info("base %s at %s, head %s at %s", base.name, base.short, head.name, head.short)
     toolchain = build.toolchain_of(manifest.find_build(REPO_ROOT))
     logger.info("compiling %d cases with both revisions at %s", len(cases), args.arch)
@@ -129,16 +130,24 @@ def compile_both(
         error = item.error if isinstance(item, gap.Broken) else base_error
         if error:
             logger.error("%s: %s", item.case.id, error)
-    return base, head, bases, items
+    return bases, items
 
 
-def run_compare(args: argparse.Namespace) -> int:
-    cases = select_cases(manifest.load(), args.case)
-    key = api_key()
-    base, head, bases, items = compile_both(cases, args)
+@dataclass(frozen=True, slots=True)
+class UnbuiltHead:
+    pass
+
+
+def compare_refs(
+    cases: Sequence[manifest.Case],
+    base: build.Ref,
+    head: build.Ref,
+    key: str,
+    args: argparse.Namespace,
+) -> compare.Report | UnbuiltHead:
+    bases, items = compile_both(cases, base, head, args)
     if all(isinstance(item, gap.Broken) for item in items):
-        return EXIT_INCOMPLETE
-
+        return UnbuiltHead()
     commits = {"base_commit": base.sha, "head_commit": head.sha}
     logger.info("building the CUDA baselines and timing %d cases on one rental", len(items))
     with infrastructure.VastSession(key, arch=args.arch) as session:
@@ -148,8 +157,27 @@ def run_compare(args: argparse.Namespace) -> int:
                 harness.request({"op": "ping"}), base.sha, head.sha
             )
             rows = compare.rows_of(readied, bases, harness, commits)
+    return compare.Report(arch=args.arch, environment=environment, rows=tuple(rows))
 
-    report = compare.Report(arch=args.arch, environment=environment, rows=tuple(rows))
+
+def run_compare(args: argparse.Namespace) -> int:
+    cases = select_cases(manifest.load(), args.case)
+    key = api_key()
+    base = build.resolve(REPO_ROOT, args.base)
+    head = build.resolve(REPO_ROOT, args.head)
+    revisions = comment.Revisions.of(base, head, build.parents(REPO_ROOT, head))
+    publish = comment_writer(args.comment)
+    publish(comment.Unfinished(revisions))
+    try:
+        outcome = compare_refs(cases, base, head, key, args)
+    except BaseException as exc:
+        publish(comment.Failed.from_error(revisions, exc))
+        raise
+    if isinstance(outcome, UnbuiltHead):
+        publish(comment.Failed(revisions, "no case compiled with the head revision"))
+        return EXIT_INCOMPLETE
+    report = outcome
+    publish(comment.Measured(revisions, report))
     for line in report.lines():
         print(line)  # noqa: T201 - the command's own output
     if args.json:
@@ -157,6 +185,18 @@ def run_compare(args: argparse.Namespace) -> int:
     if report.regressions:
         return EXIT_REGRESSED
     return 0 if not report.failures else EXIT_INCOMPLETE
+
+
+def comment_writer(path: Path | None) -> Callable[[comment.State], None]:
+    def write(state: comment.State) -> None:
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_text(comment.render(state), encoding="utf-8", newline="\n")
+        temporary.replace(path)
+
+    return write
 
 
 def run_acceptance(args: argparse.Namespace) -> int:
@@ -205,6 +245,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=BUILD_JOBS,
         help="parallel compile jobs for each of the two fresh builds",
+    )
+    compare_command.add_argument(
+        "--comment",
+        type=Path,
+        help="write the review comment to this path as the run goes, without posting it",
     )
     acceptance_command = subcommands.add_parser(
         "acceptance",

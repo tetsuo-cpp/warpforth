@@ -136,13 +136,14 @@ class Report:
             header,
             *(_row_line(row) for row in self.rows),
             "",
-            self._sum_line(),
+            self.summary,
         ]
 
     def _environment_line(self) -> str:
         return " ".join(f"{name}={getattr(self.environment, name)}" for name in ENVIRONMENT_FIELDS)
 
-    def _sum_line(self) -> str:
+    @property
+    def summary(self) -> str:
         total = len(self.rows)
         if self.regressions:
             return f"{len(self.regressions)} of {total} cases slower: {', '.join(self.regressions)}"

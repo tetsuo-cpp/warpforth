@@ -29,6 +29,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Install LLVM ${{ env.LLVM_VERSION }} and MLIR
         run: |
@@ -67,6 +69,49 @@ jobs:
             exit 1
           fi
           uv run pytest -v -m gpu
+
+      - name: Compare against the base branch on Vast.ai
+        if: success() && github.event_name == 'pull_request'
+        timeout-minutes: 25
+        env:
+          VASTAI_API_KEY: ${{ secrets.VASTAI_API_KEY }}
+          BASE_REF: ${{ github.base_ref }}
+          COMMENT_PATH: ${{ runner.temp }}/bench-comment.md
+        run: |
+          set -euo pipefail
+          # HEAD is GitHub's merge of this pull request. HEAD^1 is the base commit
+          # that merge used, which fetch-depth 2 makes available. A depth-1 checkout
+          # records the parent SHAs and still cannot resolve them.
+          git branch --force "$BASE_REF" HEAD^1
+          uv run python -m bench compare "$BASE_REF" HEAD --comment "$COMMENT_PATH"
+
+      - name: Post the bench comparison
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMENT_PATH: ${{ runner.temp }}/bench-comment.md
+        run: |
+          set -euo pipefail
+          if [ ! -s "$COMMENT_PATH" ]; then
+            echo "no bench comment to post"
+            exit 0
+          fi
+          export MARKER
+          MARKER="$(head -n 1 "$COMMENT_PATH")"
+          id="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith(env.MARKER))) | .id' \
+            | tail -n 1)"
+          # -F reads the file. -f posts the path string as the comment body.
+          if [ -n "$id" ]; then
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" \
+              -F body=@"$COMMENT_PATH"
+          else
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              -F body=@"$COMMENT_PATH"
+          fi
 
       - name: Remove GPU test trigger label
         if: always() && github.event_name == 'pull_request'

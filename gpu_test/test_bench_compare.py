@@ -417,15 +417,16 @@ def test_each_case_compiles_inside_its_refs_own_worktree(tmp_path: Path) -> None
         return compare.BaseSide(ptx=f".visible .entry {case.kernel}( )\n")
 
     args = cli.build_parser().parse_args(["compare", "base", "head", "--jobs", "2"])
+    base = build.Ref("base", "a" * 40)
+    head = build.Ref("head", "b" * 40)
     with (
-        mock.patch.object(build, "resolve", return_value=build.Ref("ref", "a" * 40)),
         mock.patch.object(build, "worktree", side_effect=checkout),
         mock.patch.object(build, "toolchain_of", return_value=build.Toolchain((), "")),
         mock.patch.object(build, "compiler", side_effect=_fake_compiler),
         mock.patch.object(compare, "compile_base", side_effect=compile_base),
         mock.patch.object(gap, "plan", side_effect=plan),
     ):
-        cli.compile_both(CASES[:2], args)
+        cli.compile_both(CASES[:2], base, head, args)
     assert len(built_in) == 2 * len(CASES[:2])
     assert len({path.parent.parent.parent for path in built_in}) == 2, "one build per ref"
 
