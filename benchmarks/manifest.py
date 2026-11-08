@@ -775,7 +775,9 @@ def within_tolerance(actual: list[float], expected: list[float], rtol: float, at
     )
 
 
-DEFAULT_COMPILER = Path("build") / "bin" / "warpforthc"
+DEFAULT_BUILD = Path("build")
+COMPILER_PATH = Path("bin") / "warpforthc"
+DEFAULT_COMPILER = DEFAULT_BUILD / COMPILER_PATH
 DEFAULT_ARCH = "sm_89"
 
 
@@ -792,22 +794,28 @@ def _git_common_dir(root: Path) -> Path | None:
     return common if common.is_absolute() else root / common
 
 
-def find_compiler(root: Path) -> Path:
-    """warpforthc for a checkout, falling back to the checkout that owns the shared git directory.
+def find_build(root: Path) -> Path:
+    """The build directory for a checkout, falling back to the one owning the shared git directory.
 
-    `WARPFORTHC` overrides the search. A git worktree has no build directory of its own, so the
-    fallback is the main checkout's binary, which is the one a worktree should use.
+    `WARPFORTH_BUILD` overrides the search. A git worktree has no build directory of its own, so the
+    fallback is the main checkout's build, which is the one a worktree should use.
     """
-    override = os.environ.get("WARPFORTHC")
+    override = os.environ.get("WARPFORTH_BUILD")
     candidates = [Path(override)] if override else []
-    candidates.append(root / DEFAULT_COMPILER)
+    candidates.append(root / DEFAULT_BUILD)
     common = _git_common_dir(root)
     if common is not None:
-        candidates.append(common.parent / DEFAULT_COMPILER)
+        candidates.append(common.parent / DEFAULT_BUILD)
     for candidate in candidates:
-        if candidate.is_file():
+        if (candidate / COMPILER_PATH).is_file():
             return candidate
     return candidates[0]
+
+
+def find_compiler(root: Path) -> Path:
+    """warpforthc for a checkout, found the same way as its build directory."""
+    override = os.environ.get("WARPFORTHC")
+    return Path(override) if override else find_build(root) / COMPILER_PATH
 
 
 def compile_source(source: str, compiler: Path, arch: str = DEFAULT_ARCH, *, label: str) -> str:
@@ -836,7 +844,18 @@ def compile_source(source: str, compiler: Path, arch: str = DEFAULT_ARCH, *, lab
 def compile_case(case: Case, compiler: Path, arch: str = DEFAULT_ARCH) -> str:
     """Compile a case's Forth source, checking the PTX exposes the entry the manifest names."""
     ptx = compile_source(case.forth.read_text(), compiler, arch, label=case.id)
-    if f".visible .entry {case.kernel}(" not in ptx:
-        msg = f"{case.id}: the PTX has no entry named {case.kernel}"
+    return check_entry(ptx, case.kernel, case.id)
+
+
+def compile_text(
+    source: str, kernel: str, compiler: Path, arch: str = DEFAULT_ARCH, *, label: str
+) -> str:
+    """Compile one Forth source that the manifest does not list, checking its entry point."""
+    return check_entry(compile_source(source, compiler, arch, label=label), kernel, label)
+
+
+def check_entry(ptx: str, kernel: str, label: str) -> str:
+    if f".visible .entry {kernel}(" not in ptx:
+        msg = f"{label}: the PTX has no entry named {kernel}"
         raise ManifestError(msg)
     return ptx

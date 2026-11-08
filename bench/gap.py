@@ -74,6 +74,8 @@ class Plan:
     baseline: Baseline
     ptx: str
     scalars: dict[str, int | float]
+    kernel: str
+    launch: manifest.Launch
     cuda_side: dict[str, object] | None = None
 
 
@@ -166,7 +168,26 @@ def plan(case: manifest.Case, compiler: Path, arch: str) -> Item:
         scalars = timed_scalars(case)
     except (manifest.ManifestError, GapError, OSError) as exc:
         return Broken(case=case, baseline=baseline, error=str(exc))
-    return Plan(case=case, baseline=baseline, ptx=ptx, scalars=scalars)
+    return Plan(
+        case=case,
+        baseline=baseline,
+        ptx=ptx,
+        scalars=scalars,
+        kernel=case.kernel,
+        launch=case.launch,
+    )
+
+
+def planned(case: manifest.Case, ptx: str, kernel: str, launch: manifest.Launch, arch: str) -> Plan:
+    """A plan for PTX that did not come from the case's own source, such as a fixture arm."""
+    return Plan(
+        case=case,
+        baseline=_baseline_of(case, arch),
+        ptx=ptx,
+        scalars=timed_scalars(case),
+        kernel=kernel,
+        launch=launch,
+    )
 
 
 def correctness_request(item: Plan) -> dict[str, object]:
@@ -253,12 +274,35 @@ def compile_baselines(items: Sequence[Item], session: CudaCompiler) -> list[Item
     return readied
 
 
+def ptx_side(ptx: str, kernel: str, launch: manifest.Launch) -> dict[str, object]:
+    """A PTX module as one harness bench side, at the launch geometry it runs at."""
+    return {
+        "kind": "ptx",
+        "ptx": ptx,
+        "kernel": kernel,
+        "launch": {"grid": list(launch.grid), "block": list(launch.block)},
+    }
+
+
 def bench_request(
     item: Plan,
     base: Mapping[str, object],
     commits: Mapping[str, str],
 ) -> dict[str, object]:
-    case = item.case
+    """One harness bench call: this plan's PTX in the head slot, `base` in the other."""
+    return {
+        **case_request(item.case, item.scalars, commits),
+        "base": dict(base),
+        "head": ptx_side(item.ptx, item.kernel, item.launch),
+    }
+
+
+def case_request(
+    case: manifest.Case,
+    scalars: Mapping[str, int | float],
+    commits: Mapping[str, str],
+) -> dict[str, object]:
+    """A bench request's case description, without the two sides."""
     params: list[dict[str, object]] = []
     for param in case.params:
         if param.is_array:
@@ -291,16 +335,9 @@ def bench_request(
         "reference": case.reference,
         "tolerance": list(case.tolerance),
         "params": params,
-        "scalars": dict(item.scalars),
+        "scalars": dict(scalars),
         "inputs": inputs,
         "output": case.correctness.output_param,
-        "base": dict(base),
-        "head": {
-            "kind": "ptx",
-            "ptx": item.ptx,
-            "kernel": case.kernel,
-            "launch": {"grid": list(case.launch.grid), "block": list(case.launch.block)},
-        },
         "timing": {
             "warmup": case.timing.warmup,
             "samples": case.timing.samples,
@@ -415,6 +452,28 @@ def _mismatch(
     return "small config returned the wrong number of values"
 
 
+def bench_against_cuda(
+    item: Plan,
+    harness: Harness,
+    commits: Mapping[str, str],
+) -> Attempt:
+    """Time the case's own PTX against its CUDA baseline, containing any failure to this case.
+
+    The paired run has already validated this PTX against the case reference, so this skips the
+    small correctness instance and pays for one bench call.
+    """
+    if item.cuda_side is None:
+        return Attempt(error=f"{item.case.id}: the CUDA baseline was never built")
+    try:
+        response = harness.request(bench_request(item, item.cuda_side, commits))
+        result = parse_case_result(response)
+    except CASE_ERRORS as exc:
+        return Attempt(error=str(exc))
+    if not result.correct:
+        return Attempt(error="timed config failed validation")
+    return Attempt(result=result)
+
+
 def measure(
     item: Plan,
     harness: Harness,
@@ -432,16 +491,9 @@ def measure(
         expected = case.correctness.expected
         if not manifest.within_tolerance(got[: len(expected)], expected, *case.tolerance):
             return Attempt(error=_mismatch(got, expected, case.tolerance))
-        if item.cuda_side is None:
-            msg = f"{item.case.id}: the CUDA baseline was never built"
-            raise GapError(msg)
-        response = harness.request(bench_request(item, item.cuda_side, commits))
-        result = parse_case_result(response)
     except CASE_ERRORS as exc:
         return Attempt(error=str(exc))
-    if not result.correct:
-        return Attempt(error="timed config failed validation")
-    return Attempt(result=result)
+    return bench_against_cuda(item, harness, commits)
 
 
 def run_once(

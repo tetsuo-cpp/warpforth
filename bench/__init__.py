@@ -1,4 +1,4 @@
-"""Benchmark commands: the CUDA gap measurement today, head-versus-base comparisons next."""
+"""Benchmark commands: the CUDA gap table, the base-versus-head compare, and the fixture check."""
 
 from __future__ import annotations
 
