@@ -6,6 +6,7 @@ import atexit
 import contextlib
 import json
 import logging
+import shlex
 import subprocess
 import tempfile
 import time
@@ -19,7 +20,7 @@ from requests import RequestException
 from vastai import VastAI
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Sequence
     from typing import Self
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ DEFAULT_ARCHITECTURE = "sm_70"
 SUPPORTED_ARCHITECTURES = ("sm_70", "sm_75", "sm_80", "sm_86", "sm_89", "sm_90")
 HARNESS_SRC = PROJECT_ROOT / "gpu_test" / "remote_harness.py"
 HARNESS_REMOTE = f"{REMOTE_TMP}/remote_harness.py"
+CUDA_COMPILE_TIMEOUT_S = 300
 # Rentals ship 12.x-era drivers (cuda_max_good>=12.4); cuda-python 13 bindings want a
 # 13-era driver, so provisioning pins to the 12.x line.
 CUDA_PYTHON_SPEC = "cuda-python>=12.4,<13"
@@ -579,6 +581,33 @@ class VastSession:
             stderr=subprocess.PIPE,
             text=True,
         )
+
+    def compile_cuda_ptx(
+        self,
+        source: Path,
+        flags: Sequence[str],
+        *,
+        name: str,
+    ) -> str:
+        """Upload one .cu file and compile it to PTX on the rental with the given nvcc flags.
+
+        The flags carry the arch the PTX targets, so the caller rewrites them to the rental's
+        compute capability rather than the manifest's.
+        """
+        remote_cu = f"{REMOTE_TMP}/{name}.cu"
+        remote_ptx = f"{REMOTE_TMP}/{name}.ptx"
+        self.scp_upload(source, remote_cu)
+        cmd = " ".join(
+            [
+                "nvcc",
+                "--ptx",
+                f"-o {remote_ptx}",
+                *(shlex.quote(flag) for flag in flags),
+                remote_cu,
+            ]
+        )
+        self.ssh_run(cmd, timeout=CUDA_COMPILE_TIMEOUT_S)
+        return self.ssh_run(f"cat {remote_ptx}", timeout=60)
 
 
 def _parse_array_type(type_spec: str) -> tuple[str, int]:
