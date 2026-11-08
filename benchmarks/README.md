@@ -179,6 +179,11 @@ the suite and `--json` prints the result document with both commits and each cas
 The command exits 2 when any case is slower, 1 when a case could not be compared, and 0 otherwise,
 so a hillclimb can gate a keep-or-revert on the exit code alone.
 
+`--comment PATH` writes the review body and does not post it. The file is replaced as the run
+goes, including before the process exits with code 2. A finished run is a markdown table of the
+case rows, then bullets for the two commits and the rental. The `gpu-test` label runs this compare
+for GitHub's merge onto the base branch and posts one comment, which a later run edits.
+
 ## The acceptance fixture pair
 
 `benchmarks/acceptance/` holds `fast.forth` and `slow.forth`, one kernel and a deliberately slowed

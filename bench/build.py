@@ -68,6 +68,19 @@ def resolve(repo: Path, name: str) -> Ref:
     return Ref(name=name, sha=result.stdout.strip())
 
 
+def parents(repo: Path, ref: Ref) -> tuple[str, ...]:
+    """Parents of `ref` in order. A root commit is an empty tuple.
+
+    `--verify` is not used. `rev-parse --verify <sha>^@` exits 128 for a parent list.
+    """
+    result = _git(repo, "rev-parse", f"{ref.sha}^@")
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        msg = f"cannot read parents of {ref.name} at {ref.short}: {detail}"
+        raise BuildError(msg)
+    return tuple(result.stdout.split())
+
+
 def toolchain_of(build_dir: Path) -> Toolchain:
     """The MLIR and LLVM a fresh build needs, from the environment or a configured build.
 
