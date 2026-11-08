@@ -336,6 +336,110 @@ def test_correctness_launch_reads_back_one_application_of_an_in_place_kernel() -
     assert response["values"] == [4.0, 7.0]
 
 
+class _RecordingHarness:
+    """Serves one canned correctness response and keeps the request it was given."""
+
+    def __init__(self, values: list[object]) -> None:
+        self.values = values
+        self.requests: list[dict[str, object]] = []
+
+    def request(self, payload: dict[str, object]) -> dict[str, object]:
+        self.requests.append(payload)
+        return {"ok": True, "values": self.values}
+
+
+class _FixedCompiler:
+    def __init__(self, ptx: str = "fake ptx") -> None:
+        self.ptx = ptx
+        self.sources: list[str] = []
+
+    def compile_source(self, forth_src: str) -> str:
+        self.sources.append(forth_src)
+        return self.ptx
+
+
+_SCALE_SOURCE = "\\! kernel main\n\\! param SCALE i64\n\\! param DATA i64[4]\n"
+
+
+def test_kernel_runner_sends_every_header_param_in_declaration_order() -> None:
+    harness = _RecordingHarness([7, 14, 21, 28])
+    compiler = _FixedCompiler()
+    runner = infrastructure.KernelRunner(harness, compiler)
+
+    values = runner.run(
+        _SCALE_SOURCE,
+        params={"SCALE": 7, "DATA": [1, 2, 3, 4]},
+        grid=(4, 1, 1),
+        block=(4, 1, 1),
+        output_param=1,
+        output_count=4,
+    )
+
+    assert values == [7, 14, 21, 28]
+    assert compiler.sources == [_SCALE_SOURCE]
+    (request,) = harness.requests
+    assert request["op"] == "correctness"
+    assert request["ptx"] == "fake ptx"
+    assert request["kernel"] == "main"
+    assert request["params"] == [
+        {"type": "i64", "value": 7},
+        {"type": "i64[]", "values": [1, 2, 3, 4]},
+    ]
+    assert request["grid"] == [4, 1, 1]
+    assert request["block"] == [4, 1, 1]
+    assert request["output_param"] == 1
+    assert request["output_count"] == 4
+
+
+def test_kernel_runner_zero_fills_array_padding_and_omitted_params() -> None:
+    harness = _RecordingHarness([0])
+    runner = infrastructure.KernelRunner(harness, _FixedCompiler())
+
+    runner.run(_SCALE_SOURCE, params={"DATA": [1, 2]}, output_param=1)
+
+    assert harness.requests[0]["params"] == [
+        {"type": "i64", "value": 0},
+        {"type": "i64[]", "values": [1, 2, 0, 0]},
+    ]
+    assert harness.requests[0]["output_count"] is None
+
+
+def test_kernel_runner_reads_float_output_as_floats() -> None:
+    source = "\\! kernel main\n\\! param DATA f64[2]\n"
+    harness = _RecordingHarness([1.5, -2.25])
+    runner = infrastructure.KernelRunner(harness, _FixedCompiler())
+
+    assert runner.run(source, params={"DATA": [1.5, 2.5]}) == [1.5, -2.25]
+    assert harness.requests[0]["params"] == [{"type": "f64[]", "values": [1.5, 2.5]}]
+
+
+def test_kernel_runner_rejects_a_scalar_output_param() -> None:
+    source = "\\! kernel main\n\\! param SCALE i64\n\\! param DATA i64[2]\n"
+    runner = infrastructure.KernelRunner(_RecordingHarness([]), _FixedCompiler())
+
+    with pytest.raises(ValueError, match="scalar and cannot be read back"):
+        runner.run(source, output_param=0)
+
+
+def test_kernel_runner_rejects_an_output_param_out_of_range() -> None:
+    runner = infrastructure.KernelRunner(_RecordingHarness([]), _FixedCompiler())
+
+    with pytest.raises(ValueError, match="out of range"):
+        runner.run(_SCALE_SOURCE, output_param=5)
+
+
+def test_kernel_runner_surfaces_a_harness_error() -> None:
+    class _FailingHarness:
+        def request(self, _payload: dict[str, object]) -> dict[str, object]:
+            msg = "cuModuleLoadData failed with error 218"
+            raise infrastructure.HarnessError(msg)
+
+    runner = infrastructure.KernelRunner(_FailingHarness(), _FixedCompiler())
+
+    with pytest.raises(infrastructure.HarnessError, match="cuModuleLoadData"):
+        runner.run(_SCALE_SOURCE, output_param=1)
+
+
 class _BindingFakeDriver:
     """Device memory plus the binding's host-argument rule, as measured on the rental.
 
@@ -568,8 +672,19 @@ class _FakeSubprocess:
         return outcome  # type: ignore[return-value]
 
 
+class _FakeSdk:
+    """A Vast.ai SDK stand-in that answers every call locally.
+
+    `_log_existing_instances` runs at session entry, so an incomplete fake would reach the real
+    client and put a network call in a keyless run.
+    """
+
+    def show_instances(self) -> list[dict[str, object]]:
+        return []
+
+
 def _bare_session(monkeypatch: pytest.MonkeyPatch) -> infrastructure.VastSession:
-    monkeypatch.setattr(infrastructure, "VastAI", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(infrastructure, "VastAI", lambda *_args, **_kwargs: _FakeSdk())
     return infrastructure.VastSession("key")
 
 

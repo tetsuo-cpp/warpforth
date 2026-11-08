@@ -38,7 +38,10 @@ CMake.
 **Tools:**
 - `tools/warpforth-translate/warpforth-translate.cpp` - Translation tool entry point
 - `tools/warpforth-opt/warpforth-opt.cpp` - Optimization tool entry point
-- `tools/warpforth-runner/warpforth-runner.cpp` - PTX execution tool for GPU kernels
+
+PTX execution for tests runs through `gpu_test/remote_harness.py`, a Python
+`cuda-python` script the test session uploads to the rental. It reads one JSON
+request per line on stdin and writes one JSON response per line on stdout.
 
 ## Tools Usage
 
@@ -55,8 +58,8 @@ CMake.
   ./build/bin/warpforth-opt --warpforth-pipeline | \
   ./build/bin/warpforth-translate --mlir-to-ptx > kernel.ptx
 
-# Execute PTX on GPU
-./warpforth-runner kernel.ptx --param i64[]:1,2,3 --param i64:42 --output-param 0 --output-count 3
+# Execute PTX on a rented GPU through the Python harness
+uv run pytest gpu_test/test_kernels.py -k test_addition
 ```
 
 ## Adding New Operations
@@ -116,7 +119,7 @@ uv run ruff format gpu_test/
 ## Commit and PR Titles
 
 - Use Conventional Commits format for every commit message and PR title: `<type>(<scope>): <description>` (the scope is optional)
-- Prefer the established subsystem scopes, such as `translate`, `dialect`, `conversion`, `pipeline`, and `runner`
+- Prefer the established subsystem scopes, such as `translate`, `dialect`, `conversion`, `pipeline`, and `harness`
 
 ## Agent Instructions
 

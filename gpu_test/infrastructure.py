@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
 from requests import RequestException
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WARPFORTHC = PROJECT_ROOT / "build" / "bin" / "warpforthc"
-RUNNER_SRC = PROJECT_ROOT / "tools" / "warpforth-runner" / "warpforth-runner.cpp"
 
 MAX_COST_PER_HOUR = 0.50
 CUDA_VERSION = "12.4"
@@ -351,7 +350,6 @@ class VastSession:
                     )
                     self._attach_ssh_key()
                     self._wait_for_sshd()
-                    self._compile_runner()
                     self._provision_harness()
                     return
 
@@ -388,17 +386,6 @@ class VastSession:
             f"sshd on {self.ssh_host}:{self.ssh_port} did not become ready within {POLL_TIMEOUT_S}s"
         )
         raise TimeoutError(msg)
-
-    def _compile_runner(self) -> None:
-        """Upload warpforth-runner.cpp and compile it on the remote host."""
-        start = time.monotonic()
-        self.scp_upload(RUNNER_SRC, f"{REMOTE_TMP}/warpforth-runner.cpp")
-        nvcc_cmd = (
-            f"nvcc -o {REMOTE_TMP}/warpforth-runner"
-            f" {REMOTE_TMP}/warpforth-runner.cpp -lcuda -std=c++17"
-        )
-        self.ssh_run(nvcc_cmd, timeout=60)
-        logger.info("C++ runner ready in %.1fs", time.monotonic() - start)
 
     def _provision_harness(self) -> None:
         """Install Python dependencies and upload remote_harness.py; pip gets one retry."""
@@ -683,10 +670,10 @@ def _parse_param_declarations(forth_source: str) -> list[ParamDecl]:
 
 
 class KernelRunner:
-    """Orchestrates local compilation and remote GPU execution."""
+    """Turns a Forth kernel plus its params into a harness correctness request."""
 
-    def __init__(self, session: VastSession, compiler: Compiler) -> None:
-        self.session = session
+    def __init__(self, harness: Harness, compiler: Compiler) -> None:
+        self.harness = harness
         self.compiler = compiler
 
     def run(
@@ -698,24 +685,17 @@ class KernelRunner:
         output_param: int = 0,
         output_count: int | None = None,
     ) -> list[int] | list[float]:
-        """Compile Forth source locally, execute on remote GPU, return output values.
+        """Compile Forth source locally, execute on the remote GPU, return the output values.
 
-        Param buffer sizes are derived from the Forth source's 'param' declarations.
-        The params dict maps param names to initial values:
-          - Array params: list of int or float (padded with zeros to declared size)
-          - Scalar params: int or float
-        Params not in the dict are zero-initialized.
+        Param buffer sizes come from the Forth source's `\\! param` declarations. The params
+        dict maps a param name to its initial values, a list for an array and a scalar
+        otherwise, and a param left out of the dict is zero-filled.
         """
-        # Parse kernel name and param declarations
         kernel_name = _parse_kernel_name(forth_source)
         decls = _parse_param_declarations(forth_source)
         if not decls:
             msg = "Forth source has no '\\! param' declarations"
             raise ValueError(msg)
-
-        params = params or {}
-
-        # Validate output_param
         if output_param < 0 or output_param >= len(decls):
             msg = f"output_param {output_param} out of range (have {len(decls)} params)"
             raise ValueError(msg)
@@ -724,70 +704,53 @@ class KernelRunner:
             msg = f"output_param {output_param} ('{name}') is a scalar and cannot be read back"
             raise ValueError(msg)
 
-        # Compile locally
-        ptx = self.compiler.compile_source(forth_source)
-
-        # Write PTX to temp file and upload
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ptx", delete=False) as f:
-            f.write(ptx)
-            ptx_path = Path(f.name)
-
-        try:
-            self.session.scp_upload(ptx_path, f"{REMOTE_TMP}/kernel.ptx")
-        finally:
-            ptx_path.unlink()
-
-        # Build remote command
-        cmd_parts = [
-            f"{REMOTE_TMP}/warpforth-runner",
-            f"{REMOTE_TMP}/kernel.ptx",
-            "--kernel",
-            kernel_name,
-        ]
-
-        for decl in decls:
-            if decl.is_array:
-                values = params.get(decl.name, [])
-                if not isinstance(values, list):
-                    msg = f"Array param '{decl.name}' expects a list, got {type(values).__name__}"
-                    raise TypeError(msg)
-                zero = 0.0 if decl.base_type == "f64" else 0
-                buf = [zero] * decl.size
-                for i, v in enumerate(values):
-                    buf[i] = v
-                cmd_parts.extend(["--param", f"{decl.base_type}[]:{','.join(str(v) for v in buf)}"])
-            else:
-                value = params.get(decl.name, 0.0 if decl.base_type == "f64" else 0)
-                if isinstance(value, list):
-                    msg = f"Scalar param '{decl.name}' expects a scalar, got list"
-                    raise TypeError(msg)
-                cmd_parts.extend(["--param", f"{decl.base_type}:{value}"])
-
-        cmd_parts.extend(
-            [
-                "--grid",
-                f"{grid[0]},{grid[1]},{grid[2]}",
-                "--block",
-                f"{block[0]},{block[1]},{block[2]}",
-                "--output-param",
-                str(output_param),
-            ]
+        params = params or {}
+        response = self.harness.request(
+            {
+                "op": "correctness",
+                "ptx": self.compiler.compile_source(forth_source),
+                "kernel": kernel_name,
+                "params": [_encode_param(decl, params) for decl in decls],
+                "grid": list(grid),
+                "block": list(block),
+                "output_param": output_param,
+                "output_count": output_count,
+            }
         )
+        values = response.get("values")
+        if not isinstance(values, list):
+            msg = "harness correctness response carries no values"
+            raise HarnessError(msg)
+        return values
 
-        if output_count is not None:
-            cmd_parts.extend(["--output-count", str(output_count)])
 
-        cmd = " ".join(cmd_parts)
-        stdout = self.session.ssh_run(cmd, timeout=120)
+def _encode_param(decl: ParamDecl, params: dict[str, object]) -> dict[str, object]:
+    """One harness param entry, in the header's declared type."""
+    if not decl.is_array:
+        value = params.get(decl.name, 0.0 if decl.base_type == "f64" else 0)
+        if isinstance(value, list):
+            msg = f"Scalar param '{decl.name}' expects a scalar, got list"
+            raise TypeError(msg)
+        return {"type": decl.base_type, "value": value}
 
-        # Parse CSV output — type depends on the output param
-        out_type = decls[output_param].base_type
-        parse = float if out_type == "f64" else int
-        return [parse(v) for v in stdout.strip().split(",")]
+    values = params.get(decl.name, [])
+    if not isinstance(values, list):
+        msg = f"Array param '{decl.name}' expects a list, got {type(values).__name__}"
+        raise TypeError(msg)
+    zero = 0.0 if decl.base_type == "f64" else 0
+    buffer = [zero] * decl.size
+    buffer[: len(values)] = values
+    return {"type": f"{decl.base_type}[]", "values": buffer}
 
 
 class HarnessError(Exception):
     """The remote harness reported a failure or stopped answering."""
+
+
+class Harness(Protocol):
+    """The one call KernelRunner makes on the channel; the tests pass a canned stand-in."""
+
+    def request(self, payload: dict[str, object]) -> dict[str, object]: ...
 
 
 class HarnessClient:
