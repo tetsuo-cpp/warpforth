@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
+import json
 import logging
 import subprocess
 import tempfile
@@ -30,11 +32,21 @@ MAX_COST_PER_HOUR = 0.50
 CUDA_VERSION = "12.4"
 CUDA_IMAGE = f"nvidia/cuda:{CUDA_VERSION}.0-devel-ubuntu22.04"
 POLL_INTERVAL_S = 10
-POLL_TIMEOUT_S = 300
+# Roughly half of overnight Vast launches exceeded the old 5-minute budget while pulling
+# the image and booting; the retry path below only helps if the poll outlives slow boots.
+POLL_TIMEOUT_S = 600
+# The ssh probe options (ConnectTimeout=10 x ConnectionAttempts=3) can need ~30s, so a
+# 15s subprocess cap crashed sessions that a retry would have saved.
+SSH_PROBE_TIMEOUT_S = 45
 INSTANCE_LABEL_PREFIX = "warpforth-test-"
 REMOTE_TMP = "/tmp"  # noqa: S108
 DEFAULT_ARCHITECTURE = "sm_70"
 SUPPORTED_ARCHITECTURES = ("sm_70", "sm_75", "sm_80", "sm_86", "sm_89", "sm_90")
+HARNESS_SRC = PROJECT_ROOT / "gpu_test" / "remote_harness.py"
+HARNESS_REMOTE = f"{REMOTE_TMP}/remote_harness.py"
+# Rentals ship 12.x-era drivers (cuda_max_good>=12.4); cuda-python 13 bindings want a
+# 13-era driver, so provisioning pins to the 12.x line.
+CUDA_PYTHON_SPEC = "cuda-python>=12.4,<13"
 
 
 @dataclass
@@ -338,6 +350,7 @@ class VastSession:
                     self._attach_ssh_key()
                     self._wait_for_sshd()
                     self._compile_runner()
+                    self._provision_harness()
                     return
 
             time.sleep(POLL_INTERVAL_S)
@@ -349,12 +362,22 @@ class VastSession:
         """Poll until sshd is actually accepting connections."""
         deadline = time.monotonic() + POLL_TIMEOUT_S
         while time.monotonic() < deadline:
-            result = subprocess.run(
-                [*self._ssh_cmd(), "true"],
-                capture_output=True,
-                timeout=15,
-                check=False,
-            )
+            try:
+                result = subprocess.run(
+                    [*self._ssh_cmd(), "true"],
+                    capture_output=True,
+                    timeout=SSH_PROBE_TIMEOUT_S,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "ssh probe to %s:%s exceeded %ds; treating it like a failed probe",
+                    self.ssh_host,
+                    self.ssh_port,
+                    SSH_PROBE_TIMEOUT_S,
+                )
+                time.sleep(POLL_INTERVAL_S)
+                continue
             if result.returncode == 0:
                 logger.info("sshd ready on %s:%s", self.ssh_host, self.ssh_port)
                 return
@@ -366,12 +389,36 @@ class VastSession:
 
     def _compile_runner(self) -> None:
         """Upload warpforth-runner.cpp and compile it on the remote host."""
+        start = time.monotonic()
         self.scp_upload(RUNNER_SRC, f"{REMOTE_TMP}/warpforth-runner.cpp")
         nvcc_cmd = (
             f"nvcc -o {REMOTE_TMP}/warpforth-runner"
             f" {REMOTE_TMP}/warpforth-runner.cpp -lcuda -std=c++17"
         )
         self.ssh_run(nvcc_cmd, timeout=60)
+        logger.info("C++ runner ready in %.1fs", time.monotonic() - start)
+
+    def _provision_harness(self) -> None:
+        """Install Python dependencies and upload remote_harness.py; pip gets one retry."""
+        start = time.monotonic()
+        self.ssh_run(
+            "command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1"
+            " || (apt-get update -qq"
+            " && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-pip)",
+            timeout=600,
+        )
+        install = (
+            "python3 -m pip install --quiet --disable-pip-version-check "
+            f'"{CUDA_PYTHON_SPEC}" numpy nvidia-cublas-cu12'
+        )
+        try:
+            self.ssh_run(install, timeout=600)
+        except RuntimeError:
+            logger.warning("cuda-python install failed; retrying once")
+            self.ssh_run(install, timeout=600)
+        self.scp_upload(HARNESS_SRC, HARNESS_REMOTE)
+        self.ssh_run("python3 -c 'import cuda, numpy'", timeout=60)
+        logger.info("remote_harness.py provisioned in %.1fs", time.monotonic() - start)
 
     def _record_labeled_instance_ids(
         self,
@@ -521,6 +568,16 @@ class VastSession:
             text=True,
             timeout=60,
             check=True,
+        )
+
+    def ssh_popen(self, cmd: str) -> subprocess.Popen[str]:
+        """Open a persistent SSH process with piped stdin/stdout for a JSON-lines service."""
+        return subprocess.Popen(
+            [*self._ssh_cmd(), cmd],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
 
@@ -698,3 +755,60 @@ class KernelRunner:
         out_type = decls[output_param].base_type
         parse = float if out_type == "f64" else int
         return [parse(v) for v in stdout.strip().split(",")]
+
+
+class HarnessError(Exception):
+    """The remote harness reported a failure or stopped answering."""
+
+
+class HarnessClient:
+    """Drives remote_harness.py on the rental over one persistent SSH JSON-lines channel.
+
+    The protocol (one JSON request per line, one JSON response per line) is documented in
+    gpu_test/remote_harness.py. A response with "ok": false raises HarnessError.
+    """
+
+    def __init__(self, session: VastSession) -> None:
+        self._session = session
+        self._proc: subprocess.Popen[str] | None = None
+
+    def __enter__(self) -> Self:
+        self._proc = self._session.ssh_popen(f"python3 {HARNESS_REMOTE}")
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self._proc is not None:
+            if self._proc.stdin is not None:
+                with contextlib.suppress(OSError):
+                    self._proc.stdin.close()
+            try:
+                self._proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+        self._proc = None
+
+    def request(self, payload: dict[str, object]) -> dict[str, object]:
+        """Send one request and return its response payload."""
+        if self._proc is None or self._proc.stdin is None or self._proc.stdout is None:
+            msg = "HarnessClient is not started; use it as a context manager"
+            raise HarnessError(msg)
+        self._proc.stdin.write(json.dumps(payload) + "\n")
+        self._proc.stdin.flush()
+        line = self._proc.stdout.readline()
+        if not line:
+            tail = ""
+            if self._proc.stderr is not None:
+                tail = self._proc.stderr.read()[-2000:].strip()
+            msg = f"remote harness exited without a response: {tail}"
+            raise HarnessError(msg)
+        try:
+            response = json.loads(line)
+        except json.JSONDecodeError as exc:
+            msg = f"remote harness returned a non-JSON line: {line.strip()!r}"
+            raise HarnessError(msg) from exc
+        if not isinstance(response, dict):
+            msg = f"remote harness returned a non-object response: {response!r}"
+            raise HarnessError(msg)
+        if not response.get("ok"):
+            raise HarnessError(str(response.get("error", "unknown harness error")))
+        return response
