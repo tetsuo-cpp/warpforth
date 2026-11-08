@@ -138,3 +138,66 @@ the result document with every raw sample and each baseline's flags.
 The reference for a case is computed on the device host, so the two sides are compared to the same
 values rather than to each other. Reduction order and fast-math flags differ by design.
 
+## Two compiler revisions on one rental
+
+`bench compare` answers whether a compiler change helped. It resolves both refs, builds each one in
+its own temporary git worktree and cmake build directory, compiles every case with both binaries,
+then rents one GPU and puts the two PTX modules into the two slots of one harness bench call.
+
+```bash
+set -a; source .env; set +a
+uv run python -m bench compare canon bench/faster-scheduling
+```
+
+```text
+compare base=06a453249c05 head=432757f84330 at sm_89, head time over base time, one rental
+gpu_uuid=5175f5db792f7713b2e92338940c9169 driver_version=13.2 sm_clock_mhz=2460 memory_clock_mhz=8501 base_commit=06a4532... head_commit=432757f...
+
+case               verdict      ratio    mad       base       head     gap  ok
+scale_i64          no change    1.000  0.000    272.0us    272.0us   1.01x  yes
+axpy_f64           no change    1.000  0.000    402.7us    402.7us   1.01x  yes
+reduce_sum_f64     no change    1.000  0.000    451.0us    451.0us   1.64x  yes
+matmul_f64_naive   no change    1.000  0.000     43.2us     43.2us   1.49x  yes
+matmul_f64_tiled   no change    1.009  0.000    343.8us    347.0us   1.60x  yes
+attention_f32      no change    1.000  0.000   1191.4us   1191.4us   9.70x  yes
+
+no case slower across 6 cases
+```
+
+`ratio` is head time over base time, taken per sample so drift across the session lands on both
+sides. `verdict` comes from the stats module, which calls anything inside the larger of 2% or three
+times the ratio MAD no change. `gap` is the head side against the case's SOTA CUDA baseline measured
+in the same session, so the table says both whether the change helped and how far the result still
+sits from CUDA. That pair of commits touches only a lit test, so no verdict moves, and the gaps
+match the ones `bench gap` reported before it.
+
+Two fresh builds are the expensive part, around 15 seconds each on a warm machine. The compiler
+settings come from the checkout's own `build/CMakeCache.txt`, so the compared binaries use the same
+MLIR and LLVM as the tooling around them. `--jobs` sets the parallel width. `--case ID` restricts
+the suite and `--json` prints the result document with both commits and each case's ratio.
+
+The command exits 2 when any case is slower, 1 when a case could not be compared, and 0 otherwise,
+so a hillclimb can gate a keep-or-revert on the exit code alone.
+
+## The acceptance fixture pair
+
+`benchmarks/acceptance/` holds `fast.forth` and `slow.forth`, one kernel and a deliberately slowed
+twin. They share a kernel entry, a parameter order, a launch geometry, and a reference, and they
+differ only in the work each element does. The slow arm runs a 512-trip chain per element, each trip
+converting the running value to f64 and back to i64, so no trip can be folded into another.
+
+```bash
+uv run python -m bench acceptance
+```
+
+```text
+pair                     verdict      ratio  result
+fast.forth -> slow.forth slower     131.837  pass
+fast.forth -> fast.forth no change    1.000  pass
+```
+
+This run is the instrument's own check. The slowed twin has to read as slower by at least 2x and the
+identical pair has to read as no change, both through the same verdict path `bench compare` uses and
+both on one rental. They borrow the `scale_i64` case's buffers, seeds, timing config, and tolerance,
+which is why the fixture sits next to the cases rather than inside them.
+

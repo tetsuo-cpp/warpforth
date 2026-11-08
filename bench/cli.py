@@ -1,4 +1,4 @@
-"""The `bench gap` command and its argument surface."""
+"""The `bench` command line: the CUDA gap table and the base-versus-head comparison."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
-from bench import gap
+from bench import acceptance, build, compare, gap
 from bench.report import Report
 from benchmarks import manifest
 from gpu_test import bench_stats, infrastructure
@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger("bench")
 REPO_ROOT = manifest.CASE_ROOT.parent
 EXIT_INCOMPLETE = 1
+EXIT_REGRESSED = 2
+BUILD_JOBS = max(1, (os.cpu_count() or 2))
 
 
 def head_commit() -> str:
@@ -104,6 +106,72 @@ def run(args: argparse.Namespace) -> int:
     return 0 if report.complete else EXIT_INCOMPLETE
 
 
+def compile_both(
+    cases: Sequence[manifest.Case], args: argparse.Namespace
+) -> tuple[build.Ref, build.Ref, dict[str, compare.BaseSide], list[gap.Item]]:
+    """Build both refs and compile every case with each binary inside that ref's worktree.
+
+    A worktree is torn down as soon as it has produced its PTX, so the two compilers never share a
+    build directory and nothing depends on where the temporary checkouts live.
+    """
+    base = build.resolve(REPO_ROOT, args.base)
+    head = build.resolve(REPO_ROOT, args.head)
+    logger.info("base %s at %s, head %s at %s", base.name, base.short, head.name, head.short)
+    toolchain = build.toolchain_of(manifest.find_build(REPO_ROOT))
+    logger.info("compiling %d cases with both revisions at %s", len(cases), args.arch)
+    with build.worktree(REPO_ROOT, base) as checkout:
+        compiler = build.compiler(checkout, toolchain, jobs=args.jobs)
+        bases = {case.id: compare.compile_base(case, compiler, args.arch) for case in cases}
+    with build.worktree(REPO_ROOT, head) as checkout:
+        compiler = build.compiler(checkout, toolchain, jobs=args.jobs)
+        items = [gap.plan(case, compiler, args.arch) for case in cases]
+    for item, base_error in zip(items, (bases[case.id].error for case in cases), strict=True):
+        error = item.error if isinstance(item, gap.Broken) else base_error
+        if error:
+            logger.error("%s: %s", item.case.id, error)
+    return base, head, bases, items
+
+
+def run_compare(args: argparse.Namespace) -> int:
+    cases = select_cases(manifest.load(), args.case)
+    key = api_key()
+    base, head, bases, items = compile_both(cases, args)
+    if all(isinstance(item, gap.Broken) for item in items):
+        return EXIT_INCOMPLETE
+
+    commits = {"base_commit": base.sha, "head_commit": head.sha}
+    logger.info("building the CUDA baselines and timing %d cases on one rental", len(items))
+    with infrastructure.VastSession(key, arch=args.arch) as session:
+        readied = gap.compile_baselines(items, session)
+        with infrastructure.HarnessClient(session) as harness:
+            environment = compare.environment_of(
+                harness.request({"op": "ping"}), base.sha, head.sha
+            )
+            rows = compare.rows_of(readied, bases, harness, commits)
+
+    report = compare.Report(arch=args.arch, environment=environment, rows=tuple(rows))
+    for line in report.lines():
+        print(line)  # noqa: T201 - the command's own output
+    if args.json:
+        print(report.to_json())  # noqa: T201
+    if report.regressions:
+        return EXIT_REGRESSED
+    return 0 if not report.failures else EXIT_INCOMPLETE
+
+
+def run_acceptance(args: argparse.Namespace) -> int:
+    cases = manifest.load()
+    key = api_key()
+    compiler = manifest.find_compiler(REPO_ROOT)
+    if not compiler.is_file():
+        logger.error("warpforthc not found at %s; run: cmake --build build", compiler)
+        return EXIT_INCOMPLETE
+    readings = acceptance.run(cases, compiler, args.arch, key)
+    for line in acceptance.lines(readings):
+        print(line)  # noqa: T201 - the command's own output
+    return 0 if all(reading.passed for reading in readings) else EXIT_INCOMPLETE
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m bench",
@@ -112,7 +180,43 @@ def build_parser() -> argparse.ArgumentParser:
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("-v", "--verbose", action="store_true", help="log at debug level")
     subcommands = parser.add_subparsers(dest="command", required=True)
-    command = subcommands.add_parser("gap", parents=[shared], help="print the per-case gap table")
+    gap_command = subcommands.add_parser("gap", parents=[shared], help="print the per-case gap")
+    add_case_options(gap_command)
+    gap_command.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="run the whole suite this many times on one rental, to measure the noise floor",
+    )
+    gap_command.add_argument(
+        "--max-ratio-mad",
+        type=float,
+        default=bench_stats.MAX_STABLE_RATIO_MAD,
+        help="leave cases that scatter more than this out of the geometric mean",
+    )
+    compare_command = subcommands.add_parser(
+        "compare", parents=[shared], help="print a verdict per case for a base and head ref"
+    )
+    add_case_options(compare_command)
+    compare_command.add_argument("base", help="the ref every change is measured against")
+    compare_command.add_argument("head", help="the ref that may be faster or slower")
+    compare_command.add_argument(
+        "--jobs",
+        type=int,
+        default=BUILD_JOBS,
+        help="parallel compile jobs for each of the two fresh builds",
+    )
+    acceptance_command = subcommands.add_parser(
+        "acceptance",
+        parents=[shared],
+        help="check the fixture pair still flags a slower twin and clears an identical pair",
+    )
+    add_case_options(acceptance_command)
+    parser.add_argument("-v", "--verbose", action="store_true", help="log at debug level")
+    return parser
+
+
+def add_case_options(command: argparse.ArgumentParser) -> None:
     command.add_argument(
         "--arch",
         default=manifest.DEFAULT_ARCH,
@@ -126,21 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="ID",
         help="measure only this case; repeatable",
     )
-    command.add_argument(
-        "--repeats",
-        type=int,
-        default=1,
-        help="run the whole suite this many times on one rental, to measure the noise floor",
-    )
-    command.add_argument(
-        "--max-ratio-mad",
-        type=float,
-        default=bench_stats.MAX_STABLE_RATIO_MAD,
-        help="leave cases that scatter more than this out of the geometric mean",
-    )
     command.add_argument("--json", action="store_true", help="also print the result document")
-    parser.add_argument("-v", "--verbose", action="store_true", help="log at debug level")
-    return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -149,6 +239,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    if args.command == "compare":
+        return run_compare(args)
+    if args.command == "acceptance":
+        return run_acceptance(args)
     return run(args)
 
 

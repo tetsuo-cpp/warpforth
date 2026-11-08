@@ -1,4 +1,4 @@
-"""Runs the bench command line: `uv run python -m bench gap`."""
+"""Runs the bench command line: `uv run python -m bench gap`, `compare`, or `acceptance`."""
 
 from __future__ import annotations
 
