@@ -56,15 +56,13 @@ Compile to PTX:
 ./build/bin/warpforthc matmul.forth -o matmul.ptx --arch sm_80
 ```
 
-Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output):
+Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output). The GPU
+suite rents a Vast.ai instance and drives it through `gpu_test/remote_harness.py`,
+so it needs `VASTAI_API_KEY` in the environment:
 
 ```bash
-./build/bin/warpforth-runner matmul.ptx \
-  --param 'i64[]:1,2,3,4,5,6,7,8' \
-  --param 'i64[]:1,2,3,4,5,6,7,8,9,10,11,12' \
-  --param 'i64[]:0,0,0,0,0,0' \
-  --grid 6,1,1 --block 1,1,1 \
-  --output-param 2 --output-count 6
+set -a; source .env; set +a
+uv run pytest gpu_test/test_kernels.py
 ```
 
 ## Toolchain
@@ -74,7 +72,6 @@ Test on a GPU (A is 2x4 row-major, B is 4x3 row-major, C is 2x3 output):
 | `warpforthc` | Compiles Forth source to PTX |
 | `warpforth-translate` | Translates from Forth source to MLIR and MLIR to PTX assembly |
 | `warpforth-opt` | Runs individual MLIR passes or entire pipeline |
-| `warpforth-runner` | Executes PTX kernels on a GPU for testing |
 
 These tools can be composed for debugging or inspecting intermediate stages:
 
