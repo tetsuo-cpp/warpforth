@@ -91,3 +91,50 @@ of values instead of millions. That shrink is PTX-neutral, and
 `test_correctness_source_is_the_benchmarked_kernel_at_a_smaller_size` pins it, so a case is verified
 against the exact kernel the suite times.
 
+## The gap table on one rental
+
+`bench gap` answers how close WarpForth sits to SOTA CUDA. It rents one GPU, compiles every case's
+`.forth` to PTX locally with `warpforthc`, compiles each hand-written or device-library CUDA baseline
+to PTX on that rental with `nvcc` and the case's recorded flags, calls `cuBLAS` directly for the
+`host_lib` cases, then runs the harness once per case for the small correctness config and once for
+the timed config.
+
+```bash
+set -a; source .env; set +a
+uv run python -m bench gap
+```
+
+```text
+gap against SOTA CUDA at sm_89, WarpForth time over CUDA time, one rental
+gpu_uuid=... driver_version=13.3 sm_clock_mhz=2490 memory_clock_mhz=8501 base_commit=... head_commit=...
+
+case                     gap    warpforth         cuda    mad  ok
+scale_i64              1.01x      272.2us      270.0us  0.001  yes
+axpy_f64                   -            -            -      -  no  small config output 0 is -15.95..., the manifest expects -9.97...
+reduce_sum_f64             -            -            -      -  no  cuMemcpyHtoD failed with error 1
+matmul_f64_naive       1.49x       43.6us       29.2us  0.000  yes
+matmul_f64_tiled       1.61x      349.9us      217.6us  0.002  yes
+attention_f32          9.68x     1203.3us      124.3us  0.001  yes
+
+geometric mean gap 2.199x over 4 of 6 stable cases (cutoff ratio MAD 0.050)
+```
+
+Those two failures are defects in the harness, not in the cases or this command, and they are open
+work. The `axpy_f64` correctness op is launched twice before one readback, and this case writes into
+its own input, so it applies its update twice. The `reduce_sum_f64` output buffer is a single `f64`,
+and the harness cannot upload an 8-byte numpy array.
+
+A gap is WarpForth time over CUDA time, so a larger number is a larger distance to close. A row
+carries a gap only when it passed both gates: the small correctness instance against the manifest's
+expected values, and the timed instance's own validation against the case reference. A case that
+fails a gate keeps its row with the reason and is left out of the geometric mean, and the command
+exits 1 when any case failed.
+
+`--repeats 2` runs the whole suite twice on the same rental and prints a second table of both runs
+plus the largest per-case change between them, which is the measured noise floor. `--case ID`
+restricts the run, `--arch` picks the compute capability both sides compile for, and `--json` prints
+the result document with every raw sample and each baseline's flags.
+
+The reference for a case is computed on the device host, so the two sides are compared to the same
+values rather than to each other. Reduction order and fast-math flags differ by design.
+
