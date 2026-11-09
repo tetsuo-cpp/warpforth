@@ -89,7 +89,8 @@ static StringRef getBinaryFormat(gpu::CompilationTarget target) {
 
 void buildWarpForthLoweringPipeline(OpPassManager &pm,
                                     const WarpForthPipelineOptions &options) {
-  // Stage 1: Lower Forth to MemRef (CF ops pass through as-is)
+  // Stage 1: Record known stack depths, then lower Forth to MemRef or SSA.
+  pm.addPass(createTagForthStackDepthPass());
   pm.addPass(createConvertForthToMemRefPass());
 
   // Stage 2: Inline user words while both callers and callees are func.func.
@@ -150,6 +151,8 @@ void buildWarpForthPipeline(OpPassManager &pm) {
 }
 
 void registerConversionPasses() {
+  registerPass(
+      []() -> std::unique_ptr<Pass> { return createTagForthStackDepthPass(); });
   registerPass([]() -> std::unique_ptr<Pass> {
     return createConvertForthToMemRefPass();
   });

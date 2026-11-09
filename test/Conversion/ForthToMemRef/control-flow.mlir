@@ -1,4 +1,4 @@
-// RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
+// RUN: %warpforth-opt --tag-forth-stack-depth --convert-forth-to-memref %s | %FileCheck %s
 
 // Test: IF/ELSE/THEN and IF/THEN conversion to memref with CF-based control flow.
 // The non-entry block checks cover function-region signature conversion.

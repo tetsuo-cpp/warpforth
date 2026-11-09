@@ -1,56 +1,37 @@
-// RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
+// RUN: %warpforth-opt --tag-forth-stack-depth --convert-forth-to-memref %s | %FileCheck %s
 
 // CHECK-LABEL: func.func private @main
+// CHECK-NOT: memref<256xi64>
 
-// eq: load two values, arith.cmpi eq, extsi to i64, store
-// CHECK: memref.load
-// CHECK: arith.subi
-// CHECK: memref.load
-// CHECK: arith.cmpi eq, %{{.*}}, %{{.*}} : i64
-// CHECK: arith.extsi %{{.*}} : i1 to i64
-// CHECK: memref.store
-
-// lt: load two values, arith.cmpi slt, extsi to i64, store
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.cmpi slt, %{{.*}}, %{{.*}} : i64
-// CHECK: arith.extsi %{{.*}} : i1 to i64
-// CHECK: memref.store
-
-// gt: load two values, arith.cmpi sgt, extsi to i64, store
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.cmpi sgt, %{{.*}}, %{{.*}} : i64
-// CHECK: arith.extsi %{{.*}} : i1 to i64
-// CHECK: memref.store
-
-// zero_eq: load one value, compare with 0, extsi, store at same SP
-// CHECK: memref.load
-// CHECK: arith.constant 0 : i64
-// CHECK: arith.cmpi eq, %{{.*}}, %{{.*}} : i64
-// CHECK: arith.extsi %{{.*}} : i1 to i64
-// CHECK: memref.store
-
-// ne: load two values, arith.cmpi ne, extsi to i64, store
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.cmpi ne, %{{.*}}, %{{.*}} : i64
-// CHECK: arith.extsi %{{.*}} : i1 to i64
-// CHECK: memref.store
-
-// le: load two values, arith.cmpi sle, extsi to i64, store
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.cmpi sle, %{{.*}}, %{{.*}} : i64
-// CHECK: arith.extsi %{{.*}} : i1 to i64
-// CHECK: memref.store
-
-// ge: load two values, arith.cmpi sge, extsi to i64, store
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.cmpi sge, %{{.*}}, %{{.*}} : i64
-// CHECK: arith.extsi %{{.*}} : i1 to i64
-// CHECK: memref.store
+// CHECK: %[[E1:.*]] = arith.constant 1 : i64
+// CHECK: %[[E2:.*]] = arith.constant 2 : i64
+// CHECK: %[[EQ:.*]] = arith.cmpi eq, %[[E1]], %[[E2]] : i64
+// CHECK: arith.extsi %[[EQ]] : i1 to i64
+// CHECK: %[[L3:.*]] = arith.constant 3 : i64
+// CHECK: %[[L4:.*]] = arith.constant 4 : i64
+// CHECK: %[[LT:.*]] = arith.cmpi slt, %[[L3]], %[[L4]] : i64
+// CHECK: arith.extsi %[[LT]] : i1 to i64
+// CHECK: %[[G5:.*]] = arith.constant 5 : i64
+// CHECK: %[[G6:.*]] = arith.constant 6 : i64
+// CHECK: %[[GT:.*]] = arith.cmpi sgt, %[[G5]], %[[G6]] : i64
+// CHECK: arith.extsi %[[GT]] : i1 to i64
+// CHECK: %[[Z:.*]] = arith.constant 0 : i64
+// CHECK: %[[ZZ:.*]] = arith.constant 0 : i64
+// CHECK: %[[ZE:.*]] = arith.cmpi eq, %[[Z]], %[[ZZ]] : i64
+// CHECK: arith.extsi %[[ZE]] : i1 to i64
+// CHECK: %[[N7:.*]] = arith.constant 7 : i64
+// CHECK: %[[N8:.*]] = arith.constant 8 : i64
+// CHECK: %[[NE:.*]] = arith.cmpi ne, %[[N7]], %[[N8]] : i64
+// CHECK: arith.extsi %[[NE]] : i1 to i64
+// CHECK: %[[LE9:.*]] = arith.constant 9 : i64
+// CHECK: %[[LE10:.*]] = arith.constant 10 : i64
+// CHECK: %[[LE:.*]] = arith.cmpi sle, %[[LE9]], %[[LE10]] : i64
+// CHECK: arith.extsi %[[LE]] : i1 to i64
+// CHECK: %[[GE11:.*]] = arith.constant 11 : i64
+// CHECK: %[[GE12:.*]] = arith.constant 12 : i64
+// CHECK: %[[GE:.*]] = arith.cmpi sge, %[[GE11]], %[[GE12]] : i64
+// CHECK: arith.extsi %[[GE]] : i1 to i64
+// CHECK-NOT: memref<256xi64>
 
 module {
   func.func private @main() {

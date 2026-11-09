@@ -20,6 +20,10 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/ErrorHandling.h"
+#include <type_traits>
 
 namespace mlir {
 namespace warpforth {
@@ -29,692 +33,18 @@ namespace warpforth {
 
 namespace {
 
-// Stack configuration constants
 constexpr int64_t kStackSize = 256;
-// NVPTX global memory address space for LLVM ptr types. Global addresses are
-// numerically equal to their generic addresses, so inttoptr into this space is
-// valid and lets NVPTX emit ld.global/st.global after address arithmetic.
-constexpr unsigned kGlobalAddressSpace =
+
+// NVPTX global memory. Global addresses match their generic addresses, so
+// inttoptr into this space is what makes NVPTX emit ld.global/st.global.
+constexpr unsigned kGlobalMemorySpace =
     static_cast<unsigned>(NVVM::kGlobalMemorySpace);
-// NVPTX shared memory address space for LLVM ptr types.
-constexpr unsigned kWorkgroupAddressSpace =
+constexpr unsigned kWorkgroupMemorySpace =
     static_cast<unsigned>(NVVM::kSharedMemorySpace);
 
-/// Type converter for forth.stack -> memref + index
-class ForthToMemRefTypeConverter : public TypeConverter {
-public:
-  ForthToMemRefTypeConverter() {
-    // Pass-through for all non-stack types (must be registered first)
-    addConversion([](Type type) { return type; });
-
-    // Stack type: !forth.stack -> memref<256xi64> + index
-    addConversion(
-        [&](forth::StackType type,
-            SmallVectorImpl<Type> &results) -> std::optional<LogicalResult> {
-          auto memrefType = MemRefType::get(
-              {kStackSize}, IntegerType::get(type.getContext(), 64));
-          auto indexType = IndexType::get(type.getContext());
-          results.push_back(memrefType);
-          results.push_back(indexType);
-          return success();
-        });
-  }
-};
-
-/// Push an i64 value onto the stack. Returns the new stack pointer.
-static Value pushValue(Location loc, ConversionPatternRewriter &rewriter,
-                       Value memref, Value stackPtr, Value value) {
-  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-  Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-  rewriter.create<memref::StoreOp>(loc, value, memref, newSP);
-  return newSP;
-}
-
-/// Base for patterns that rewrite one !forth.stack operand into one output
-/// stack. Subclasses emit the stack effect on the unpacked (memref, SP) pair
-/// and return the new SP.
-template <typename ForthOp>
-struct StackEffectConversion : public OpConversionPattern<ForthOp> {
-  using OpConversionPattern<ForthOp>::OpConversionPattern;
-  using OneToNOpAdaptor =
-      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
-
-  virtual FailureOr<Value>
-  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr, ConversionPatternRewriter &rewriter) const = 0;
-
-  LogicalResult
-  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const final {
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    FailureOr<Value> newSP =
-        rewriteStack(op, adaptor, memref, inputStack[1], rewriter);
-    if (failed(newSP))
-      return failure();
-    rewriter.replaceOpWithMultiple(op, {{memref, *newSP}});
-    return success();
-  }
-};
-
-/// Conversion pattern for forth.stack operation.
-/// Allocates a memref<256xi64> on the stack and initializes SP to 0.
-struct StackOpConversion : public OpConversionPattern<forth::StackOp> {
-  StackOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<forth::StackOp>(typeConverter, context) {}
-  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
-
-  LogicalResult
-  matchAndRewrite(forth::StackOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    auto i64Type = rewriter.getI64Type();
-    auto memrefType = MemRefType::get({kStackSize}, i64Type);
-
-    // Allocate stack buffer
-    Value stackBuffer = rewriter.create<memref::AllocaOp>(loc, memrefType);
-
-    // Initialize stack pointer to 0
-    Value initialSP = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-
-    rewriter.replaceOpWithMultiple(op, {{stackBuffer, initialSP}});
-    return success();
-  }
-};
-
-/// Conversion pattern for forth.constant operation.
-/// Handles both integer and float constants.
-struct ConstantOpConversion : public StackEffectConversion<forth::ConstantOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::ConstantOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    Value valueToPush;
-    auto typedValue = cast<TypedAttr>(op.getValueAttr());
-    if (isa<FloatAttr>(typedValue)) {
-      // Float: create f64 constant, bitcast to i64
-      Value f64Value = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getF64Type(), typedValue);
-      valueToPush = rewriter.create<arith::BitcastOp>(
-          loc, rewriter.getI64Type(), f64Value);
-    } else {
-      // Integer: create i64 constant directly
-      valueToPush = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getI64Type(), typedValue);
-    }
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, valueToPush);
-
-    return newSP;
-  }
-};
-
-/// Conversion pattern for forth.dup operation.
-/// Duplicates the value at the top of the stack: (a -- a a)
-struct DupOpConversion : public StackEffectConversion<forth::DupOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::DupOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Load value at current SP and push duplicate
-    Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, topValue);
-
-    return newSP;
-  }
-};
-
-/// Conversion pattern for forth.drop operation.
-/// Removes the top element from the stack: (a -- )
-struct DropOpConversion : public StackEffectConversion<forth::DropOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::DropOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Decrement SP
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSP = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-
-    return newSP;
-  }
-};
-
-/// Conversion pattern for forth.swap operation.
-/// Swaps the top two elements: (a b -- b a)
-struct SwapOpConversion : public StackEffectConversion<forth::SwapOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::SwapOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Load top two values
-    Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value secondValue = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
-
-    // Store swapped
-    rewriter.create<memref::StoreOp>(loc, secondValue, memref, stackPtr);
-    rewriter.create<memref::StoreOp>(loc, topValue, memref, spMinus1);
-
-    return stackPtr;
-  }
-};
-
-/// Conversion pattern for forth.over operation.
-/// Copies the second element to top: (a b -- a b a)
-struct OverOpConversion : public StackEffectConversion<forth::OverOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::OverOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Load second element (SP - 1) and push copy
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value secondValue = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, secondValue);
-
-    return newSP;
-  }
-};
-
-/// Conversion pattern for forth.rot operation.
-/// Rotates top three elements: (a b c -- b c a)
-struct RotOpConversion : public StackEffectConversion<forth::RotOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::RotOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value two = rewriter.create<arith::ConstantIndexOp>(loc, 2);
-
-    // Load top three values
-    Value c = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value b = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
-
-    Value spMinus2 = rewriter.create<arith::SubIOp>(loc, stackPtr, two);
-    Value a = rewriter.create<memref::LoadOp>(loc, memref, spMinus2);
-
-    // Store rotated: (a b c -- b c a)
-    rewriter.create<memref::StoreOp>(loc, b, memref, spMinus2);
-    rewriter.create<memref::StoreOp>(loc, c, memref, spMinus1);
-    rewriter.create<memref::StoreOp>(loc, a, memref, stackPtr);
-
-    return stackPtr;
-  }
-};
-
-/// Conversion pattern for forth.nip operation.
-/// Removes the second element: (a b -- b)
-struct NipOpConversion : public StackEffectConversion<forth::NipOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::NipOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Load top value (b at SP)
-    Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Store b at SP-1 (overwriting a)
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    rewriter.create<memref::StoreOp>(loc, b, memref, spMinus1);
-
-    // Net effect: SP-1 (removed one element)
-    return spMinus1;
-  }
-};
-
-/// Conversion pattern for forth.tuck operation.
-/// Copies top before second: (a b -- b a b)
-struct TuckOpConversion : public StackEffectConversion<forth::TuckOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::TuckOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-
-    // Load top two values
-    Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value a = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
-
-    // Store: b at SP-1, a at SP, b at SP+1
-    rewriter.create<memref::StoreOp>(loc, b, memref, spMinus1);
-    rewriter.create<memref::StoreOp>(loc, a, memref, stackPtr);
-    Value newSP = rewriter.create<arith::AddIOp>(loc, stackPtr, one);
-    rewriter.create<memref::StoreOp>(loc, b, memref, newSP);
-
-    // Net effect: SP+1 (added one element)
-    return newSP;
-  }
-};
-
-/// Conversion pattern for forth.pick operation.
-/// Copies nth element to top: ( xn ... x0 n -- xn ... x0 xn )
-struct PickOpConversion : public StackEffectConversion<forth::PickOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::PickOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Pop n from stack
-    Value nI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value spAfterPop = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-
-    // Cast n to index
-    Value nIdx =
-        rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), nI64);
-
-    // Compute target address: SP' - n
-    Value targetAddr = rewriter.create<arith::SubIOp>(loc, spAfterPop, nIdx);
-
-    // Load the picked value
-    Value pickedValue =
-        rewriter.create<memref::LoadOp>(loc, memref, targetAddr);
-
-    // Store at SP (where n was), effectively pushing the picked value
-    rewriter.create<memref::StoreOp>(loc, pickedValue, memref, stackPtr);
-
-    // Net effect: SP unchanged (popped n, pushed xn)
-    return stackPtr;
-  }
-};
-
-/// Conversion pattern for forth.roll operation.
-/// Rotates nth element to top: ( xn ... x0 n -- xn-1 ... x0 xn )
-/// Uses a CF-based loop to shift elements down.
-struct RollOpConversion : public StackEffectConversion<forth::RollOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::RollOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    auto indexType = rewriter.getIndexType();
-
-    // Pop n from stack
-    Value nI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value spAfterPop = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-
-    // Cast n to index
-    Value nIdx = rewriter.create<arith::IndexCastOp>(loc, indexType, nI64);
-
-    // Compute address of the element to roll: SP' - n
-    Value rolledAddr = rewriter.create<arith::SubIOp>(loc, spAfterPop, nIdx);
-
-    // Save the value to be rolled to top
-    Value rolledValue =
-        rewriter.create<memref::LoadOp>(loc, memref, rolledAddr);
-
-    // Split block to create CF-based shift loop.
-    Block *currentBlock = rewriter.getInsertionBlock();
-    Block *continueBlock = rewriter.splitBlock(currentBlock, op->getIterator());
-
-    // Create loop header and body blocks (inserted before continueBlock).
-    Block *headerBlock = rewriter.createBlock(continueBlock);
-    headerBlock->addArgument(indexType, loc); // induction variable
-    Block *bodyBlock = rewriter.createBlock(continueBlock);
-    bodyBlock->addArgument(indexType, loc); // induction variable
-
-    // currentBlock -> headerBlock(rolledAddr)
-    rewriter.setInsertionPointToEnd(currentBlock);
-    rewriter.create<cf::BranchOp>(loc, headerBlock, ValueRange{rolledAddr});
-
-    // headerBlock: check iv < spAfterPop
-    rewriter.setInsertionPointToStart(headerBlock);
-    Value iv = headerBlock->getArgument(0);
-    Value cond = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
-                                                iv, spAfterPop);
-    rewriter.create<cf::CondBranchOp>(loc, cond, bodyBlock, ValueRange{iv},
-                                      continueBlock, ValueRange{});
-
-    // bodyBlock: shift memref[iv] = memref[iv+1], branch back to header
-    rewriter.setInsertionPointToStart(bodyBlock);
-    Value biv = bodyBlock->getArgument(0);
-    Value next = rewriter.create<arith::AddIOp>(loc, biv, one);
-    Value shiftedVal = rewriter.create<memref::LoadOp>(loc, memref, next);
-    rewriter.create<memref::StoreOp>(loc, shiftedVal, memref, biv);
-    rewriter.create<cf::BranchOp>(loc, headerBlock, ValueRange{next});
-
-    // continueBlock: store rolled value at top, then rest of original block
-    rewriter.setInsertionPoint(op);
-    rewriter.create<memref::StoreOp>(loc, rolledValue, memref, spAfterPop);
-
-    // Net effect: SP' = SP - 1 (consumed n)
-    return spAfterPop;
-  }
-};
-
-/// Base template for binary arithmetic operations.
-/// Pops two values, applies operation, pushes result: (a b -- result)
-/// When IsFloat=true, bitcasts i64->f64 before the op and f64->i64 after.
-template <typename ForthOp, typename ArithOp, bool IsFloat = false>
-struct BinaryArithOpConversion : public StackEffectConversion<ForthOp> {
-  using Base = StackEffectConversion<ForthOp>;
-  using Base::Base;
-  using typename Base::OneToNOpAdaptor;
-
-  FailureOr<Value>
-  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-
-    // Load top two values (b at SP, a at SP-1)
-    Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value a = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
-
-    Value result;
-    if constexpr (IsFloat) {
-      // Bitcast i64 -> f64
-      auto f64Type = rewriter.getF64Type();
-      Value aF = rewriter.create<arith::BitcastOp>(loc, f64Type, a);
-      Value bF = rewriter.create<arith::BitcastOp>(loc, f64Type, b);
-      Value resF = rewriter.create<ArithOp>(loc, aF, bF);
-      // Bitcast f64 -> i64
-      result =
-          rewriter.create<arith::BitcastOp>(loc, rewriter.getI64Type(), resF);
-    } else {
-      result = rewriter.create<ArithOp>(loc, a, b);
-    }
-
-    // Store result at SP-1 (effectively popping both and pushing result)
-    rewriter.create<memref::StoreOp>(loc, result, memref, spMinus1);
-
-    // New SP is SP-1 (net effect: two pops, one push)
-    return spMinus1;
-  }
-};
-
-// Integer arithmetic
-using AddIOpConversion = BinaryArithOpConversion<forth::AddIOp, arith::AddIOp>;
-using SubIOpConversion = BinaryArithOpConversion<forth::SubIOp, arith::SubIOp>;
-using MulIOpConversion = BinaryArithOpConversion<forth::MulIOp, arith::MulIOp>;
-using DivIOpConversion = BinaryArithOpConversion<forth::DivIOp, arith::DivSIOp>;
-using ModOpConversion = BinaryArithOpConversion<forth::ModOp, arith::RemSIOp>;
-using AndOpConversion = BinaryArithOpConversion<forth::AndOp, arith::AndIOp>;
-using OrOpConversion = BinaryArithOpConversion<forth::OrOp, arith::OrIOp>;
-using XorOpConversion = BinaryArithOpConversion<forth::XorOp, arith::XOrIOp>;
-using LshiftOpConversion =
-    BinaryArithOpConversion<forth::LshiftOp, arith::ShLIOp>;
-using RshiftOpConversion =
-    BinaryArithOpConversion<forth::RshiftOp, arith::ShRUIOp>;
-
-// Float arithmetic
-using AddFOpConversion =
-    BinaryArithOpConversion<forth::AddFOp, arith::AddFOp, true>;
-using SubFOpConversion =
-    BinaryArithOpConversion<forth::SubFOp, arith::SubFOp, true>;
-using MulFOpConversion =
-    BinaryArithOpConversion<forth::MulFOp, arith::MulFOp, true>;
-using DivFOpConversion =
-    BinaryArithOpConversion<forth::DivFOp, arith::DivFOp, true>;
-
-// Float binary intrinsics (max/min)
-using MaxFOpConversion =
-    BinaryArithOpConversion<forth::MaxFOp, arith::MaximumFOp, true>;
-using MinFOpConversion =
-    BinaryArithOpConversion<forth::MinFOp, arith::MinimumFOp, true>;
-
-/// Base template for unary float operations.
-/// Pops one value, applies operation, pushes result: (f -- result)
-/// Bitcasts i64->f64 before the op and f64->i64 after.
-template <typename ForthOp, typename MathOp>
-struct UnaryFloatOpConversion : public StackEffectConversion<ForthOp> {
-  using Base = StackEffectConversion<ForthOp>;
-  using Base::Base;
-  using typename Base::OneToNOpAdaptor;
-
-  FailureOr<Value>
-  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Load value from top of stack
-    Value a = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Bitcast i64 -> f64
-    auto f64Type = rewriter.getF64Type();
-    Value aF = rewriter.create<arith::BitcastOp>(loc, f64Type, a);
-
-    // Apply math/arith op
-    Value resF = rewriter.create<MathOp>(loc, aF);
-
-    // Bitcast f64 -> i64
-    Value result =
-        rewriter.create<arith::BitcastOp>(loc, rewriter.getI64Type(), resF);
-
-    // Store result at same position (SP unchanged — unary op)
-    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
-
-    return stackPtr;
-  }
-};
-
-// Float unary intrinsics
-using ExpFOpConversion = UnaryFloatOpConversion<forth::ExpFOp, math::ExpOp>;
-using SqrtFOpConversion = UnaryFloatOpConversion<forth::SqrtFOp, math::SqrtOp>;
-using LogFOpConversion = UnaryFloatOpConversion<forth::LogFOp, math::LogOp>;
-using AbsFOpConversion = UnaryFloatOpConversion<forth::AbsFOp, math::AbsFOp>;
-using NegFOpConversion = UnaryFloatOpConversion<forth::NegFOp, arith::NegFOp>;
-
-/// Base template for binary comparison operations.
-/// Pops two values, compares, pushes -1 (true) or 0 (false): (a b -- flag)
-/// When IsFloat=true, bitcasts i64->f64 before comparing.
-template <typename ForthOp, typename CmpOp, auto Predicate,
-          bool IsFloat = false>
-struct BinaryCmpOpConversion : public StackEffectConversion<ForthOp> {
-  using Base = StackEffectConversion<ForthOp>;
-  using Base::Base;
-  using typename Base::OneToNOpAdaptor;
-
-  FailureOr<Value>
-  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-
-    // Load top two values (b at SP, a at SP-1)
-    Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value a = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
-
-    Value cmp;
-    if constexpr (IsFloat) {
-      auto f64Type = rewriter.getF64Type();
-      Value aF = rewriter.create<arith::BitcastOp>(loc, f64Type, a);
-      Value bF = rewriter.create<arith::BitcastOp>(loc, f64Type, b);
-      cmp = rewriter.create<CmpOp>(loc, Predicate, aF, bF);
-    } else {
-      cmp = rewriter.create<CmpOp>(loc, Predicate, a, b);
-    }
-
-    // Extend i1 to i64: true = -1 (all bits set), false = 0
-    Value result =
-        rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), cmp);
-
-    // Store result at SP-1
-    rewriter.create<memref::StoreOp>(loc, result, memref, spMinus1);
-
-    // New SP is SP-1 (net: two pops, one push)
-    return spMinus1;
-  }
-};
-
-// Integer comparisons
-using EqIOpConversion = BinaryCmpOpConversion<forth::EqIOp, arith::CmpIOp,
-                                              arith::CmpIPredicate::eq>;
-using LtIOpConversion = BinaryCmpOpConversion<forth::LtIOp, arith::CmpIOp,
-                                              arith::CmpIPredicate::slt>;
-using GtIOpConversion = BinaryCmpOpConversion<forth::GtIOp, arith::CmpIOp,
-                                              arith::CmpIPredicate::sgt>;
-using NeIOpConversion = BinaryCmpOpConversion<forth::NeIOp, arith::CmpIOp,
-                                              arith::CmpIPredicate::ne>;
-using LeIOpConversion = BinaryCmpOpConversion<forth::LeIOp, arith::CmpIOp,
-                                              arith::CmpIPredicate::sle>;
-using GeIOpConversion = BinaryCmpOpConversion<forth::GeIOp, arith::CmpIOp,
-                                              arith::CmpIPredicate::sge>;
-
-// Float comparisons (ordered predicates)
-using EqFOpConversion = BinaryCmpOpConversion<forth::EqFOp, arith::CmpFOp,
-                                              arith::CmpFPredicate::OEQ, true>;
-using LtFOpConversion = BinaryCmpOpConversion<forth::LtFOp, arith::CmpFOp,
-                                              arith::CmpFPredicate::OLT, true>;
-using GtFOpConversion = BinaryCmpOpConversion<forth::GtFOp, arith::CmpFOp,
-                                              arith::CmpFPredicate::OGT, true>;
-using NeFOpConversion = BinaryCmpOpConversion<forth::NeFOp, arith::CmpFOp,
-                                              arith::CmpFPredicate::ONE, true>;
-using LeFOpConversion = BinaryCmpOpConversion<forth::LeFOp, arith::CmpFOp,
-                                              arith::CmpFPredicate::OLE, true>;
-using GeFOpConversion = BinaryCmpOpConversion<forth::GeFOp, arith::CmpFOp,
-                                              arith::CmpFPredicate::OGE, true>;
-
-/// Conversion pattern for forth.not operation (bitwise NOT).
-/// Unary: pops one value, XORs with -1 (all bits set), pushes result: (a -- ~a)
-struct NotOpConversion : public StackEffectConversion<forth::NotOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::NotOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Load top value
-    Value a = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // XOR with -1 (all bits set) to flip all bits
-    Value allOnes = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(-1));
-    Value result = rewriter.create<arith::XOrIOp>(loc, a, allOnes);
-
-    // Store result at same position (SP unchanged)
-    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
-
-    return stackPtr;
-  }
-};
-
-/// Conversion pattern for forth.zero_eq operation (0=).
-/// Unary: pops one value, pushes -1 if zero, 0 otherwise: (a -- flag)
-struct ZeroEqOpConversion : public StackEffectConversion<forth::ZeroEqOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::ZeroEqOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Load top value
-    Value a = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Compare with zero
-    Value zero = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
-    Value cmp =
-        rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a, zero);
-
-    // Extend i1 to i64: true = -1, false = 0
-    Value result =
-        rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), cmp);
-
-    // Store result at same position (SP unchanged)
-    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
-
-    return stackPtr;
-  }
-};
-
-/// Conversion pattern for forth.param_ref operation.
-/// Pushes an array parameter's byte address or a scalar parameter's value.
-struct ParamRefOpConversion : public StackEffectConversion<forth::ParamRefOp> {
-  using StackEffectConversion::StackEffectConversion;
-
-  FailureOr<Value>
-  rewriteStack(forth::ParamRefOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    Value parameter = adaptor.getOperands()[1].front();
-
-    Value valueToPush;
-    if (isa<MemRefType>(parameter.getType())) {
-      // Extract pointer as index, then cast to i64
-      Value ptrIndex = rewriter.create<memref::ExtractAlignedPointerAsIndexOp>(
-          loc, parameter);
-      valueToPush = rewriter.create<arith::IndexCastOp>(
-          loc, rewriter.getI64Type(), ptrIndex);
-    } else if (parameter.getType().isInteger(64)) {
-      // Scalar i64 param: push value directly.
-      valueToPush = parameter;
-    } else if (parameter.getType().isF64()) {
-      // Scalar f64 param: bitcast to i64 for stack storage.
-      valueToPush = rewriter.create<arith::BitcastOp>(
-          loc, rewriter.getI64Type(), parameter);
-    } else {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported param argument type for param_ref");
-    }
-
-    // Push onto stack
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, valueToPush);
-
-    return newSP;
-  }
-};
-
-/// Memory element type tag for generalized load/store templates.
 enum class MemType { I64, F64, I8, I16, I32, F16, BF16, F32 };
 
-/// Return the MLIR element type for a given MemType.
-static Type getMemElemType(MLIRContext *ctx, MemType mt) {
+static Type memElemType(MLIRContext *ctx, MemType mt) {
   switch (mt) {
   case MemType::I64:
     return IntegerType::get(ctx, 64);
@@ -737,320 +67,821 @@ static Type getMemElemType(MLIRContext *ctx, MemType mt) {
 }
 
 template <MemType MT>
-inline constexpr bool isReducedInt =
+inline constexpr bool kIsReducedInt =
     (MT == MemType::I8 || MT == MemType::I16 || MT == MemType::I32);
 
 template <MemType MT>
-inline constexpr bool isReducedFloat =
+inline constexpr bool kIsReducedFloat =
     (MT == MemType::F16 || MT == MemType::BF16 || MT == MemType::F32);
 
-/// Generalized memory load template.
-/// Pops address from stack, loads value via pointer, pushes value.
-/// MemType selects the memory element type and the widening strategy.
-/// AddressSpace selects global or workgroup memory.
-template <typename ForthOp, MemType MT = MemType::I64,
-          unsigned AddressSpace = kGlobalAddressSpace>
-struct MemoryLoadOpConversion : public StackEffectConversion<ForthOp> {
-  using Base = StackEffectConversion<ForthOp>;
-  using Base::Base;
-  using typename Base::OneToNOpAdaptor;
+static std::optional<unsigned> getKnownDepth(Operation *op) {
+  auto attr = op->getAttrOfType<IntegerAttr>(kForthKnownDepthAttr);
+  if (!attr)
+    return std::nullopt;
+  return static_cast<unsigned>(attr.getInt());
+}
+
+class ForthToMemRefTypeConverter : public TypeConverter {
+public:
+  ForthToMemRefTypeConverter() {
+    addConversion([](Type type) { return type; });
+    addConversion(
+        [&](forth::StackType type,
+            SmallVectorImpl<Type> &results) -> std::optional<LogicalResult> {
+          auto memrefType = MemRefType::get(
+              {kStackSize}, IntegerType::get(type.getContext(), 64));
+          auto indexType = IndexType::get(type.getContext());
+          results.push_back(memrefType);
+          results.push_back(indexType);
+          return success();
+        });
+  }
+};
+
+/// Depth 0 is the top cell. MemRef and SSA cursors implement the same slots.
+class StackCursor {
+public:
+  virtual ~StackCursor() = default;
+  virtual Value loadAt(Location loc, OpBuilder &builder,
+                       unsigned depthFromTop) = 0;
+  virtual void storeAt(Location loc, OpBuilder &builder, unsigned depthFromTop,
+                       Value value) = 0;
+  virtual void push(Location loc, OpBuilder &builder, Value value) = 0;
+  virtual void drop(Location loc, OpBuilder &builder, unsigned count) = 0;
+  virtual Value stackPointer() const = 0;
+};
+
+class MemRefStackCursor : public StackCursor {
+public:
+  MemRefStackCursor(Value memref, Value stackPointer)
+      : memref(memref), sp(stackPointer) {}
+
+  Value loadAt(Location loc, OpBuilder &builder,
+               unsigned depthFromTop) override {
+    return builder.create<memref::LoadOp>(loc, memref,
+                                          indexAt(loc, builder, depthFromTop));
+  }
+
+  void storeAt(Location loc, OpBuilder &builder, unsigned depthFromTop,
+               Value value) override {
+    builder.create<memref::StoreOp>(loc, value, memref,
+                                    indexAt(loc, builder, depthFromTop));
+  }
+
+  void push(Location loc, OpBuilder &builder, Value value) override {
+    Value one = builder.create<arith::ConstantIndexOp>(loc, 1);
+    sp = builder.create<arith::AddIOp>(loc, sp, one);
+    builder.create<memref::StoreOp>(loc, value, memref, sp);
+    cached.clear();
+  }
+
+  void drop(Location loc, OpBuilder &builder, unsigned count) override {
+    for (unsigned i = 0; i < count; ++i) {
+      if (cached.size() > 1 && cached[1])
+        sp = cached[1];
+      else {
+        Value one = builder.create<arith::ConstantIndexOp>(loc, 1);
+        sp = builder.create<arith::SubIOp>(loc, sp, one);
+      }
+      cached.clear();
+    }
+  }
+
+  Value stackPointer() const override { return sp; }
+
+private:
+  Value indexAt(Location loc, OpBuilder &builder, unsigned depthFromTop) {
+    if (depthFromTop == 0)
+      return sp;
+    if (cached.size() <= depthFromTop)
+      cached.resize(depthFromTop + 1);
+    if (cached[depthFromTop])
+      return cached[depthFromTop];
+    Value offset = builder.create<arith::ConstantIndexOp>(loc, depthFromTop);
+    cached[depthFromTop] = builder.create<arith::SubIOp>(loc, sp, offset);
+    return cached[depthFromTop];
+  }
+
+  Value memref;
+  Value sp;
+  SmallVector<Value, 4> cached;
+};
+
+class SSAStackCursor : public StackCursor {
+public:
+  explicit SSAStackCursor(SmallVectorImpl<Value> &cells) : cells(cells) {}
+
+  Value loadAt(Location, OpBuilder &, unsigned depthFromTop) override {
+    if (depthFromTop >= cells.size())
+      llvm_unreachable("known stack underflow");
+    return cells[cells.size() - 1 - depthFromTop];
+  }
+
+  void storeAt(Location, OpBuilder &, unsigned depthFromTop,
+               Value value) override {
+    if (depthFromTop >= cells.size())
+      llvm_unreachable("known stack underflow");
+    cells[cells.size() - 1 - depthFromTop] = value;
+  }
+
+  void push(Location, OpBuilder &, Value value) override {
+    cells.push_back(value);
+  }
+
+  void drop(Location, OpBuilder &, unsigned count) override {
+    if (count > cells.size())
+      llvm_unreachable("known stack underflow");
+    cells.truncate(cells.size() - count);
+  }
+
+  Value stackPointer() const override { return {}; }
+
+private:
+  SmallVectorImpl<Value> &cells;
+};
+
+class KnownRewrite {
+public:
+  virtual ~KnownRewrite() = default;
+  virtual bool matches(Operation *op) const = 0;
+  virtual LogicalResult applyKnown(Operation *op, StackCursor &stack,
+                                   OpBuilder &builder) const = 0;
+};
+
+template <typename ForthOp>
+struct StackEffectConversion : public OpConversionPattern<ForthOp>,
+                               public KnownRewrite {
+  using OpConversionPattern<ForthOp>::OpConversionPattern;
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+
+  bool matches(Operation *op) const final { return isa<ForthOp>(op); }
+
+  LogicalResult applyKnown(Operation *op, StackCursor &stack,
+                           OpBuilder &builder) const final {
+    return emitStack(cast<ForthOp>(op), stack, builder);
+  }
+
+  LogicalResult
+  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    if (getKnownDepth(op.getOperation()))
+      return failure();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    MemRefStackCursor stack(memref, inputStack[1]);
+    if (failed(emitStack(op, stack, rewriter)))
+      return failure();
+    rewriter.replaceOpWithMultiple(op, {{memref, stack.stackPointer()}});
+    return success();
+  }
+
+  virtual LogicalResult emitStack(ForthOp op, StackCursor &stack,
+                                  OpBuilder &builder) const = 0;
+};
+
+/// Memref-only stack words. Dynamic pick/roll and push_value never carry a
+/// known depth.
+template <typename ForthOp>
+struct MemRefStackConversion : public OpConversionPattern<ForthOp> {
+  using OpConversionPattern<ForthOp>::OpConversionPattern;
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<ForthOp>::OneToNOpAdaptor;
+
+  virtual FailureOr<Value>
+  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr, ConversionPatternRewriter &rewriter) const = 0;
+
+  LogicalResult
+  matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    if (getKnownDepth(op.getOperation()))
+      return failure();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    FailureOr<Value> newSP =
+        rewriteStack(op, adaptor, memref, inputStack[1], rewriter);
+    if (failed(newSP))
+      return failure();
+    rewriter.replaceOpWithMultiple(op, {{memref, *newSP}});
+    return success();
+  }
+};
+
+static Value i64Flag(OpBuilder &builder, Location loc, Value cmp) {
+  return builder.create<arith::ExtSIOp>(loc, builder.getI64Type(), cmp);
+}
+
+static Value bitcastF64(OpBuilder &builder, Location loc, Value cell) {
+  return builder.create<arith::BitcastOp>(loc, builder.getF64Type(), cell);
+}
+
+static Value bitcastI64(OpBuilder &builder, Location loc, Value value) {
+  return builder.create<arith::BitcastOp>(loc, builder.getI64Type(), value);
+}
+
+struct StackOpConversion : public OpConversionPattern<forth::StackOp> {
+  StackOpConversion(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<forth::StackOp>(typeConverter, context) {}
+  using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(forth::StackOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (getKnownDepth(op.getOperation()))
+      return failure();
+    auto loc = op.getLoc();
+    auto i64Type = rewriter.getI64Type();
+    auto memrefType = MemRefType::get({kStackSize}, i64Type);
+    Value stackBuffer = rewriter.create<memref::AllocaOp>(loc, memrefType);
+    Value initialSP = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    rewriter.replaceOpWithMultiple(op, {{stackBuffer, initialSP}});
+    return success();
+  }
+};
+
+struct ConstantOpConversion : public StackEffectConversion<forth::ConstantOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::ConstantOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    auto typedValue = cast<TypedAttr>(op.getValueAttr());
+    Value cell;
+    if (isa<FloatAttr>(typedValue)) {
+      Value f64Value = builder.create<arith::ConstantOp>(
+          loc, builder.getF64Type(), typedValue);
+      cell = bitcastI64(builder, loc, f64Value);
+    } else {
+      cell = builder.create<arith::ConstantOp>(loc, builder.getI64Type(),
+                                               typedValue);
+    }
+    stack.push(loc, builder, cell);
+    return success();
+  }
+};
+
+/// ( a -- a a )
+struct DupOpConversion : public StackEffectConversion<forth::DupOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::DupOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    stack.push(loc, builder, stack.loadAt(loc, builder, 0));
+    return success();
+  }
+};
+
+/// ( a -- )
+struct DropOpConversion : public StackEffectConversion<forth::DropOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::DropOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    stack.drop(op.getLoc(), builder, 1);
+    return success();
+  }
+};
+
+/// ( a b -- b a )
+struct SwapOpConversion : public StackEffectConversion<forth::SwapOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::SwapOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value top = stack.loadAt(loc, builder, 0);
+    Value second = stack.loadAt(loc, builder, 1);
+    stack.storeAt(loc, builder, 0, second);
+    stack.storeAt(loc, builder, 1, top);
+    return success();
+  }
+};
+
+/// ( a b -- a b a )
+struct OverOpConversion : public StackEffectConversion<forth::OverOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::OverOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    stack.push(loc, builder, stack.loadAt(loc, builder, 1));
+    return success();
+  }
+};
+
+/// ( a b c -- b c a )
+struct RotOpConversion : public StackEffectConversion<forth::RotOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::RotOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value c = stack.loadAt(loc, builder, 0);
+    Value b = stack.loadAt(loc, builder, 1);
+    Value a = stack.loadAt(loc, builder, 2);
+    stack.storeAt(loc, builder, 2, b);
+    stack.storeAt(loc, builder, 1, c);
+    stack.storeAt(loc, builder, 0, a);
+    return success();
+  }
+};
+
+/// ( a b -- b )
+struct NipOpConversion : public StackEffectConversion<forth::NipOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::NipOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value top = stack.loadAt(loc, builder, 0);
+    stack.storeAt(loc, builder, 1, top);
+    stack.drop(loc, builder, 1);
+    return success();
+  }
+};
+
+/// ( a b -- b a b )
+struct TuckOpConversion : public StackEffectConversion<forth::TuckOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::TuckOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value b = stack.loadAt(loc, builder, 0);
+    Value a = stack.loadAt(loc, builder, 1);
+    stack.storeAt(loc, builder, 1, b);
+    stack.storeAt(loc, builder, 0, a);
+    stack.push(loc, builder, b);
+    return success();
+  }
+};
+
+struct PickOpConversion : public MemRefStackConversion<forth::PickOp> {
+  using MemRefStackConversion::MemRefStackConversion;
 
   FailureOr<Value>
-  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+  rewriteStack(forth::PickOp op, OneToNOpAdaptor adaptor, Value memref,
                Value stackPtr,
                ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-
-    auto ptrType =
-        LLVM::LLVMPointerType::get(rewriter.getContext(), AddressSpace);
-
-    // Load address from stack
-    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Load value from memory via pointer
-    Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
-
-    Type elemType = getMemElemType(rewriter.getContext(), MT);
-    Value loaded = rewriter.create<LLVM::LoadOp>(loc, elemType, ptr);
-
-    Value valueToPush;
-    if constexpr (MT == MemType::I64) {
-      valueToPush = loaded;
-    } else if constexpr (MT == MemType::F64) {
-      valueToPush =
-          rewriter.create<arith::BitcastOp>(loc, rewriter.getI64Type(), loaded);
-    } else if constexpr (isReducedInt<MT>) {
-      valueToPush =
-          rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), loaded);
-    } else if constexpr (isReducedFloat<MT>) {
-      Value extended =
-          rewriter.create<arith::ExtFOp>(loc, rewriter.getF64Type(), loaded);
-      valueToPush = rewriter.create<arith::BitcastOp>(
-          loc, rewriter.getI64Type(), extended);
-    }
-
-    // Store loaded value back at same position (replaces address)
-    rewriter.create<memref::StoreOp>(loc, valueToPush, memref, stackPtr);
-
+    Value nI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value spAfterPop = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    Value nIdx =
+        rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), nI64);
+    Value targetAddr = rewriter.create<arith::SubIOp>(loc, spAfterPop, nIdx);
+    Value pickedValue =
+        rewriter.create<memref::LoadOp>(loc, memref, targetAddr);
+    rewriter.create<memref::StoreOp>(loc, pickedValue, memref, stackPtr);
     return stackPtr;
   }
 };
 
-// Memory load instantiations — full-width
-using LoadIOpConversion = MemoryLoadOpConversion<forth::LoadIOp>;
-using LoadFOpConversion = MemoryLoadOpConversion<forth::LoadFOp, MemType::F64>;
-using SharedLoadIOpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadIOp, MemType::I64,
-                           kWorkgroupAddressSpace>;
-using SharedLoadFOpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadFOp, MemType::F64,
-                           kWorkgroupAddressSpace>;
-
-// Memory load instantiations — reduced-width
-using LoadI8OpConversion = MemoryLoadOpConversion<forth::LoadI8Op, MemType::I8>;
-using SharedLoadI8OpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadI8Op, MemType::I8,
-                           kWorkgroupAddressSpace>;
-using LoadI16OpConversion =
-    MemoryLoadOpConversion<forth::LoadI16Op, MemType::I16>;
-using SharedLoadI16OpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadI16Op, MemType::I16,
-                           kWorkgroupAddressSpace>;
-using LoadI32OpConversion =
-    MemoryLoadOpConversion<forth::LoadI32Op, MemType::I32>;
-using SharedLoadI32OpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadI32Op, MemType::I32,
-                           kWorkgroupAddressSpace>;
-using LoadF16OpConversion =
-    MemoryLoadOpConversion<forth::LoadF16Op, MemType::F16>;
-using SharedLoadF16OpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadF16Op, MemType::F16,
-                           kWorkgroupAddressSpace>;
-using LoadBF16OpConversion =
-    MemoryLoadOpConversion<forth::LoadBF16Op, MemType::BF16>;
-using SharedLoadBF16OpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadBF16Op, MemType::BF16,
-                           kWorkgroupAddressSpace>;
-using LoadF32OpConversion =
-    MemoryLoadOpConversion<forth::LoadF32Op, MemType::F32>;
-using SharedLoadF32OpConversion =
-    MemoryLoadOpConversion<forth::SharedLoadF32Op, MemType::F32,
-                           kWorkgroupAddressSpace>;
-
-/// Generalized memory store template.
-/// Pops address and value from stack, stores value to memory.
-/// MemType selects the memory element type and the narrowing strategy.
-template <typename ForthOp, MemType MT = MemType::I64,
-          unsigned AddressSpace = kGlobalAddressSpace>
-struct MemoryStoreOpConversion : public StackEffectConversion<ForthOp> {
-  using Base = StackEffectConversion<ForthOp>;
-  using Base::Base;
-  using typename Base::OneToNOpAdaptor;
+struct RollOpConversion : public MemRefStackConversion<forth::RollOp> {
+  using MemRefStackConversion::MemRefStackConversion;
 
   FailureOr<Value>
-  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
+  rewriteStack(forth::RollOp op, OneToNOpAdaptor adaptor, Value memref,
                Value stackPtr,
                ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-
-    auto ptrType =
-        LLVM::LLVMPointerType::get(rewriter.getContext(), AddressSpace);
-
-    // Pop address from stack
-    Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Pop value from stack
+    auto indexType = rewriter.getIndexType();
+    Value nI64 = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value value = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
+    Value spAfterPop = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    Value nIdx = rewriter.create<arith::IndexCastOp>(loc, indexType, nI64);
+    Value rolledAddr = rewriter.create<arith::SubIOp>(loc, spAfterPop, nIdx);
+    Value rolledValue =
+        rewriter.create<memref::LoadOp>(loc, memref, rolledAddr);
 
-    // Store value to memory via pointer
-    Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
+    Block *currentBlock = rewriter.getInsertionBlock();
+    Block *continueBlock = rewriter.splitBlock(currentBlock, op->getIterator());
+    Block *headerBlock = rewriter.createBlock(continueBlock);
+    headerBlock->addArgument(indexType, loc);
+    Block *bodyBlock = rewriter.createBlock(continueBlock);
+    bodyBlock->addArgument(indexType, loc);
 
-    if constexpr (MT == MemType::I64) {
-      rewriter.create<LLVM::StoreOp>(loc, value, ptr);
-    } else if constexpr (MT == MemType::F64) {
-      Value f64Value =
-          rewriter.create<arith::BitcastOp>(loc, rewriter.getF64Type(), value);
-      rewriter.create<LLVM::StoreOp>(loc, f64Value, ptr);
-    } else if constexpr (isReducedInt<MT>) {
-      Type elemType = getMemElemType(rewriter.getContext(), MT);
-      Value truncated = rewriter.create<arith::TruncIOp>(loc, elemType, value);
-      rewriter.create<LLVM::StoreOp>(loc, truncated, ptr);
-    } else if constexpr (isReducedFloat<MT>) {
-      Type elemType = getMemElemType(rewriter.getContext(), MT);
-      Value f64Value =
-          rewriter.create<arith::BitcastOp>(loc, rewriter.getF64Type(), value);
-      Value truncated =
-          rewriter.create<arith::TruncFOp>(loc, elemType, f64Value);
-      rewriter.create<LLVM::StoreOp>(loc, truncated, ptr);
-    }
+    rewriter.setInsertionPointToEnd(currentBlock);
+    rewriter.create<cf::BranchOp>(loc, headerBlock, ValueRange{rolledAddr});
 
-    // New stack pointer is SP-2 (popped both address and value)
-    Value spMinus2 = rewriter.create<arith::SubIOp>(loc, spMinus1, one);
-    return spMinus2;
+    rewriter.setInsertionPointToStart(headerBlock);
+    Value iv = headerBlock->getArgument(0);
+    Value cond = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
+                                                iv, spAfterPop);
+    rewriter.create<cf::CondBranchOp>(loc, cond, bodyBlock, ValueRange{iv},
+                                      continueBlock, ValueRange{});
+
+    rewriter.setInsertionPointToStart(bodyBlock);
+    Value biv = bodyBlock->getArgument(0);
+    Value next = rewriter.create<arith::AddIOp>(loc, biv, one);
+    Value shiftedVal = rewriter.create<memref::LoadOp>(loc, memref, next);
+    rewriter.create<memref::StoreOp>(loc, shiftedVal, memref, biv);
+    rewriter.create<cf::BranchOp>(loc, headerBlock, ValueRange{next});
+
+    rewriter.setInsertionPoint(op);
+    rewriter.create<memref::StoreOp>(loc, rolledValue, memref, spAfterPop);
+    return spAfterPop;
   }
 };
 
-// Memory store instantiations — full-width
-using StoreIOpConversion = MemoryStoreOpConversion<forth::StoreIOp>;
+template <typename ForthOp, typename ArithOp, bool IsFloat>
+struct BinaryArithOpConversion : public StackEffectConversion<ForthOp> {
+  using StackEffectConversion<ForthOp>::StackEffectConversion;
+
+  LogicalResult emitStack(ForthOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value rhs = stack.loadAt(loc, builder, 0);
+    Value lhs = stack.loadAt(loc, builder, 1);
+    Value result;
+    if constexpr (IsFloat) {
+      Value lhsF = bitcastF64(builder, loc, lhs);
+      Value rhsF = bitcastF64(builder, loc, rhs);
+      Value resF = builder.create<ArithOp>(loc, lhsF, rhsF);
+      result = bitcastI64(builder, loc, resF);
+    } else {
+      result = builder.create<ArithOp>(loc, lhs, rhs);
+    }
+    stack.storeAt(loc, builder, 1, result);
+    stack.drop(loc, builder, 1);
+    return success();
+  }
+};
+
+using AddIOpConversion =
+    BinaryArithOpConversion<forth::AddIOp, arith::AddIOp, false>;
+using SubIOpConversion =
+    BinaryArithOpConversion<forth::SubIOp, arith::SubIOp, false>;
+using MulIOpConversion =
+    BinaryArithOpConversion<forth::MulIOp, arith::MulIOp, false>;
+using DivIOpConversion =
+    BinaryArithOpConversion<forth::DivIOp, arith::DivSIOp, false>;
+using ModOpConversion =
+    BinaryArithOpConversion<forth::ModOp, arith::RemSIOp, false>;
+using AndOpConversion =
+    BinaryArithOpConversion<forth::AndOp, arith::AndIOp, false>;
+using OrOpConversion =
+    BinaryArithOpConversion<forth::OrOp, arith::OrIOp, false>;
+using XorOpConversion =
+    BinaryArithOpConversion<forth::XorOp, arith::XOrIOp, false>;
+using LshiftOpConversion =
+    BinaryArithOpConversion<forth::LshiftOp, arith::ShLIOp, false>;
+using RshiftOpConversion =
+    BinaryArithOpConversion<forth::RshiftOp, arith::ShRUIOp, false>;
+using AddFOpConversion =
+    BinaryArithOpConversion<forth::AddFOp, arith::AddFOp, true>;
+using SubFOpConversion =
+    BinaryArithOpConversion<forth::SubFOp, arith::SubFOp, true>;
+using MulFOpConversion =
+    BinaryArithOpConversion<forth::MulFOp, arith::MulFOp, true>;
+using DivFOpConversion =
+    BinaryArithOpConversion<forth::DivFOp, arith::DivFOp, true>;
+using MaxFOpConversion =
+    BinaryArithOpConversion<forth::MaxFOp, arith::MaximumFOp, true>;
+using MinFOpConversion =
+    BinaryArithOpConversion<forth::MinFOp, arith::MinimumFOp, true>;
+
+template <typename ForthOp, typename MathOp>
+struct UnaryFloatOpConversion : public StackEffectConversion<ForthOp> {
+  using StackEffectConversion<ForthOp>::StackEffectConversion;
+
+  LogicalResult emitStack(ForthOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value input = bitcastF64(builder, loc, stack.loadAt(loc, builder, 0));
+    Value result = builder.create<MathOp>(loc, input);
+    stack.storeAt(loc, builder, 0, bitcastI64(builder, loc, result));
+    return success();
+  }
+};
+
+using ExpFOpConversion = UnaryFloatOpConversion<forth::ExpFOp, math::ExpOp>;
+using SqrtFOpConversion = UnaryFloatOpConversion<forth::SqrtFOp, math::SqrtOp>;
+using LogFOpConversion = UnaryFloatOpConversion<forth::LogFOp, math::LogOp>;
+using AbsFOpConversion = UnaryFloatOpConversion<forth::AbsFOp, math::AbsFOp>;
+using NegFOpConversion = UnaryFloatOpConversion<forth::NegFOp, arith::NegFOp>;
+
+template <typename ForthOp, typename CmpOpTy, auto Predicate, bool IsFloat>
+struct BinaryCmpOpConversion : public StackEffectConversion<ForthOp> {
+  using StackEffectConversion<ForthOp>::StackEffectConversion;
+
+  LogicalResult emitStack(ForthOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value rhs = stack.loadAt(loc, builder, 0);
+    Value lhs = stack.loadAt(loc, builder, 1);
+    if constexpr (IsFloat) {
+      lhs = bitcastF64(builder, loc, lhs);
+      rhs = bitcastF64(builder, loc, rhs);
+    }
+    Value cmp = builder.create<CmpOpTy>(loc, Predicate, lhs, rhs);
+    stack.storeAt(loc, builder, 1, i64Flag(builder, loc, cmp));
+    stack.drop(loc, builder, 1);
+    return success();
+  }
+};
+
+using EqIOpConversion = BinaryCmpOpConversion<forth::EqIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::eq, false>;
+using LtIOpConversion = BinaryCmpOpConversion<forth::LtIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::slt, false>;
+using GtIOpConversion = BinaryCmpOpConversion<forth::GtIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::sgt, false>;
+using NeIOpConversion = BinaryCmpOpConversion<forth::NeIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::ne, false>;
+using LeIOpConversion = BinaryCmpOpConversion<forth::LeIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::sle, false>;
+using GeIOpConversion = BinaryCmpOpConversion<forth::GeIOp, arith::CmpIOp,
+                                              arith::CmpIPredicate::sge, false>;
+using EqFOpConversion = BinaryCmpOpConversion<forth::EqFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OEQ, true>;
+using LtFOpConversion = BinaryCmpOpConversion<forth::LtFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OLT, true>;
+using GtFOpConversion = BinaryCmpOpConversion<forth::GtFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OGT, true>;
+using NeFOpConversion = BinaryCmpOpConversion<forth::NeFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::ONE, true>;
+using LeFOpConversion = BinaryCmpOpConversion<forth::LeFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OLE, true>;
+using GeFOpConversion = BinaryCmpOpConversion<forth::GeFOp, arith::CmpFOp,
+                                              arith::CmpFPredicate::OGE, true>;
+
+struct NotOpConversion : public StackEffectConversion<forth::NotOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::NotOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value allOnes = builder.create<arith::ConstantOp>(
+        loc, builder.getI64Type(), builder.getI64IntegerAttr(-1));
+    Value result = builder.create<arith::XOrIOp>(
+        loc, stack.loadAt(loc, builder, 0), allOnes);
+    stack.storeAt(loc, builder, 0, result);
+    return success();
+  }
+};
+
+struct ZeroEqOpConversion : public StackEffectConversion<forth::ZeroEqOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::ZeroEqOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value zero = builder.create<arith::ConstantOp>(
+        loc, builder.getI64Type(), builder.getI64IntegerAttr(0));
+    Value cmp = builder.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, stack.loadAt(loc, builder, 0), zero);
+    stack.storeAt(loc, builder, 0, i64Flag(builder, loc, cmp));
+    return success();
+  }
+};
+
+struct ParamRefOpConversion : public StackEffectConversion<forth::ParamRefOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  LogicalResult emitStack(forth::ParamRefOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value parameter = op.getParameter();
+    if (isa<MemRefType>(parameter.getType())) {
+      Value ptrIndex = builder.create<memref::ExtractAlignedPointerAsIndexOp>(
+          loc, parameter);
+      stack.push(loc, builder,
+                 builder.create<arith::IndexCastOp>(loc, builder.getI64Type(),
+                                                    ptrIndex));
+      return success();
+    }
+    if (parameter.getType().isInteger(64)) {
+      stack.push(loc, builder, parameter);
+      return success();
+    }
+    if (parameter.getType().isF64()) {
+      stack.push(loc, builder, bitcastI64(builder, loc, parameter));
+      return success();
+    }
+    return failure();
+  }
+};
+
+template <typename ForthOp, MemType MT, unsigned AddressSpace>
+struct MemoryLoadOpConversion : public StackEffectConversion<ForthOp> {
+  using StackEffectConversion<ForthOp>::StackEffectConversion;
+
+  LogicalResult emitStack(ForthOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value addr = stack.loadAt(loc, builder, 0);
+    auto ptrType = LLVM::LLVMPointerType::get(op.getContext(), AddressSpace);
+    Value ptr = builder.create<LLVM::IntToPtrOp>(loc, ptrType, addr);
+    Type elemType = memElemType(op.getContext(), MT);
+    Value loaded = builder.create<LLVM::LoadOp>(loc, elemType, ptr);
+    Value cell;
+    if constexpr (MT == MemType::I64)
+      cell = loaded;
+    else if constexpr (MT == MemType::F64)
+      cell = bitcastI64(builder, loc, loaded);
+    else if constexpr (kIsReducedInt<MT>)
+      cell = builder.create<arith::ExtSIOp>(loc, builder.getI64Type(), loaded);
+    else if constexpr (kIsReducedFloat<MT>) {
+      Value extended =
+          builder.create<arith::ExtFOp>(loc, builder.getF64Type(), loaded);
+      cell = bitcastI64(builder, loc, extended);
+    } else
+      llvm_unreachable("unhandled memory type");
+    stack.storeAt(loc, builder, 0, cell);
+    return success();
+  }
+};
+
+template <typename ForthOp, MemType MT, unsigned AddressSpace>
+struct MemoryStoreOpConversion : public StackEffectConversion<ForthOp> {
+  using StackEffectConversion<ForthOp>::StackEffectConversion;
+
+  LogicalResult emitStack(ForthOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value addr = stack.loadAt(loc, builder, 0);
+    Value value = stack.loadAt(loc, builder, 1);
+    auto ptrType = LLVM::LLVMPointerType::get(op.getContext(), AddressSpace);
+    Value ptr = builder.create<LLVM::IntToPtrOp>(loc, ptrType, addr);
+    if constexpr (MT == MemType::I64) {
+      builder.create<LLVM::StoreOp>(loc, value, ptr);
+    } else if constexpr (MT == MemType::F64) {
+      builder.create<LLVM::StoreOp>(loc, bitcastF64(builder, loc, value), ptr);
+    } else if constexpr (kIsReducedInt<MT>) {
+      Type elemType = memElemType(op.getContext(), MT);
+      Value truncated = builder.create<arith::TruncIOp>(loc, elemType, value);
+      builder.create<LLVM::StoreOp>(loc, truncated, ptr);
+    } else if constexpr (kIsReducedFloat<MT>) {
+      Type elemType = memElemType(op.getContext(), MT);
+      Value f64Value = bitcastF64(builder, loc, value);
+      Value truncated =
+          builder.create<arith::TruncFOp>(loc, elemType, f64Value);
+      builder.create<LLVM::StoreOp>(loc, truncated, ptr);
+    }
+    stack.drop(loc, builder, 2);
+    return success();
+  }
+};
+
+using LoadIOpConversion =
+    MemoryLoadOpConversion<forth::LoadIOp, MemType::I64, kGlobalMemorySpace>;
+using StoreIOpConversion =
+    MemoryStoreOpConversion<forth::StoreIOp, MemType::I64, kGlobalMemorySpace>;
+using LoadFOpConversion =
+    MemoryLoadOpConversion<forth::LoadFOp, MemType::F64, kGlobalMemorySpace>;
 using StoreFOpConversion =
-    MemoryStoreOpConversion<forth::StoreFOp, MemType::F64>;
+    MemoryStoreOpConversion<forth::StoreFOp, MemType::F64, kGlobalMemorySpace>;
+using SharedLoadIOpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadIOp, MemType::I64,
+                           kWorkgroupMemorySpace>;
 using SharedStoreIOpConversion =
     MemoryStoreOpConversion<forth::SharedStoreIOp, MemType::I64,
-                            kWorkgroupAddressSpace>;
+                            kWorkgroupMemorySpace>;
+using SharedLoadFOpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadFOp, MemType::F64,
+                           kWorkgroupMemorySpace>;
 using SharedStoreFOpConversion =
     MemoryStoreOpConversion<forth::SharedStoreFOp, MemType::F64,
-                            kWorkgroupAddressSpace>;
-
-// Memory store instantiations — reduced-width
+                            kWorkgroupMemorySpace>;
+using LoadI8OpConversion =
+    MemoryLoadOpConversion<forth::LoadI8Op, MemType::I8, kGlobalMemorySpace>;
 using StoreI8OpConversion =
-    MemoryStoreOpConversion<forth::StoreI8Op, MemType::I8>;
+    MemoryStoreOpConversion<forth::StoreI8Op, MemType::I8, kGlobalMemorySpace>;
+using SharedLoadI8OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadI8Op, MemType::I8,
+                           kWorkgroupMemorySpace>;
 using SharedStoreI8OpConversion =
     MemoryStoreOpConversion<forth::SharedStoreI8Op, MemType::I8,
-                            kWorkgroupAddressSpace>;
+                            kWorkgroupMemorySpace>;
+using LoadI16OpConversion =
+    MemoryLoadOpConversion<forth::LoadI16Op, MemType::I16, kGlobalMemorySpace>;
 using StoreI16OpConversion =
-    MemoryStoreOpConversion<forth::StoreI16Op, MemType::I16>;
+    MemoryStoreOpConversion<forth::StoreI16Op, MemType::I16,
+                            kGlobalMemorySpace>;
+using SharedLoadI16OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadI16Op, MemType::I16,
+                           kWorkgroupMemorySpace>;
 using SharedStoreI16OpConversion =
     MemoryStoreOpConversion<forth::SharedStoreI16Op, MemType::I16,
-                            kWorkgroupAddressSpace>;
+                            kWorkgroupMemorySpace>;
+using LoadI32OpConversion =
+    MemoryLoadOpConversion<forth::LoadI32Op, MemType::I32, kGlobalMemorySpace>;
 using StoreI32OpConversion =
-    MemoryStoreOpConversion<forth::StoreI32Op, MemType::I32>;
+    MemoryStoreOpConversion<forth::StoreI32Op, MemType::I32,
+                            kGlobalMemorySpace>;
+using SharedLoadI32OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadI32Op, MemType::I32,
+                           kWorkgroupMemorySpace>;
 using SharedStoreI32OpConversion =
     MemoryStoreOpConversion<forth::SharedStoreI32Op, MemType::I32,
-                            kWorkgroupAddressSpace>;
+                            kWorkgroupMemorySpace>;
+using LoadF16OpConversion =
+    MemoryLoadOpConversion<forth::LoadF16Op, MemType::F16, kGlobalMemorySpace>;
 using StoreF16OpConversion =
-    MemoryStoreOpConversion<forth::StoreF16Op, MemType::F16>;
+    MemoryStoreOpConversion<forth::StoreF16Op, MemType::F16,
+                            kGlobalMemorySpace>;
+using SharedLoadF16OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadF16Op, MemType::F16,
+                           kWorkgroupMemorySpace>;
 using SharedStoreF16OpConversion =
     MemoryStoreOpConversion<forth::SharedStoreF16Op, MemType::F16,
-                            kWorkgroupAddressSpace>;
+                            kWorkgroupMemorySpace>;
+using LoadBF16OpConversion =
+    MemoryLoadOpConversion<forth::LoadBF16Op, MemType::BF16,
+                           kGlobalMemorySpace>;
 using StoreBF16OpConversion =
-    MemoryStoreOpConversion<forth::StoreBF16Op, MemType::BF16>;
+    MemoryStoreOpConversion<forth::StoreBF16Op, MemType::BF16,
+                            kGlobalMemorySpace>;
+using SharedLoadBF16OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadBF16Op, MemType::BF16,
+                           kWorkgroupMemorySpace>;
 using SharedStoreBF16OpConversion =
     MemoryStoreOpConversion<forth::SharedStoreBF16Op, MemType::BF16,
-                            kWorkgroupAddressSpace>;
+                            kWorkgroupMemorySpace>;
+using LoadF32OpConversion =
+    MemoryLoadOpConversion<forth::LoadF32Op, MemType::F32, kGlobalMemorySpace>;
 using StoreF32OpConversion =
-    MemoryStoreOpConversion<forth::StoreF32Op, MemType::F32>;
+    MemoryStoreOpConversion<forth::StoreF32Op, MemType::F32,
+                            kGlobalMemorySpace>;
+using SharedLoadF32OpConversion =
+    MemoryLoadOpConversion<forth::SharedLoadF32Op, MemType::F32,
+                           kWorkgroupMemorySpace>;
 using SharedStoreF32OpConversion =
     MemoryStoreOpConversion<forth::SharedStoreF32Op, MemType::F32,
-                            kWorkgroupAddressSpace>;
+                            kWorkgroupMemorySpace>;
 
-/// Conversion pattern for forth.itof (S>F).
-/// Pops i64, converts to f64 via sitofp, bitcasts back to i64, pushes.
 struct IToFOpConversion : public StackEffectConversion<forth::IToFOp> {
   using StackEffectConversion::StackEffectConversion;
 
-  FailureOr<Value>
-  rewriteStack(forth::IToFOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Load i64 value from top of stack
-    Value i64Value = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Convert i64 -> f64 via SIToFPOp
-    Value f64Value =
-        rewriter.create<arith::SIToFPOp>(loc, rewriter.getF64Type(), i64Value);
-
-    // Bitcast f64 -> i64 for stack storage
-    Value result =
-        rewriter.create<arith::BitcastOp>(loc, rewriter.getI64Type(), f64Value);
-
-    // Store result (SP unchanged — unary op)
-    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
-
-    return stackPtr;
+  LogicalResult emitStack(forth::IToFOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value f64Value = builder.create<arith::SIToFPOp>(
+        loc, builder.getF64Type(), stack.loadAt(loc, builder, 0));
+    stack.storeAt(loc, builder, 0, bitcastI64(builder, loc, f64Value));
+    return success();
   }
 };
 
-/// Conversion pattern for forth.ftoi (F>S).
-/// Pops i64 (f64 bits), bitcasts to f64, converts to i64 via fptosi, pushes.
 struct FToIOpConversion : public StackEffectConversion<forth::FToIOp> {
   using StackEffectConversion::StackEffectConversion;
 
-  FailureOr<Value>
-  rewriteStack(forth::FToIOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Load i64 (f64 bit pattern) from top of stack
-    Value i64Bits = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Bitcast i64 -> f64
-    Value f64Value =
-        rewriter.create<arith::BitcastOp>(loc, rewriter.getF64Type(), i64Bits);
-
-    // Convert f64 -> i64 via FPToSIOp
-    Value result =
-        rewriter.create<arith::FPToSIOp>(loc, rewriter.getI64Type(), f64Value);
-
-    // Store result (SP unchanged — unary op)
-    rewriter.create<memref::StoreOp>(loc, result, memref, stackPtr);
-
-    return stackPtr;
+  LogicalResult emitStack(forth::FToIOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value f64Value = bitcastF64(builder, loc, stack.loadAt(loc, builder, 0));
+    Value i64Value =
+        builder.create<arith::FPToSIOp>(loc, builder.getI64Type(), f64Value);
+    stack.storeAt(loc, builder, 0, i64Value);
+    return success();
   }
 };
 
-/// Template for converting GPU indexing ops to intrinsic ops.
-/// Creates an intrinsic op with the specified name and pushes the value onto
-/// the stack.
 template <typename ForthOp>
 struct IntrinsicOpConversion : public StackEffectConversion<ForthOp> {
-  using Base = StackEffectConversion<ForthOp>;
-  using typename Base::OneToNOpAdaptor;
+  using StackEffectConversion<ForthOp>::StackEffectConversion;
 
   IntrinsicOpConversion(const TypeConverter &typeConverter,
                         MLIRContext *context, StringRef intrinsicName)
-      : Base(typeConverter, context), intrinsicName(intrinsicName) {}
+      : StackEffectConversion<ForthOp>(typeConverter, context),
+        intrinsicName(intrinsicName) {}
 
-  FailureOr<Value>
-  rewriteStack(ForthOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Create intrinsic op and push onto stack
-    Value intrinsicValue = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr(intrinsicName));
-    Value intrinsicI64 = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getI64Type(), intrinsicValue);
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, intrinsicI64);
-
-    return newSP;
+  LogicalResult emitStack(ForthOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value intrinsic = builder.create<forth::IntrinsicOp>(
+        loc, builder.getIndexType(), builder.getStringAttr(intrinsicName));
+    stack.push(loc, builder,
+               builder.create<arith::IndexCastOp>(loc, builder.getI64Type(),
+                                                  intrinsic));
+    return success();
   }
 
-  std::string intrinsicName;
+  StringRef intrinsicName;
 };
 
-/// Conversion pattern for forth.global_id operation.
-/// Computes global_id = bid-x * bdim-x + tid-x using intrinsics.
 struct GlobalIdOpConversion : public StackEffectConversion<forth::GlobalIdOp> {
   using StackEffectConversion::StackEffectConversion;
 
-  FailureOr<Value>
-  rewriteStack(forth::GlobalIdOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // Create intrinsic ops for each component
-    Value bidX = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr("bid-x"));
-    Value bdimX = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr("bdim-x"));
-    Value tidX = rewriter.create<forth::IntrinsicOp>(
-        loc, rewriter.getIndexType(), rewriter.getStringAttr("tid-x"));
-
-    // Compute: bid-x * bdim-x + tid-x
-    Value product = rewriter.create<arith::MulIOp>(loc, bidX, bdimX);
-    Value globalId = rewriter.create<arith::AddIOp>(loc, product, tidX);
-    Value globalIdI64 = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getI64Type(), globalId);
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, globalIdI64);
-
-    return newSP;
+  LogicalResult emitStack(forth::GlobalIdOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    auto index = [&](StringRef name) {
+      return builder.create<forth::IntrinsicOp>(loc, builder.getIndexType(),
+                                                builder.getStringAttr(name));
+    };
+    Value bidX = index("bid-x");
+    Value bdimX = index("bdim-x");
+    Value tidX = index("tid-x");
+    Value product = builder.create<arith::MulIOp>(loc, bidX, bdimX);
+    Value globalId = builder.create<arith::AddIOp>(loc, product, tidX);
+    stack.push(loc, builder,
+               builder.create<arith::IndexCastOp>(loc, builder.getI64Type(),
+                                                  globalId));
+    return success();
   }
 };
 
@@ -1071,117 +902,102 @@ static gpu::ShuffleMode toGpuShuffleMode(forth::ShuffleMode mode) {
 struct ShuffleOpConversion : public StackEffectConversion<forth::ShuffleOp> {
   using StackEffectConversion::StackEffectConversion;
 
-  FailureOr<Value>
-  rewriteStack(forth::ShuffleOp op, OneToNOpAdaptor adaptor, Value memref,
-               Value stackPtr,
-               ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-    Value x = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
-
+  LogicalResult emitStack(forth::ShuffleOp op, StackCursor &stack,
+                          OpBuilder &builder) const override {
+    Location loc = op.getLoc();
+    Value offsetCell = stack.loadAt(loc, builder, 0);
+    Value value = stack.loadAt(loc, builder, 1);
     Value offset32 =
-        rewriter.create<arith::TruncIOp>(loc, rewriter.getI32Type(), b);
-    Value laneMask = rewriter.create<arith::ConstantIntOp>(
-        loc, forth::kWarpSize - 1, rewriter.getI32Type());
-    Value offset = rewriter.create<arith::AndIOp>(loc, offset32, laneMask);
-    Value width = rewriter.create<arith::ConstantIntOp>(loc, forth::kWarpSize,
-                                                        rewriter.getI32Type());
-    Value y = rewriter
-                  .create<gpu::ShuffleOp>(loc, x, offset, width,
-                                          toGpuShuffleMode(op.getMode()))
-                  .getShuffleResult();
-
-    rewriter.create<memref::StoreOp>(loc, y, memref, spMinus1);
-    return spMinus1;
-  }
-};
-
-/// Conversion pattern for forth.pop_flag operation.
-/// Pops top of stack, compares != 0, returns (memref, newSP, i1 flag).
-struct PopFlagOpConversion : public OpConversionPattern<forth::PopFlagOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(forth::PopFlagOp op, OneToNOpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    ValueRange inputStack = adaptor.getOperands()[0];
-    Value memref = inputStack[0];
-    Value stackPtr = inputStack[1];
-
-    // Load top value
-    Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Decrement SP
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSP = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-
-    // Compare != 0
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
-    Value flag = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne,
-                                                topValue, zero);
-
-    // Result 0: output_stack -> {memref, newSP}
-    // Result 1: flag -> i1 (passes through unchanged)
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}, {flag}});
+        builder.create<arith::TruncIOp>(loc, builder.getI32Type(), offsetCell);
+    Value laneMask = builder.create<arith::ConstantIntOp>(
+        loc, forth::kWarpSize - 1, builder.getI32Type());
+    Value offset = builder.create<arith::AndIOp>(loc, offset32, laneMask);
+    Value width = builder.create<arith::ConstantIntOp>(loc, forth::kWarpSize,
+                                                       builder.getI32Type());
+    Value shuffled = builder
+                         .create<gpu::ShuffleOp>(loc, value, offset, width,
+                                                 toGpuShuffleMode(op.getMode()))
+                         .getShuffleResult();
+    stack.storeAt(loc, builder, 1, shuffled);
+    stack.drop(loc, builder, 1);
     return success();
   }
 };
 
-/// Conversion pattern for forth.pop operation.
-/// Pops top of stack, returns (memref, newSP, i64 value).
+static Value popFlag(Operation *op, StackCursor &stack, OpBuilder &builder) {
+  Location loc = op->getLoc();
+  Value top = stack.loadAt(loc, builder, 0);
+  stack.drop(loc, builder, 1);
+  Value zero = builder.create<arith::ConstantOp>(loc, builder.getI64Type(),
+                                                 builder.getI64IntegerAttr(0));
+  return builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, top,
+                                       zero);
+}
+
+struct PopFlagOpConversion : public OpConversionPattern<forth::PopFlagOp>,
+                             public KnownRewrite {
+  using OpConversionPattern::OpConversionPattern;
+
+  bool matches(Operation *op) const override {
+    return isa<forth::PopFlagOp>(op);
+  }
+
+  LogicalResult applyKnown(Operation *op, StackCursor &stack,
+                           OpBuilder &builder) const override {
+    Value flag = popFlag(op, stack, builder);
+    cast<forth::PopFlagOp>(op).getFlag().replaceAllUsesWith(flag);
+    return success();
+  }
+
+  LogicalResult
+  matchAndRewrite(forth::PopFlagOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (getKnownDepth(op.getOperation()))
+      return failure();
+    ValueRange inputStack = adaptor.getOperands()[0];
+    Value memref = inputStack[0];
+    MemRefStackCursor stack(memref, inputStack[1]);
+    Value flag = popFlag(op, stack, rewriter);
+    rewriter.replaceOpWithMultiple(op,
+                                   {{memref, stack.stackPointer()}, {flag}});
+    return success();
+  }
+};
+
 struct PopOpConversion : public OpConversionPattern<forth::PopOp> {
   using OpConversionPattern::OpConversionPattern;
 
   LogicalResult
   matchAndRewrite(forth::PopOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    if (getKnownDepth(op.getOperation()))
+      return failure();
     auto loc = op.getLoc();
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
-
-    // Load top value
     Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
-
-    // Decrement SP
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value newSP = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
-
-    // Result 0: output_stack -> {memref, newSP}
-    // Result 1: value -> i64 (passes through unchanged)
     rewriter.replaceOpWithMultiple(op, {{memref, newSP}, {topValue}});
     return success();
   }
 };
 
-/// Conversion pattern for forth.push_value operation.
-/// Pushes a dynamic i64 value onto the stack.
 struct PushValueOpConversion
-    : public StackEffectConversion<forth::PushValueOp> {
-  using StackEffectConversion::StackEffectConversion;
+    : public MemRefStackConversion<forth::PushValueOp> {
+  using MemRefStackConversion::MemRefStackConversion;
 
   FailureOr<Value>
   rewriteStack(forth::PushValueOp op, OneToNOpAdaptor adaptor, Value memref,
                Value stackPtr,
                ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    // The value operand (i64) passes through as-is (not a converted type).
-    Value value = adaptor.getOperands()[1][0];
-
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, value);
-
-    return newSP;
+    MemRefStackCursor stack(memref, stackPtr);
+    stack.push(op.getLoc(), rewriter, adaptor.getOperands()[1][0]);
+    return stack.stackPointer();
   }
 };
 
-/// Conversion pattern for cf::BranchOp with 1:N type conversion.
-/// The built-in populateBranchOpInterfaceTypeConversionPattern uses the old
-/// ArrayRef<Value> signature and crashes on 1:N conversions.
 struct BranchOpConversion : public OpConversionPattern<cf::BranchOp> {
   using OpConversionPattern::OpConversionPattern;
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
@@ -1197,7 +1013,6 @@ struct BranchOpConversion : public OpConversionPattern<cf::BranchOp> {
   }
 };
 
-/// Conversion pattern for cf::CondBranchOp with 1:N type conversion.
 struct CondBranchOpConversion : public OpConversionPattern<cf::CondBranchOp> {
   using OpConversionPattern::OpConversionPattern;
   using OneToNOpAdaptor = OpConversionPattern::OneToNOpAdaptor;
@@ -1206,16 +1021,12 @@ struct CondBranchOpConversion : public OpConversionPattern<cf::CondBranchOp> {
   matchAndRewrite(cf::CondBranchOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     SmallVector<Value> trueOperands, falseOperands;
-
     Value condition = adaptor.getOperands()[0][0];
-
     unsigned trueCount = op.getTrueDestOperands().size();
     for (unsigned i = 1; i <= trueCount; ++i)
       llvm::append_range(trueOperands, adaptor.getOperands()[i]);
-
     for (unsigned i = 1 + trueCount; i < adaptor.getOperands().size(); ++i)
       llvm::append_range(falseOperands, adaptor.getOperands()[i]);
-
     rewriter.replaceOpWithNewOp<cf::CondBranchOp>(
         op, condition, op.getTrueDest(), trueOperands, op.getFalseDest(),
         falseOperands);
@@ -1223,61 +1034,212 @@ struct CondBranchOpConversion : public OpConversionPattern<cf::CondBranchOp> {
   }
 };
 
-/// Conversion pass implementation.
+static bool isForthStack(Type type) { return isa<forth::StackType>(type); }
+
+static bool forwardsStack(OperandRange operands) {
+  return llvm::any_of(
+      operands, [](Value value) { return isForthStack(value.getType()); });
+}
+
+static void rewriteDestOperands(MutableOperandRange destOperands, Block *dest,
+                                ArrayRef<Value> cells) {
+  bool sawStack = false;
+  SmallVector<Value, 4> others;
+  for (Value operand : destOperands.getAsOperandRange()) {
+    if (isForthStack(operand.getType()))
+      sawStack = true;
+    else
+      others.push_back(operand);
+  }
+  if (!sawStack)
+    return;
+
+  unsigned numArgs = dest->getNumArguments();
+  unsigned cellArgs = cells.size();
+  SmallVector<Value, 8> rewritten;
+  unsigned otherIdx = 0;
+  unsigned cellIdx = 0;
+  for (unsigned i = 0; i < numArgs; ++i) {
+    if (isForthStack(dest->getArgument(i).getType()))
+      continue;
+    if (cellArgs > 0 && i >= numArgs - cellArgs)
+      rewritten.push_back(cells[cellIdx++]);
+    else
+      rewritten.push_back(others[otherIdx++]);
+  }
+  if (cellIdx != cells.size() || otherIdx != others.size())
+    llvm_unreachable("branch operands do not match the destination arguments");
+  destOperands.assign(rewritten);
+}
+
+static bool forwardsStackTo(Operation *terminator, Block *dest) {
+  if (auto branch = dyn_cast<cf::BranchOp>(terminator))
+    return branch.getDest() == dest && forwardsStack(branch.getDestOperands());
+  if (auto branch = dyn_cast<cf::CondBranchOp>(terminator)) {
+    if (branch.getTrueDest() == dest &&
+        forwardsStack(branch.getTrueDestOperands()))
+      return true;
+    if (branch.getFalseDest() == dest &&
+        forwardsStack(branch.getFalseDestOperands()))
+      return true;
+  }
+  return false;
+}
+
+static std::optional<unsigned> incomingDepth(Block &block) {
+  for (Block *pred : block.getPredecessors()) {
+    Operation *terminator = pred->getTerminator();
+    if (!forwardsStackTo(terminator, &block))
+      continue;
+    if (std::optional<unsigned> depth = getKnownDepth(terminator))
+      return depth;
+  }
+  return std::nullopt;
+}
+
+static bool functionHasKnownDepth(func::FuncOp func) {
+  bool found = false;
+  func.walk([&](Operation *op) {
+    if (getKnownDepth(op))
+      found = true;
+  });
+  return found;
+}
+
+static LogicalResult lowerFromDepthAttr(Operation *op,
+                                        SmallVectorImpl<Value> &cells,
+                                        SSAStackCursor &cursor,
+                                        ArrayRef<KnownRewrite *> rewrites,
+                                        OpBuilder &builder) {
+  std::optional<unsigned> depth = getKnownDepth(op);
+  if (!depth)
+    return failure();
+  if (isa<forth::StackOp>(op)) {
+    if (*depth != 0 || !cells.empty())
+      return failure();
+    cells.clear();
+    return success();
+  }
+  if (cells.size() != *depth)
+    return failure();
+  if (auto branch = dyn_cast<cf::BranchOp>(op)) {
+    rewriteDestOperands(branch.getDestOperandsMutable(), branch.getDest(),
+                        cells);
+    return success();
+  }
+  if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
+    rewriteDestOperands(branch.getTrueDestOperandsMutable(),
+                        branch.getTrueDest(), cells);
+    rewriteDestOperands(branch.getFalseDestOperandsMutable(),
+                        branch.getFalseDest(), cells);
+    return success();
+  }
+  for (KnownRewrite *rewrite : rewrites) {
+    if (!rewrite->matches(op))
+      continue;
+    builder.setInsertionPoint(op);
+    return rewrite->applyKnown(op, cursor, builder);
+  }
+  return failure();
+}
+
+static LogicalResult lowerTaggedOps(func::FuncOp func,
+                                    ArrayRef<KnownRewrite *> rewrites) {
+  OpBuilder builder(func.getContext());
+  Block &entry = func.front();
+  DenseMap<Block *, unsigned> incoming;
+  for (Block &block : func.getBody()) {
+    if (&block == &entry)
+      continue;
+    if (std::optional<unsigned> depth = incomingDepth(block))
+      incoming[&block] = *depth;
+  }
+  for (auto [block, depth] : incoming) {
+    if (depth == 0)
+      continue;
+    SmallVector<Type, 8> types(depth, builder.getI64Type());
+    SmallVector<Location, 8> locs(depth, block->front().getLoc());
+    block->addArguments(types, locs);
+  }
+
+  for (Block &block : func.getBody()) {
+    SmallVector<Value, 8> cells;
+    if (auto it = incoming.find(&block); it != incoming.end()) {
+      unsigned depth = it->second;
+      unsigned numArgs = block.getNumArguments();
+      for (unsigned i = numArgs - depth; i < numArgs; ++i)
+        cells.push_back(block.getArgument(i));
+    }
+    SSAStackCursor cursor(cells);
+
+    SmallVector<Operation *, 8> erase;
+    for (Operation &op : block) {
+      if (!getKnownDepth(&op))
+        continue;
+      if (failed(lowerFromDepthAttr(&op, cells, cursor, rewrites, builder)))
+        return failure();
+      if (isa<cf::BranchOp, cf::CondBranchOp>(op))
+        op.removeAttr(kForthKnownDepthAttr);
+      else
+        erase.push_back(&op);
+    }
+    for (Operation *op : llvm::reverse(erase))
+      op->erase();
+  }
+
+  for (Block &block : func.getBody()) {
+    for (unsigned i = 0; i < block.getNumArguments(); ++i) {
+      if (!isForthStack(block.getArgument(i).getType()))
+        continue;
+      block.eraseArgument(i);
+      break;
+    }
+  }
+  return success();
+}
+
 struct ConvertForthToMemRefPass
     : public impl::ConvertForthToMemRefBase<ConvertForthToMemRefPass> {
   void runOnOperation() override {
     auto *context = &getContext();
     auto module = getOperation();
 
-    // Dialect conversion does not rewrite unreachable blocks. Remove parser
-    // continuations before converting !forth.stack values 1:N.
-    IRRewriter rewriter(context);
+    IRRewriter eraser(context);
     module.walk([&](func::FuncOp funcOp) {
-      (void)eraseUnreachableBlocks(rewriter, funcOp->getRegions());
+      if (funcOp.isExternal())
+        return;
+      (void)eraseUnreachableBlocks(eraser, funcOp->getRegions());
     });
 
     ConversionTarget target(*context);
-
-    // Mark Forth dialect as illegal (to be converted)
     target.addIllegalDialect<forth::ForthDialect>();
-
-    // Mark MemRef, Arith, LLVM, and CF dialects as legal
     target.addLegalDialect<memref::MemRefDialect, arith::ArithDialect,
                            LLVM::LLVMDialect, cf::ControlFlowDialect,
                            math::MathDialect>();
-
     target.addLegalOp<forth::IntrinsicOp>();
     target.addLegalOp<forth::BarrierOp>();
     target.addLegalOp<gpu::ShuffleOp>();
 
-    // Use dynamic legality for func operations to ensure they're properly
-    // converted
     target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
       auto isStack = [](Type t) { return isa<forth::StackType>(t); };
       if (llvm::any_of(op.getFunctionType().getInputs(), isStack) ||
           llvm::any_of(op.getFunctionType().getResults(), isStack))
         return false;
-      // Also check non-entry block args (CF control flow)
       for (Block &block : op.getFunctionBody())
         if (llvm::any_of(block.getArgumentTypes(), isStack))
           return false;
       return true;
     });
-
     target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
       return llvm::none_of(op.getOperandTypes(),
                            [&](Type t) { return isa<forth::StackType>(t); }) &&
              llvm::none_of(op.getResultTypes(),
                            [&](Type t) { return isa<forth::StackType>(t); });
     });
-
     target.addDynamicallyLegalOp<func::ReturnOp>([&](func::ReturnOp op) {
       return llvm::none_of(op.getOperandTypes(),
                            [&](Type t) { return isa<forth::StackType>(t); });
     });
-
-    // CF ops are legal but need dynamic legality for type-converted block args
     target.addDynamicallyLegalOp<cf::BranchOp, cf::CondBranchOp>(
         [&](Operation *op) {
           return llvm::none_of(op->getOperandTypes(),
@@ -1286,90 +1248,142 @@ struct ConvertForthToMemRefPass
 
     ForthToMemRefTypeConverter typeConverter;
     RewritePatternSet patterns(context);
+    SmallVector<KnownRewrite *, 64> known;
+    auto add = [&](auto pattern) {
+      using Pattern = typename std::decay_t<decltype(pattern)>::element_type;
+      if constexpr (std::is_base_of<KnownRewrite, Pattern>::value)
+        known.push_back(pattern.get());
+      patterns.add(std::move(pattern));
+    };
+    auto make = [&](auto pattern) { add(std::move(pattern)); };
 
-    // Add Forth operation conversion patterns
-    patterns.add<
-        StackOpConversion, ConstantOpConversion, DupOpConversion,
-        DropOpConversion, SwapOpConversion, OverOpConversion, RotOpConversion,
-        NipOpConversion, TuckOpConversion, PickOpConversion, RollOpConversion,
-        // Integer arithmetic
-        AddIOpConversion, SubIOpConversion, MulIOpConversion, DivIOpConversion,
-        ModOpConversion,
-        // Float arithmetic
-        AddFOpConversion, SubFOpConversion, MulFOpConversion, DivFOpConversion,
-        // Float math intrinsics
-        ExpFOpConversion, SqrtFOpConversion, LogFOpConversion, AbsFOpConversion,
-        NegFOpConversion, MaxFOpConversion, MinFOpConversion,
-        // Bitwise
-        AndOpConversion, OrOpConversion, XorOpConversion, NotOpConversion,
-        LshiftOpConversion, RshiftOpConversion,
-        // Integer comparisons
-        EqIOpConversion, LtIOpConversion, GtIOpConversion, NeIOpConversion,
-        LeIOpConversion, GeIOpConversion,
-        // Float comparisons
-        EqFOpConversion, LtFOpConversion, GtFOpConversion, NeFOpConversion,
-        LeFOpConversion, GeFOpConversion,
-        // Other
-        ZeroEqOpConversion, ParamRefOpConversion,
-        // Memory ops (int + float, global + shared)
-        LoadIOpConversion, StoreIOpConversion, LoadFOpConversion,
-        StoreFOpConversion, SharedLoadIOpConversion, SharedStoreIOpConversion,
-        SharedLoadFOpConversion, SharedStoreFOpConversion,
-        // Reduced-width memory ops
-        LoadI8OpConversion, StoreI8OpConversion, SharedLoadI8OpConversion,
-        SharedStoreI8OpConversion, LoadI16OpConversion, StoreI16OpConversion,
-        SharedLoadI16OpConversion, SharedStoreI16OpConversion,
-        LoadI32OpConversion, StoreI32OpConversion, SharedLoadI32OpConversion,
-        SharedStoreI32OpConversion, LoadF16OpConversion, StoreF16OpConversion,
-        SharedLoadF16OpConversion, SharedStoreF16OpConversion,
-        LoadBF16OpConversion, StoreBF16OpConversion, SharedLoadBF16OpConversion,
-        SharedStoreBF16OpConversion, LoadF32OpConversion, StoreF32OpConversion,
-        SharedLoadF32OpConversion, SharedStoreF32OpConversion,
-        // Type conversions
-        IToFOpConversion, FToIOpConversion,
-        // Control flow
-        PopFlagOpConversion, PopOpConversion, PushValueOpConversion>(
-        typeConverter, context);
+    make(std::make_unique<StackOpConversion>(typeConverter, context));
+    make(std::make_unique<ConstantOpConversion>(typeConverter, context));
+    make(std::make_unique<DupOpConversion>(typeConverter, context));
+    make(std::make_unique<DropOpConversion>(typeConverter, context));
+    make(std::make_unique<SwapOpConversion>(typeConverter, context));
+    make(std::make_unique<OverOpConversion>(typeConverter, context));
+    make(std::make_unique<RotOpConversion>(typeConverter, context));
+    make(std::make_unique<NipOpConversion>(typeConverter, context));
+    make(std::make_unique<TuckOpConversion>(typeConverter, context));
+    make(std::make_unique<PickOpConversion>(typeConverter, context));
+    make(std::make_unique<RollOpConversion>(typeConverter, context));
+    make(std::make_unique<AddIOpConversion>(typeConverter, context));
+    make(std::make_unique<SubIOpConversion>(typeConverter, context));
+    make(std::make_unique<MulIOpConversion>(typeConverter, context));
+    make(std::make_unique<DivIOpConversion>(typeConverter, context));
+    make(std::make_unique<ModOpConversion>(typeConverter, context));
+    make(std::make_unique<AddFOpConversion>(typeConverter, context));
+    make(std::make_unique<SubFOpConversion>(typeConverter, context));
+    make(std::make_unique<MulFOpConversion>(typeConverter, context));
+    make(std::make_unique<DivFOpConversion>(typeConverter, context));
+    make(std::make_unique<MaxFOpConversion>(typeConverter, context));
+    make(std::make_unique<MinFOpConversion>(typeConverter, context));
+    make(std::make_unique<ExpFOpConversion>(typeConverter, context));
+    make(std::make_unique<SqrtFOpConversion>(typeConverter, context));
+    make(std::make_unique<LogFOpConversion>(typeConverter, context));
+    make(std::make_unique<AbsFOpConversion>(typeConverter, context));
+    make(std::make_unique<NegFOpConversion>(typeConverter, context));
+    make(std::make_unique<AndOpConversion>(typeConverter, context));
+    make(std::make_unique<OrOpConversion>(typeConverter, context));
+    make(std::make_unique<XorOpConversion>(typeConverter, context));
+    make(std::make_unique<NotOpConversion>(typeConverter, context));
+    make(std::make_unique<LshiftOpConversion>(typeConverter, context));
+    make(std::make_unique<RshiftOpConversion>(typeConverter, context));
+    make(std::make_unique<EqIOpConversion>(typeConverter, context));
+    make(std::make_unique<LtIOpConversion>(typeConverter, context));
+    make(std::make_unique<GtIOpConversion>(typeConverter, context));
+    make(std::make_unique<NeIOpConversion>(typeConverter, context));
+    make(std::make_unique<LeIOpConversion>(typeConverter, context));
+    make(std::make_unique<GeIOpConversion>(typeConverter, context));
+    make(std::make_unique<EqFOpConversion>(typeConverter, context));
+    make(std::make_unique<LtFOpConversion>(typeConverter, context));
+    make(std::make_unique<GtFOpConversion>(typeConverter, context));
+    make(std::make_unique<NeFOpConversion>(typeConverter, context));
+    make(std::make_unique<LeFOpConversion>(typeConverter, context));
+    make(std::make_unique<GeFOpConversion>(typeConverter, context));
+    make(std::make_unique<ZeroEqOpConversion>(typeConverter, context));
+    make(std::make_unique<ParamRefOpConversion>(typeConverter, context));
+    make(std::make_unique<LoadIOpConversion>(typeConverter, context));
+    make(std::make_unique<StoreIOpConversion>(typeConverter, context));
+    make(std::make_unique<LoadFOpConversion>(typeConverter, context));
+    make(std::make_unique<StoreFOpConversion>(typeConverter, context));
+    make(std::make_unique<SharedLoadIOpConversion>(typeConverter, context));
+    make(std::make_unique<SharedStoreIOpConversion>(typeConverter, context));
+    make(std::make_unique<SharedLoadFOpConversion>(typeConverter, context));
+    make(std::make_unique<SharedStoreFOpConversion>(typeConverter, context));
+    make(std::make_unique<LoadI8OpConversion>(typeConverter, context));
+    make(std::make_unique<StoreI8OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedLoadI8OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedStoreI8OpConversion>(typeConverter, context));
+    make(std::make_unique<LoadI16OpConversion>(typeConverter, context));
+    make(std::make_unique<StoreI16OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedLoadI16OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedStoreI16OpConversion>(typeConverter, context));
+    make(std::make_unique<LoadI32OpConversion>(typeConverter, context));
+    make(std::make_unique<StoreI32OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedLoadI32OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedStoreI32OpConversion>(typeConverter, context));
+    make(std::make_unique<LoadF16OpConversion>(typeConverter, context));
+    make(std::make_unique<StoreF16OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedLoadF16OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedStoreF16OpConversion>(typeConverter, context));
+    make(std::make_unique<LoadBF16OpConversion>(typeConverter, context));
+    make(std::make_unique<StoreBF16OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedLoadBF16OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedStoreBF16OpConversion>(typeConverter, context));
+    make(std::make_unique<LoadF32OpConversion>(typeConverter, context));
+    make(std::make_unique<StoreF32OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedLoadF32OpConversion>(typeConverter, context));
+    make(std::make_unique<SharedStoreF32OpConversion>(typeConverter, context));
+    make(std::make_unique<IToFOpConversion>(typeConverter, context));
+    make(std::make_unique<FToIOpConversion>(typeConverter, context));
+    make(std::make_unique<PopFlagOpConversion>(typeConverter, context));
+    make(std::make_unique<PopOpConversion>(typeConverter, context));
+    make(std::make_unique<PushValueOpConversion>(typeConverter, context));
+    make(std::make_unique<IntrinsicOpConversion<forth::ThreadIdXOp>>(
+        typeConverter, context, "tid-x"));
+    make(std::make_unique<IntrinsicOpConversion<forth::ThreadIdYOp>>(
+        typeConverter, context, "tid-y"));
+    make(std::make_unique<IntrinsicOpConversion<forth::ThreadIdZOp>>(
+        typeConverter, context, "tid-z"));
+    make(std::make_unique<IntrinsicOpConversion<forth::BlockIdXOp>>(
+        typeConverter, context, "bid-x"));
+    make(std::make_unique<IntrinsicOpConversion<forth::BlockIdYOp>>(
+        typeConverter, context, "bid-y"));
+    make(std::make_unique<IntrinsicOpConversion<forth::BlockIdZOp>>(
+        typeConverter, context, "bid-z"));
+    make(std::make_unique<IntrinsicOpConversion<forth::BlockDimXOp>>(
+        typeConverter, context, "bdim-x"));
+    make(std::make_unique<IntrinsicOpConversion<forth::BlockDimYOp>>(
+        typeConverter, context, "bdim-y"));
+    make(std::make_unique<IntrinsicOpConversion<forth::BlockDimZOp>>(
+        typeConverter, context, "bdim-z"));
+    make(std::make_unique<IntrinsicOpConversion<forth::GridDimXOp>>(
+        typeConverter, context, "gdim-x"));
+    make(std::make_unique<IntrinsicOpConversion<forth::GridDimYOp>>(
+        typeConverter, context, "gdim-y"));
+    make(std::make_unique<IntrinsicOpConversion<forth::GridDimZOp>>(
+        typeConverter, context, "gdim-z"));
+    make(std::make_unique<IntrinsicOpConversion<forth::LaneIdOp>>(
+        typeConverter, context, "lane-id"));
+    make(std::make_unique<GlobalIdOpConversion>(typeConverter, context));
+    make(std::make_unique<ShuffleOpConversion>(typeConverter, context));
+    make(std::make_unique<BranchOpConversion>(typeConverter, context));
+    make(std::make_unique<CondBranchOpConversion>(typeConverter, context));
 
-    // Add GPU indexing op conversion patterns
-    patterns.add<IntrinsicOpConversion<forth::ThreadIdXOp>>(typeConverter,
-                                                            context, "tid-x");
-    patterns.add<IntrinsicOpConversion<forth::ThreadIdYOp>>(typeConverter,
-                                                            context, "tid-y");
-    patterns.add<IntrinsicOpConversion<forth::ThreadIdZOp>>(typeConverter,
-                                                            context, "tid-z");
-    patterns.add<IntrinsicOpConversion<forth::BlockIdXOp>>(typeConverter,
-                                                           context, "bid-x");
-    patterns.add<IntrinsicOpConversion<forth::BlockIdYOp>>(typeConverter,
-                                                           context, "bid-y");
-    patterns.add<IntrinsicOpConversion<forth::BlockIdZOp>>(typeConverter,
-                                                           context, "bid-z");
-    patterns.add<IntrinsicOpConversion<forth::BlockDimXOp>>(typeConverter,
-                                                            context, "bdim-x");
-    patterns.add<IntrinsicOpConversion<forth::BlockDimYOp>>(typeConverter,
-                                                            context, "bdim-y");
-    patterns.add<IntrinsicOpConversion<forth::BlockDimZOp>>(typeConverter,
-                                                            context, "bdim-z");
-    patterns.add<IntrinsicOpConversion<forth::GridDimXOp>>(typeConverter,
-                                                           context, "gdim-x");
-    patterns.add<IntrinsicOpConversion<forth::GridDimYOp>>(typeConverter,
-                                                           context, "gdim-y");
-    patterns.add<IntrinsicOpConversion<forth::GridDimZOp>>(typeConverter,
-                                                           context, "gdim-z");
-    patterns.add<IntrinsicOpConversion<forth::LaneIdOp>>(typeConverter, context,
-                                                         "lane-id");
-
-    // GlobalIdOp has custom pattern
-    patterns.add<GlobalIdOpConversion>(typeConverter, context);
-
-    patterns.add<ShuffleOpConversion>(typeConverter, context);
+    WalkResult tagged = module.walk([&](func::FuncOp funcOp) {
+      if (funcOp.isExternal() || !functionHasKnownDepth(funcOp))
+        return WalkResult::advance();
+      if (failed(lowerTaggedOps(funcOp, known)))
+        return WalkResult::interrupt();
+      return WalkResult::advance();
+    });
+    if (tagged.wasInterrupted())
+      return signalPassFailure();
 
     populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
         patterns, typeConverter);
-
-    // Custom branch patterns are required for 1:N type conversion.
-    patterns.add<BranchOpConversion, CondBranchOpConversion>(typeConverter,
-                                                             context);
     populateCallOpTypeConversionPattern(patterns, typeConverter);
     populateReturnOpTypeConversionPattern(patterns, typeConverter);
 
@@ -1381,7 +1395,7 @@ struct ConvertForthToMemRefPass
 } // namespace
 
 std::unique_ptr<Pass> createConvertForthToMemRefPass() {
-  return std::make_unique<::mlir::warpforth::ConvertForthToMemRefPass>();
+  return std::make_unique<ConvertForthToMemRefPass>();
 }
 
 } // namespace warpforth

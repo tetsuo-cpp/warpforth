@@ -1,4 +1,4 @@
-// RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
+// RUN: %warpforth-opt --tag-forth-stack-depth --convert-forth-to-memref %s | %FileCheck %s
 
 // === Nested IF: 1 IF 2 IF 3 THEN THEN ===
 // CHECK-LABEL: func.func private @TEST__NESTED__IF
