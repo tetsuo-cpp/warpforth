@@ -32,6 +32,25 @@ def ConvertForthToMemRef
                            "mlir::math::MathDialect"];
 }
 
+def LowerForthStack : Pass<"lower-forth-stack", "mlir::ModuleOp"> {
+  let summary = "Lower the Forth stack to i64 SSA values";
+  let description = [{
+    Lowers every `!forth.stack` value. Every user word must already be
+    inlined, so run `--inline` first. A cell whose depth and slot are known at
+    compile time becomes an `i64` SSA value, and each word becomes the `arith`,
+    `memref`, or `llvm` ops that compute its result.
+
+    A function whose words this pass does not lower yet is left unchanged for
+    `convert-forth-to-memref`.
+  }];
+
+  let constructor = "mlir::warpforth::createLowerForthStackPass()";
+
+  let dependentDialects = ["mlir::arith::ArithDialect",
+                           "mlir::LLVM::LLVMDialect",
+                           "mlir::memref::MemRefDialect"];
+}
+
 def ConvertForthToGPU : Pass<"convert-forth-to-gpu", "mlir::ModuleOp"> {
   let summary = "Convert Forth functions to GPU dialect";
   let description = [{

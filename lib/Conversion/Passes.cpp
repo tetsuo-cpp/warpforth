@@ -13,6 +13,7 @@
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "warpforth/Conversion/ForthStack/LowerForthStack.h"
 #include "warpforth/Conversion/ForthToGPU/ForthToGPU.h"
 #include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -95,7 +96,9 @@ void buildWarpForthLoweringPipeline(OpPassManager &pm,
   // precede GPU conversion.
   pm.addPass(createInlinerPass());
 
-  // Stage 2: Lower Forth to MemRef (CF ops pass through as-is)
+  // Stage 2: Lower the stack. A function the stack lowering cannot take yet
+  // keeps its Forth ops and falls through to the memref stack.
+  pm.addPass(createLowerForthStackPass());
   pm.addPass(createConvertForthToMemRefPass());
 
   // Stage 3: Convert to GPU dialect
@@ -151,6 +154,8 @@ void buildWarpForthPipeline(OpPassManager &pm) {
 }
 
 void registerConversionPasses() {
+  registerPass(
+      []() -> std::unique_ptr<Pass> { return createLowerForthStackPass(); });
   registerPass([]() -> std::unique_ptr<Pass> {
     return createConvertForthToMemRefPass();
   });
