@@ -7,7 +7,7 @@
 \ Verify intermediate MLIR: gpu.func with conditional branching
 \ MID: gpu.module @warpforth_module
 \ MID: gpu.func @main(%arg0: memref<256xi64> {forth.param_name = "DATA"}) kernel
-\ MID: memref.load
+\ MID: llvm.load
 \ MID: arith.cmpi ne
 \ MID: cf.cond_br
 \ MID: gpu.return

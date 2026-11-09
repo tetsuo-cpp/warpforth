@@ -20,6 +20,7 @@ namespace warpforth {
 
 /// inputs[0] is the deeper cell and inputs.back() is the top. compute appends
 /// `pushes` cells, deepest first, and does not read or write the memref stack.
+/// A non-stack result, such as pop_flag's i1, is appended after those cells.
 struct WordLowering {
   unsigned pops;
   unsigned pushes;

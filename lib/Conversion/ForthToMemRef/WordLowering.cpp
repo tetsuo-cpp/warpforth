@@ -72,6 +72,15 @@ void computeDrop(Operation * /*op*/, ValueRange /*inputs*/,
                  SmallVectorImpl<Value> & /*outputs*/,
                  OpBuilder & /*builder*/) {}
 
+void computePopFlag(Operation *op, ValueRange inputs,
+                    SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+  Location loc = op->getLoc();
+  Value zero = builder.create<arith::ConstantOp>(loc, builder.getI64Type(),
+                                                 builder.getI64IntegerAttr(0));
+  outputs.push_back(builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne,
+                                                  inputs[0], zero));
+}
+
 void computeSwap(Operation * /*op*/, ValueRange inputs,
                  SmallVectorImpl<Value> &outputs, OpBuilder & /*builder*/) {
   outputs.push_back(inputs[1]);
@@ -386,6 +395,7 @@ void computeShuffle(Operation *op, ValueRange inputs,
 
 const WordLowering kDup{1, 2, computeDup};
 const WordLowering kDrop{1, 0, computeDrop};
+const WordLowering kPopFlag{1, 0, computePopFlag};
 const WordLowering kSwap{2, 2, computeSwap};
 const WordLowering kOver{2, 3, computeOver};
 const WordLowering kRot{3, 3, computeRot};
@@ -529,6 +539,7 @@ struct ListedWord {
 const ListedWord kWords[] = {
     {isOp<forth::DupOp>, &kDup},
     {isOp<forth::DropOp>, &kDrop},
+    {isOp<forth::PopFlagOp>, &kPopFlag},
     {isOp<forth::SwapOp>, &kSwap},
     {isOp<forth::OverOp>, &kOver},
     {isOp<forth::RotOp>, &kRot},

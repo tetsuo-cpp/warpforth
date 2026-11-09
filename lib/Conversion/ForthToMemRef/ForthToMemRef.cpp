@@ -20,6 +20,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 namespace mlir {
 namespace warpforth {
@@ -775,21 +777,15 @@ struct PopFlagOpConversion : public OpConversionPattern<forth::PopFlagOp> {
     Value memref = inputStack[0];
     Value stackPtr = inputStack[1];
 
-    // Load top value
     Value topValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
 
-    // Decrement SP
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value newSP = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
 
-    // Compare != 0
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
-    Value flag = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne,
-                                                topValue, zero);
+    SmallVector<Value, 2> produced;
+    lookupWord(op)->compute(op, topValue, produced, rewriter);
 
-    // Result 0: output_stack -> {memref, newSP}
-    // Result 1: flag -> i1 (passes through unchanged)
-    rewriter.replaceOpWithMultiple(op, {{memref, newSP}, {flag}});
+    rewriter.replaceOpWithMultiple(op, {{memref, newSP}, {produced[0]}});
     return success();
   }
 };
@@ -898,70 +894,204 @@ static bool usesForthStack(Operation *op) {
          llvm::any_of(op->getResultTypes(), isForthStack);
 }
 
-static bool isKnownStraightLine(func::FuncOp func) {
-  if (!func.getBody().hasOneBlock())
-    return false;
-  if (llvm::any_of(func.getArgumentTypes(), isForthStack) ||
-      llvm::any_of(func.getResultTypes(), isForthStack))
-    return false;
+static unsigned countStackArgs(Block *block) {
+  unsigned count = 0;
+  for (BlockArgument arg : block->getArguments())
+    if (isForthStack(arg.getType()))
+      ++count;
+  return count;
+}
 
-  std::optional<unsigned> depth;
-  bool sawStack = false;
-  for (Operation &op : func.front()) {
+static bool hasStackSignature(func::FuncOp func) {
+  return llvm::any_of(func.getArgumentTypes(), isForthStack) ||
+         llvm::any_of(func.getResultTypes(), isForthStack);
+}
+
+static bool forwardStack(Block *dest, OperandRange operands,
+                         std::optional<unsigned> depth,
+                         DenseMap<Block *, unsigned> &entryDepth,
+                         SmallVectorImpl<Block *> &work) {
+  unsigned stackOperands = 0;
+  for (Value operand : operands)
+    if (isForthStack(operand.getType()))
+      ++stackOperands;
+  unsigned stackArgs = countStackArgs(dest);
+  if (stackOperands != stackArgs || stackArgs > 1)
+    return false;
+  if (stackArgs == 0)
+    return true;
+  if (!depth.has_value())
+    return false;
+  auto [it, inserted] = entryDepth.try_emplace(dest, *depth);
+  if (!inserted)
+    return it->second == *depth;
+  work.push_back(dest);
+  return true;
+}
+
+static bool simulateBlock(Block *block, std::optional<unsigned> depth,
+                          DenseMap<Block *, unsigned> &entryDepth,
+                          SmallVectorImpl<Block *> &work, bool &sawStack) {
+  for (Operation &op : *block) {
     if (isa<forth::BarrierOp, forth::IntrinsicOp>(op))
       continue;
     if (isa<forth::StackOp>(op)) {
-      if (sawStack)
+      if (depth.has_value())
         return false;
-      sawStack = true;
       depth = 0;
+      sawStack = true;
       continue;
     }
     if (isa<forth::PickOp, forth::RollOp>(op))
       return false;
     if (auto call = dyn_cast<func::CallOp>(op)) {
-      if (llvm::any_of(call.getOperandTypes(), isForthStack) ||
-          llvm::any_of(call.getResultTypes(), isForthStack))
+      if (usesForthStack(call.getOperation()))
+        return false;
+      continue;
+    }
+    if (auto branch = dyn_cast<cf::BranchOp>(op)) {
+      if (!forwardStack(branch.getDest(), branch.getDestOperands(), depth,
+                        entryDepth, work))
+        return false;
+      continue;
+    }
+    if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
+      if (!forwardStack(branch.getTrueDest(), branch.getTrueDestOperands(),
+                        depth, entryDepth, work) ||
+          !forwardStack(branch.getFalseDest(), branch.getFalseDestOperands(),
+                        depth, entryDepth, work))
         return false;
       continue;
     }
     if (!usesForthStack(&op))
       continue;
-    // A stack branch is a join. This walk has no block arguments for it.
-    if (isa<cf::BranchOp, cf::CondBranchOp>(op))
-      return false;
     const WordLowering *word = lookupWord(&op);
-    if (!word || !depth || *depth < word->pops)
+    if (!word || !depth.has_value() || *depth < word->pops)
       return false;
     depth = *depth - word->pops + word->pushes;
   }
-  return sawStack;
+  return true;
 }
 
-static void lowerKnownStraightLine(func::FuncOp func) {
-  KnownStack stack;
-  SmallVector<Operation *, 8> erase;
-  OpBuilder builder(func.getContext());
-  for (Operation &op : func.front()) {
-    if (isa<forth::StackOp>(op)) {
-      stack.cells.clear();
-      erase.push_back(&op);
+/// Entry depths of blocks that receive the data stack. The entry block is
+/// absent because its depth starts at forth.stack.
+static bool analyzeKnownStack(func::FuncOp func,
+                              DenseMap<Block *, unsigned> &entryDepth) {
+  if (hasStackSignature(func))
+    return false;
+
+  SmallVector<Block *, 8> work;
+  SmallPtrSet<Block *, 8> seen;
+  bool sawStack = false;
+  auto run = [&](Block *block, std::optional<unsigned> depth) {
+    if (!seen.insert(block).second)
+      return true;
+    return simulateBlock(block, depth, entryDepth, work, sawStack);
+  };
+  if (!run(&func.front(), std::nullopt))
+    return false;
+  while (!work.empty()) {
+    Block *block = work.pop_back_val();
+    if (!run(block, entryDepth.lookup(block)))
+      return false;
+  }
+  if (!sawStack)
+    return false;
+  return llvm::all_of(func.getBody(),
+                      [&](Block &block) { return seen.contains(&block); });
+}
+
+/// The stack argument is erased after this rewrite, and the new i64 arguments
+/// were appended, so cells follow the operands that are not the stack.
+static void rewriteDestOperands(MutableOperandRange destOperands,
+                                ArrayRef<Value> cells) {
+  bool sawStack = false;
+  SmallVector<Value, 8> rewritten;
+  for (Value operand : destOperands.getAsOperandRange()) {
+    if (isForthStack(operand.getType())) {
+      sawStack = true;
       continue;
     }
-    const WordLowering *word = lookupWord(&op);
-    if (!word)
-      continue;
-    unsigned kept = stack.cells.size() - word->pops;
-    SmallVector<Value, 4> inputs(stack.cells.begin() + kept, stack.cells.end());
-    SmallVector<Value, 4> outputs;
-    builder.setInsertionPoint(&op);
-    word->compute(&op, inputs, outputs, builder);
-    stack.cells.resize(kept);
-    stack.cells.append(outputs.begin(), outputs.end());
-    erase.push_back(&op);
+    rewritten.push_back(operand);
   }
-  for (Operation *op : llvm::reverse(erase))
-    op->erase();
+  if (!sawStack)
+    return;
+  rewritten.append(cells.begin(), cells.end());
+  destOperands.assign(rewritten);
+}
+
+static void applyWord(Operation &op, const WordLowering *word,
+                      KnownStack &stack, OpBuilder &builder) {
+  unsigned kept = stack.cells.size() - word->pops;
+  SmallVector<Value, 4> inputs(stack.cells.begin() + kept, stack.cells.end());
+  SmallVector<Value, 4> outputs;
+  builder.setInsertionPoint(&op);
+  word->compute(&op, inputs, outputs, builder);
+  stack.cells.resize(kept);
+  stack.cells.append(outputs.begin(), outputs.begin() + word->pushes);
+  unsigned extra = word->pushes;
+  for (Value result : op.getResults()) {
+    if (isForthStack(result.getType()))
+      continue;
+    result.replaceAllUsesWith(outputs[extra]);
+    ++extra;
+  }
+}
+
+static void lowerKnownStack(func::FuncOp func,
+                            const DenseMap<Block *, unsigned> &entryDepth) {
+  OpBuilder builder(func.getContext());
+  for (auto [block, depth] : entryDepth) {
+    if (depth == 0)
+      continue;
+    SmallVector<Type, 8> types(depth, builder.getI64Type());
+    SmallVector<Location, 8> locs(depth, block->front().getLoc());
+    block->addArguments(types, locs);
+  }
+
+  for (Block &block : func.getBody()) {
+    KnownStack stack;
+    if (auto it = entryDepth.find(&block); it != entryDepth.end()) {
+      unsigned depth = it->second;
+      unsigned numArgs = block.getNumArguments();
+      for (unsigned i = numArgs - depth; i < numArgs; ++i)
+        stack.cells.push_back(block.getArgument(i));
+    }
+
+    SmallVector<Operation *, 8> erase;
+    for (Operation &op : block) {
+      if (isa<forth::StackOp>(op)) {
+        stack.cells.clear();
+        erase.push_back(&op);
+        continue;
+      }
+      if (auto branch = dyn_cast<cf::BranchOp>(op)) {
+        rewriteDestOperands(branch.getDestOperandsMutable(), stack.cells);
+        continue;
+      }
+      if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
+        rewriteDestOperands(branch.getTrueDestOperandsMutable(), stack.cells);
+        rewriteDestOperands(branch.getFalseDestOperandsMutable(), stack.cells);
+        continue;
+      }
+      const WordLowering *word = lookupWord(&op);
+      if (!word)
+        continue;
+      applyWord(op, word, stack, builder);
+      erase.push_back(&op);
+    }
+    for (Operation *op : llvm::reverse(erase))
+      op->erase();
+  }
+
+  for (Block &block : func.getBody()) {
+    for (unsigned i = 0; i < block.getNumArguments(); ++i) {
+      if (!isForthStack(block.getArgument(i).getType()))
+        continue;
+      block.eraseArgument(i);
+      break;
+    }
+  }
 }
 
 /// Conversion pass implementation.
@@ -979,8 +1109,9 @@ struct ConvertForthToMemRefPass
     });
 
     module.walk([&](func::FuncOp funcOp) {
-      if (isKnownStraightLine(funcOp))
-        lowerKnownStraightLine(funcOp);
+      DenseMap<Block *, unsigned> entryDepth;
+      if (analyzeKnownStack(funcOp, entryDepth))
+        lowerKnownStack(funcOp, entryDepth);
     });
 
     ConversionTarget target(*context);

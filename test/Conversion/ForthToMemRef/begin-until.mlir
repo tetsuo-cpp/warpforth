@@ -4,29 +4,22 @@
 // Forth: 10 BEGIN 1 - DUP 0= UNTIL
 
 // CHECK-LABEL: func.func private @main
+// CHECK-NOT: memref<256xi64>
 
-// Stack allocation and literal 10 push:
-// CHECK: %[[ALLOCA:.*]] = memref.alloca() : memref<256xi64>
-// CHECK: %[[C10:.*]] = arith.constant 10 : i64
-// CHECK: memref.store %[[C10]], %[[ALLOCA]]
-// CHECK: cf.br ^bb1
-
-// Loop body: push 1, subtract, dup, zero_eq, pop_flag, cond_br
-// CHECK: ^bb1(%{{.*}}: memref<256xi64>, %{{.*}}: index):
-// CHECK: arith.constant 1 : i64
-// CHECK: memref.store
-// CHECK: arith.subi
-// CHECK: memref.store
-// CHECK: memref.store
-// CHECK: arith.cmpi eq
-// CHECK: arith.extsi
-// CHECK: memref.store
-// CHECK: arith.cmpi ne
-// CHECK: cf.cond_br %{{.*}}, ^bb2(%{{.*}}: memref<256xi64>, index), ^bb1(%{{.*}}: memref<256xi64>, index)
-
-// Exit block
-// CHECK: ^bb2(%{{.*}}: memref<256xi64>, %{{.*}}: index):
+// CHECK: %[[N:.*]] = arith.constant 10 : i64
+// CHECK: cf.br ^[[HEAD:bb[0-9]+]](%[[N]] : i64)
+// CHECK: ^[[HEAD]](%[[CUR:.*]]: i64):
+// CHECK: %[[ONE:.*]] = arith.constant 1 : i64
+// CHECK: %[[DIFF:.*]] = arith.subi %[[CUR]], %[[ONE]] : i64
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
+// CHECK: %[[EQ:.*]] = arith.cmpi eq, %[[DIFF]], %[[ZERO]] : i64
+// CHECK: %[[FLAG:.*]] = arith.extsi %[[EQ]] : i1 to i64
+// CHECK: %[[Z2:.*]] = arith.constant 0 : i64
+// CHECK: %[[COND:.*]] = arith.cmpi ne, %[[FLAG]], %[[Z2]] : i64
+// CHECK: cf.cond_br %[[COND]], ^[[EXIT:bb[0-9]+]](%[[DIFF]] : i64), ^[[HEAD]](%[[DIFF]] : i64)
+// CHECK: ^[[EXIT]](%{{.*}}: i64):
 // CHECK: return
+// CHECK-NOT: memref<256xi64>
 
 module {
   func.func private @main() {
