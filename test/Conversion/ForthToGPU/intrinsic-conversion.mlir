@@ -8,6 +8,7 @@
 // CHECK: gpu.block_id z
 // CHECK: gpu.block_dim x
 // CHECK: gpu.grid_dim y
+// CHECK: gpu.lane_id
 
 module {
   func.func private @main() attributes {forth.kernel} {
@@ -34,6 +35,10 @@ module {
     %13 = forth.intrinsic "gdim-y" : index
     %14 = arith.index_cast %13 : index to i64
     memref.store %14, %alloca[%12] : memref<256xi64>
+    %15 = arith.addi %12, %c1 : index
+    %16 = forth.intrinsic "lane-id" : index
+    %17 = arith.index_cast %16 : index to i64
+    memref.store %17, %alloca[%15] : memref<256xi64>
     return
   }
 }

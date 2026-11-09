@@ -17,6 +17,8 @@ using namespace mlir::forth;
 #define GET_TYPEDEF_CLASSES
 #include "warpforth/Dialect/Forth/ForthOpsTypes.cpp.inc"
 
+#include "warpforth/Dialect/Forth/ForthOpsEnums.cpp.inc" // IWYU pragma: keep
+
 #define GET_OP_CLASSES
 #include "warpforth/Dialect/Forth/ForthOps.cpp.inc"
 

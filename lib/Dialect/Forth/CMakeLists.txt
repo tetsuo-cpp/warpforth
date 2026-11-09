@@ -6,6 +6,7 @@ add_mlir_dialect_library(MLIRForth
 
   DEPENDS
   MLIRForthOpsIncGen
+  MLIRForthOpsEnumsIncGen
 
   LINK_LIBS PUBLIC
   MLIRControlFlowInterfaces

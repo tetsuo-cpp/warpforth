@@ -489,6 +489,21 @@ static Value emitBarrier(OpBuilder &builder, Location loc, Value inputStack) {
   return inputStack;
 }
 
+template <forth::ShuffleMode Mode>
+static Value emitShuffle(OpBuilder &builder, Location loc, Value inputStack) {
+  Type stackType = forth::StackType::get(builder.getContext());
+  return builder.create<forth::ShuffleOp>(loc, stackType, inputStack, Mode)
+      .getResult();
+}
+
+static Value emitWarpSize(OpBuilder &builder, Location loc, Value inputStack) {
+  Type stackType = forth::StackType::get(builder.getContext());
+  return builder
+      .create<forth::ConstantOp>(loc, stackType, inputStack,
+                                 builder.getI64IntegerAttr(forth::kWarpSize))
+      .getResult();
+}
+
 static const llvm::StringMap<WordEmitter> &getBuiltinWords() {
   static const llvm::StringMap<WordEmitter> words = {
       {"CELLS", emitCells},
@@ -573,6 +588,12 @@ static const llvm::StringMap<WordEmitter> &getBuiltinWords() {
       {"GDIM-Y", emitSimple<forth::GridDimYOp>},
       {"GDIM-Z", emitSimple<forth::GridDimZOp>},
       {"GLOBAL-ID", emitSimple<forth::GlobalIdOp>},
+      {"SHFL-DOWN", emitShuffle<forth::ShuffleMode::Down>},
+      {"SHFL-UP", emitShuffle<forth::ShuffleMode::Up>},
+      {"SHFL-XOR", emitShuffle<forth::ShuffleMode::Xor>},
+      {"SHFL-IDX", emitShuffle<forth::ShuffleMode::Idx>},
+      {"LANE-ID", emitSimple<forth::LaneIdOp>},
+      {"WARP-SIZE", emitWarpSize},
       {"=", emitSimple<forth::EqIOp>},
       {"<", emitSimple<forth::LtIOp>},
       {">", emitSimple<forth::GtIOp>},

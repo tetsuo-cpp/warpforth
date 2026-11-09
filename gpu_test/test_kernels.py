@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import operator
 import struct
 from typing import TYPE_CHECKING
 
@@ -9,6 +11,8 @@ import numpy as np
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from conftest import KernelRunner
 
 pytestmark = pytest.mark.gpu
@@ -873,3 +877,224 @@ def test_naive_attention_f32(kernel_runner: KernelRunner) -> None:
 
     output = _unpack_i64_to_f32(result, n)
     assert output == [pytest.approx(v, rel=1e-5) for v in expected]
+
+
+_WARP_SIZE = 32
+
+_WARP_WORDS = """\
+: WARP-LANES BDIM-X DUP WARP-SIZE > IF DROP WARP-SIZE THEN ;
+: NWARPS BDIM-X WARP-LANES / ;
+: WARP-FMAX 2 / BEGIN DUP 0 > WHILE OVER OVER SHFL-XOR ROT FMAX SWAP 2 / REPEAT DROP ;
+: WARP-FSUM 2 / BEGIN DUP 0 > WHILE OVER OVER SHFL-XOR ROT F+ SWAP 2 / REPEAT DROP ;
+"""
+
+
+def _f64_bits(value: float) -> int:
+    return struct.unpack("<q", struct.pack("<d", value))[0]
+
+
+def _bits_f64(cell: int) -> float:
+    return struct.unpack("<d", struct.pack("<q", cell))[0]
+
+
+def _lane_cell(lane: int) -> int:
+    high = lane - 16
+    low = lane * 0x0808_0808
+    return (high << 32) | low
+
+
+def _shfl_source(mode: str, lane: int, operand: int) -> int:
+    b = operand & (_WARP_SIZE - 1)
+    if mode == "DOWN":
+        return lane + b if lane + b < _WARP_SIZE else lane
+    if mode == "UP":
+        return lane - b if lane - b >= 0 else lane
+    if mode == "XOR":
+        return lane ^ b
+    return b
+
+
+def _butterfly(values: list[float], combine: Callable[[float, float], float]) -> list[float]:
+    lanes = list(values)
+    stride = len(lanes) // 2
+    while stride:
+        lanes = [combine(lanes[k ^ stride], lanes[k]) for k in range(len(lanes))]
+        stride //= 2
+    return lanes
+
+
+def test_shfl_modes_move_whole_cells(kernel_runner: KernelRunner) -> None:
+    cells = [_lane_cell(lane) for lane in range(_WARP_SIZE)]
+    floats = [(-1.0) ** lane * (lane + 1) / 3.0 for lane in range(_WARP_SIZE)]
+    wrapped = 3 + _WARP_SIZE
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n"
+            "\\! param IN i64[32]\n"
+            "\\! param FIN f64[32]\n"
+            "\\! param OUT i64[192]\n"
+            "TID-X CELLS IN + @ 3 SHFL-DOWN TID-X CELLS OUT + !\n"
+            "TID-X CELLS IN + @ 3 SHFL-UP TID-X 32 + CELLS OUT + !\n"
+            "TID-X CELLS IN + @ 3 SHFL-XOR TID-X 64 + CELLS OUT + !\n"
+            f"TID-X CELLS IN + @ {wrapped} SHFL-XOR TID-X 96 + CELLS OUT + !\n"
+            "TID-X CELLS IN + @ 3 SHFL-IDX TID-X 128 + CELLS OUT + !\n"
+            "TID-X CELLS FIN + F@ 5 SHFL-XOR TID-X 160 + CELLS OUT + !"
+        ),
+        params={"IN": cells, "FIN": floats},
+        block=(_WARP_SIZE, 1, 1),
+        output_param=2,
+        output_count=192,
+    )
+
+    lanes = range(_WARP_SIZE)
+    for slot, (mode, operand) in enumerate(
+        [("DOWN", 3), ("UP", 3), ("XOR", 3), ("XOR", wrapped), ("IDX", 3)]
+    ):
+        got = result[slot * _WARP_SIZE : (slot + 1) * _WARP_SIZE]
+        assert got == [cells[_shfl_source(mode, k, operand)] for k in lanes], f"{mode} {operand}"
+    assert result[160:192] == [_f64_bits(floats[_shfl_source("XOR", k, 5)]) for k in lanes]
+
+
+@pytest.mark.parametrize("block_x", [8, 32])
+def test_shfl_partial_warp(kernel_runner: KernelRunner, block_x: int) -> None:
+    x = (np.random.default_rng(7).standard_normal(_WARP_SIZE) * 100.0).tolist()
+    folds = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n\\! param X f64[32]\n\\! param OUT f64[64]\n"
+            + _WARP_WORDS
+            + "TID-X CELLS X + F@ WARP-LANES WARP-FMAX TID-X CELLS OUT + F!\n"
+            "TID-X CELLS X + F@ WARP-LANES WARP-FSUM TID-X 32 + CELLS OUT + F!"
+        ),
+        params={"X": x},
+        block=(block_x, 1, 1),
+        output_param=1,
+        output_count=64,
+    )
+    assert folds[:block_x] == _butterfly(x[:block_x], max)
+    assert folds[32 : 32 + block_x] == _butterfly(x[:block_x], operator.add)
+
+
+@pytest.mark.parametrize("block_x", [8, 32])
+def test_shfl_idx_broadcasts_both_halves(kernel_runner: KernelRunner, block_x: int) -> None:
+    both_halves = (1 << 32) + 1
+    broadcast = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n\\! param OUT i64[32]\n"
+            "TID-X 0= IF 1 32 LSHIFT 1 OR ELSE 0 THEN\n"
+            "0 SHFL-IDX\n"
+            "TID-X CELLS OUT + !"
+        ),
+        block=(block_x, 1, 1),
+        output_count=block_x,
+    )
+    assert broadcast == [both_halves] * block_x
+
+
+_BLOCK_REDUCE_KERNEL = (
+    """\
+\\! kernel main
+\\! param N i64
+\\! param INPUT f64[4096]
+\\! param OUTPUT f64[1]
+\\! shared PART f64[32]
+"""
+    + _WARP_WORDS
+    + """\
+: WARP-FSUM0 2 / BEGIN DUP 0 > WHILE OVER OVER SHFL-DOWN ROT F+ SWAP 2 / REPEAT DROP ;
+0.0
+GLOBAL-ID
+BEGIN DUP N < WHILE
+  DUP CELLS INPUT + F@
+  ROT F+
+  SWAP
+  BDIM-X +
+REPEAT
+DROP
+WARP-LANES WARP-FSUM0
+LANE-ID 0= IF DUP TID-X WARP-SIZE / CELLS PART + SF! THEN
+DROP
+BARRIER
+TID-X WARP-SIZE < IF
+  TID-X NWARPS < IF TID-X CELLS PART + SF@ ELSE 0.0 THEN
+  NWARPS WARP-FSUM0
+  TID-X 0= IF 0 CELLS OUTPUT + F! ELSE DROP THEN
+THEN
+"""
+)
+
+
+@pytest.mark.parametrize("block_x", [64, 256])
+def test_block_reduce(kernel_runner: KernelRunner, block_x: int) -> None:
+    n = 3000
+    values = (np.random.default_rng(42).standard_normal(n) * 10.0).tolist()
+    result = kernel_runner.run(
+        forth_source=_BLOCK_REDUCE_KERNEL,
+        params={"N": n, "INPUT": values},
+        block=(block_x, 1, 1),
+        output_param=2,
+        output_count=1,
+    )
+    assert result[0] == pytest.approx(math.fsum(values), rel=1e-9, abs=1e-9)
+
+
+_BLOCK_ALLREDUCE_KERNEL = (
+    """\
+\\! kernel main
+\\! param X f64[64]
+\\! param OUT i64[128]
+\\! shared RED f64[32]
+"""
+    + _WARP_WORDS
+    + """\
+: BLOCK-FMAX { rdz -- }
+  WARP-LANES WARP-FMAX
+  LANE-ID 0= IF DUP TID-X WARP-SIZE / CELLS rdz + SF! THEN
+  DROP
+  BARRIER
+  LANE-ID NWARPS < IF LANE-ID CELLS rdz + SF@ ELSE -1.0e30 THEN
+  NWARPS WARP-FMAX
+  0 SHFL-IDX
+;
+: BLOCK-FSUM { rdz -- }
+  WARP-LANES WARP-FSUM
+  LANE-ID 0= IF DUP TID-X WARP-SIZE / CELLS rdz + SF! THEN
+  DROP
+  BARRIER
+  LANE-ID NWARPS < IF LANE-ID CELLS rdz + SF@ ELSE 0.0 THEN
+  NWARPS WARP-FSUM
+  0 SHFL-IDX
+;
+TID-X CELLS X + F@ RED BLOCK-FMAX TID-X CELLS OUT + !
+BARRIER
+TID-X CELLS X + F@ RED BLOCK-FSUM TID-X 64 + CELLS OUT + !
+"""
+)
+
+
+@pytest.mark.parametrize("block_x", [8, 64])
+def test_block_allreduce_same_bits(kernel_runner: KernelRunner, block_x: int) -> None:
+    x = (np.random.default_rng(11).standard_normal(64) * 100.0).tolist()
+    result = kernel_runner.run(
+        forth_source=_BLOCK_ALLREDUCE_KERNEL,
+        params={"X": x},
+        block=(block_x, 1, 1),
+        output_param=1,
+        output_count=128,
+    )
+    maxes = result[:block_x]
+    sums = result[64 : 64 + block_x]
+    assert len(set(maxes)) == 1
+    assert len(set(sums)) == 1
+    assert _bits_f64(maxes[0]) == max(x[:block_x])
+    assert _bits_f64(sums[0]) == pytest.approx(math.fsum(x[:block_x]), rel=1e-9, abs=1e-9)
+
+
+def test_lane_id_follows_linear_thread_index(kernel_runner: KernelRunner) -> None:
+    result = kernel_runner.run(
+        forth_source=(
+            "\\! kernel main\n\\! param OUT i64[64]\nLANE-ID TID-Y BDIM-X * TID-X + CELLS OUT + !"
+        ),
+        block=(16, 4, 1),
+        output_count=64,
+    )
+    assert result == [index % _WARP_SIZE for index in range(64)]
