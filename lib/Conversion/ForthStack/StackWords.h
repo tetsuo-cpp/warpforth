@@ -65,6 +65,10 @@ struct StackWord {
 /// The row for `op`, or null when the table has none.
 const StackWord *lookupStackWord(Operation *op);
 
+/// Fails, with an error for each one, when a Forth op that takes a
+/// !forth.stack has no row. The Forth dialect must be loaded.
+LogicalResult verifyStackWordTableCoversDialect(MLIRContext *context);
+
 } // namespace stack
 } // namespace warpforth
 } // namespace mlir

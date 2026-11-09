@@ -52,7 +52,9 @@ def LowerForthStack : Pass<"lower-forth-stack", "mlir::ModuleOp"> {
 
   let dependentDialects = ["mlir::arith::ArithDialect",
                            "mlir::cf::ControlFlowDialect",
+                           "mlir::forth::ForthDialect",
                            "mlir::LLVM::LLVMDialect",
+                           "mlir::math::MathDialect",
                            "mlir::memref::MemRefDialect"];
 }
 

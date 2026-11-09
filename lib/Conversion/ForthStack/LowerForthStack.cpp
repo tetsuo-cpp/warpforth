@@ -13,6 +13,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h" // IWYU pragma: keep
+#include "mlir/Dialect/Math/IR/Math.h"       // IWYU pragma: keep
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
@@ -487,6 +488,10 @@ Value StackSimulator::indexConstant(int64_t value) {
 
 struct LowerForthStackPass
     : public impl::LowerForthStackBase<LowerForthStackPass> {
+  LogicalResult initialize(MLIRContext *context) override {
+    return stack::verifyStackWordTableCoversDialect(context);
+  }
+
   void runOnOperation() override {
     ModuleOp module = getOperation();
     if (failed(verifyWordsInlined(module)))

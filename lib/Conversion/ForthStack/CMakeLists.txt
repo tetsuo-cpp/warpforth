@@ -15,6 +15,7 @@ add_mlir_conversion_library(MLIRForthStackConversion
   MLIRDialectUtils
   MLIRFuncDialect
   MLIRLLVMDialect
+  MLIRMathDialect
   MLIRMemRefDialect
   MLIRNVVMDialect
   MLIRTransformUtils
