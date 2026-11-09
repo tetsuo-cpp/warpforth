@@ -34,6 +34,14 @@ namespace {
 
 // Stack configuration constants
 constexpr int64_t kStackSize = 256;
+constexpr const char kKnownDepthAttr[] = "known_depth";
+
+static std::optional<unsigned> getKnownDepth(Operation *op) {
+  auto attr = op->getAttrOfType<IntegerAttr>(kKnownDepthAttr);
+  if (!attr)
+    return std::nullopt;
+  return static_cast<unsigned>(attr.getInt());
+}
 /// Type converter for forth.stack -> memref + index
 class ForthToMemRefTypeConverter : public TypeConverter {
 public:
@@ -80,6 +88,9 @@ struct StackEffectConversion : public OpConversionPattern<ForthOp> {
   LogicalResult
   matchAndRewrite(ForthOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const final {
+    if (getKnownDepth(op.getOperation()))
+      return failure();
+
     ValueRange inputStack = adaptor.getOperands()[0];
     Value memref = inputStack[0];
     FailureOr<Value> newSP =
@@ -943,9 +954,16 @@ static bool hasStackSignature(func::FuncOp func) {
          llvm::any_of(func.getResultTypes(), isForthStack);
 }
 
-static bool simulateBlock(Block *block, std::optional<unsigned> depth,
-                          JoinDepth &joins, SmallVectorImpl<Block *> &work,
-                          bool &sawStack) {
+static bool forwardsStack(OperandRange operands) {
+  return llvm::any_of(
+      operands, [](Value value) { return isForthStack(value.getType()); });
+}
+
+static bool
+simulateBlock(Block *block, std::optional<unsigned> depth, JoinDepth &joins,
+              SmallVectorImpl<Block *> &work,
+              SmallVectorImpl<std::pair<Operation *, unsigned>> &tags,
+              bool &sawStack) {
   for (Operation &op : *block) {
     if (isa<forth::BarrierOp, forth::IntrinsicOp>(op))
       continue;
@@ -954,6 +972,7 @@ static bool simulateBlock(Block *block, std::optional<unsigned> depth,
         return false;
       depth = 0;
       sawStack = true;
+      tags.push_back({&op, 0});
       continue;
     }
     if (isa<forth::PickOp, forth::RollOp>(op))
@@ -966,6 +985,8 @@ static bool simulateBlock(Block *block, std::optional<unsigned> depth,
     if (auto branch = dyn_cast<cf::BranchOp>(op)) {
       if (!joins.note(branch.getDest(), branch.getDestOperands(), depth, work))
         return false;
+      if (depth.has_value() && forwardsStack(branch.getDestOperands()))
+        tags.push_back({&op, *depth});
       continue;
     }
     if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
@@ -974,6 +995,9 @@ static bool simulateBlock(Block *block, std::optional<unsigned> depth,
           !joins.note(branch.getFalseDest(), branch.getFalseDestOperands(),
                       depth, work))
         return false;
+      if (depth.has_value() && (forwardsStack(branch.getTrueDestOperands()) ||
+                                forwardsStack(branch.getFalseDestOperands())))
+        tags.push_back({&op, *depth});
       continue;
     }
     if (!usesForthStack(&op))
@@ -981,23 +1005,26 @@ static bool simulateBlock(Block *block, std::optional<unsigned> depth,
     const WordLowering *word = lookupWord(&op);
     if (!word || !depth.has_value() || *depth < word->pops)
       return false;
+    tags.push_back({&op, *depth});
     depth = *depth - word->pops + word->pushes;
   }
   return true;
 }
 
-static bool analyzeKnownStack(func::FuncOp func, JoinDepth &joins) {
+static bool tagKnownDepths(func::FuncOp func) {
   if (hasStackSignature(func))
     return false;
 
+  JoinDepth joins;
   joins.entry = &func.front();
   SmallVector<Block *, 8> work;
   SmallPtrSet<Block *, 8> seen;
+  SmallVector<std::pair<Operation *, unsigned>, 16> tags;
   bool sawStack = false;
   auto run = [&](Block *block, std::optional<unsigned> depth) {
     if (!seen.insert(block).second)
       return true;
-    return simulateBlock(block, depth, joins, work, sawStack);
+    return simulateBlock(block, depth, joins, work, tags, sawStack);
   };
   if (!run(joins.entry, std::nullopt))
     return false;
@@ -1008,8 +1035,14 @@ static bool analyzeKnownStack(func::FuncOp func, JoinDepth &joins) {
   }
   if (!sawStack || joins.at.contains(joins.entry))
     return false;
-  return llvm::all_of(func.getBody(),
-                      [&](Block &block) { return seen.contains(&block); });
+  if (!llvm::all_of(func.getBody(),
+                    [&](Block &block) { return seen.contains(&block); }))
+    return false;
+
+  IntegerType i64 = IntegerType::get(func.getContext(), 64);
+  for (auto [op, depth] : tags)
+    op->setAttr(kKnownDepthAttr, IntegerAttr::get(i64, depth));
+  return true;
 }
 
 static void rewriteDestOperands(MutableOperandRange destOperands, Block *dest,
@@ -1066,9 +1099,74 @@ static void applyWord(Operation &op, const WordLowering *word,
   }
 }
 
-static void lowerKnownStack(func::FuncOp func, const JoinDepth &joins) {
+static bool forwardsStackTo(Operation *terminator, Block *dest) {
+  if (auto branch = dyn_cast<cf::BranchOp>(terminator))
+    return branch.getDest() == dest && forwardsStack(branch.getDestOperands());
+  if (auto branch = dyn_cast<cf::CondBranchOp>(terminator)) {
+    if (branch.getTrueDest() == dest &&
+        forwardsStack(branch.getTrueDestOperands()))
+      return true;
+    if (branch.getFalseDest() == dest &&
+        forwardsStack(branch.getFalseDestOperands()))
+      return true;
+  }
+  return false;
+}
+
+static std::optional<unsigned> incomingDepth(Block &block) {
+  for (Block *pred : block.getPredecessors()) {
+    Operation *terminator = pred->getTerminator();
+    if (!forwardsStackTo(terminator, &block))
+      continue;
+    if (std::optional<unsigned> depth = getKnownDepth(terminator))
+      return depth;
+  }
+  return std::nullopt;
+}
+
+static LogicalResult lowerFromDepthAttr(Operation *op, KnownStack &stack,
+                                        OpBuilder &builder) {
+  std::optional<unsigned> depth = getKnownDepth(op);
+  if (!depth)
+    return failure();
+  if (isa<forth::StackOp>(op)) {
+    if (*depth != 0 || stack.depth() != 0)
+      return failure();
+    stack.clear();
+    return success();
+  }
+  if (stack.depth() != *depth)
+    return failure();
+  if (auto branch = dyn_cast<cf::BranchOp>(op)) {
+    rewriteDestOperands(branch.getDestOperandsMutable(), branch.getDest(),
+                        stack.cells);
+    return success();
+  }
+  if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
+    rewriteDestOperands(branch.getTrueDestOperandsMutable(),
+                        branch.getTrueDest(), stack.cells);
+    rewriteDestOperands(branch.getFalseDestOperandsMutable(),
+                        branch.getFalseDest(), stack.cells);
+    return success();
+  }
+  const WordLowering *word = lookupWord(op);
+  if (!word || *depth < word->pops)
+    return failure();
+  applyWord(*op, word, stack, builder);
+  return success();
+}
+
+static LogicalResult lowerTaggedOps(func::FuncOp func) {
   OpBuilder builder(func.getContext());
-  for (auto [block, depth] : joins.at) {
+  Block &entry = func.front();
+  DenseMap<Block *, unsigned> incoming;
+  for (Block &block : func.getBody()) {
+    if (&block == &entry)
+      continue;
+    if (std::optional<unsigned> depth = incomingDepth(block))
+      incoming[&block] = *depth;
+  }
+  for (auto [block, depth] : incoming) {
     if (depth == 0)
       continue;
     SmallVector<Type, 8> types(depth, builder.getI64Type());
@@ -1078,7 +1176,7 @@ static void lowerKnownStack(func::FuncOp func, const JoinDepth &joins) {
 
   for (Block &block : func.getBody()) {
     KnownStack stack;
-    if (auto it = joins.at.find(&block); it != joins.at.end()) {
+    if (auto it = incoming.find(&block); it != incoming.end()) {
       unsigned depth = it->second;
       unsigned numArgs = block.getNumArguments();
       for (unsigned i = numArgs - depth; i < numArgs; ++i)
@@ -1087,28 +1185,14 @@ static void lowerKnownStack(func::FuncOp func, const JoinDepth &joins) {
 
     SmallVector<Operation *, 8> erase;
     for (Operation &op : block) {
-      if (isa<forth::StackOp>(op)) {
-        stack.clear();
+      if (!getKnownDepth(&op))
+        continue;
+      if (failed(lowerFromDepthAttr(&op, stack, builder)))
+        return failure();
+      if (isa<cf::BranchOp, cf::CondBranchOp>(op))
+        op.removeAttr(kKnownDepthAttr);
+      else
         erase.push_back(&op);
-        continue;
-      }
-      if (auto branch = dyn_cast<cf::BranchOp>(op)) {
-        rewriteDestOperands(branch.getDestOperandsMutable(), branch.getDest(),
-                            stack.cells);
-        continue;
-      }
-      if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
-        rewriteDestOperands(branch.getTrueDestOperandsMutable(),
-                            branch.getTrueDest(), stack.cells);
-        rewriteDestOperands(branch.getFalseDestOperandsMutable(),
-                            branch.getFalseDest(), stack.cells);
-        continue;
-      }
-      const WordLowering *word = lookupWord(&op);
-      if (!word)
-        continue;
-      applyWord(op, word, stack, builder);
-      erase.push_back(&op);
     }
     for (Operation *op : llvm::reverse(erase))
       op->erase();
@@ -1122,6 +1206,7 @@ static void lowerKnownStack(func::FuncOp func, const JoinDepth &joins) {
       break;
     }
   }
+  return success();
 }
 
 /// Conversion pass implementation.
@@ -1138,11 +1223,13 @@ struct ConvertForthToMemRefPass
       (void)eraseUnreachableBlocks(rewriter, funcOp->getRegions());
     });
 
-    module.walk([&](func::FuncOp funcOp) {
-      JoinDepth joins;
-      if (analyzeKnownStack(funcOp, joins))
-        lowerKnownStack(funcOp, joins);
+    WalkResult tagged = module.walk([&](func::FuncOp funcOp) {
+      if (tagKnownDepths(funcOp) && failed(lowerTaggedOps(funcOp)))
+        return WalkResult::interrupt();
+      return WalkResult::advance();
     });
+    if (tagged.wasInterrupted())
+      return signalPassFailure();
 
     ConversionTarget target(*context);
 
