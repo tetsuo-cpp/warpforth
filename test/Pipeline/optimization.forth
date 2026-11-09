@@ -17,5 +17,4 @@
 \! kernel main
 \! param DATA i64[4]
 : DOUBLE DUP + ;
-5 DOUBLE DROP
-DATA DROP DATA DROP
+5 DOUBLE DATA @ + DATA !

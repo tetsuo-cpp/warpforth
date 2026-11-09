@@ -89,15 +89,16 @@ static StringRef getBinaryFormat(gpu::CompilationTarget target) {
 
 void buildWarpForthLoweringPipeline(OpPassManager &pm,
                                     const WarpForthPipelineOptions &options) {
-  // Stage 1: Lower Forth to MemRef (CF ops pass through as-is)
-  pm.addPass(createConvertForthToMemRefPass());
-
-  // Stage 2: Inline user words while both callers and callees are func.func.
-  // MLIR's GPU inliner does not support inlining a func.func region into a
-  // gpu.func region, so this must precede GPU conversion.
+  // Stage 1: Inline user words while they are still Forth, so the kernel is the
+  // whole program when its stack is lowered. MLIR's GPU inliner does not
+  // support inlining a func.func region into a gpu.func region, so this must
+  // precede GPU conversion.
   pm.addPass(createInlinerPass());
 
-  // Stage 3: Convert to GPU dialect (includes private address space annotation)
+  // Stage 2: Lower Forth to MemRef (CF ops pass through as-is)
+  pm.addPass(createConvertForthToMemRefPass());
+
+  // Stage 3: Convert to GPU dialect
   pm.addPass(createConvertForthToGPUPass());
 
   // Stage 4: Optimize the materialized stack and memory IR in the kernel.

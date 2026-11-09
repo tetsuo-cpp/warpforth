@@ -7,7 +7,8 @@
 #include "warpforth/Dialect/Forth/ForthDialect.h"
 #include "mlir/IR/Builders.h"              // IWYU pragma: keep
 #include "mlir/IR/DialectImplementation.h" // IWYU pragma: keep
-#include "llvm/ADT/TypeSwitch.h"           // IWYU pragma: keep
+#include "mlir/Transforms/InliningUtils.h"
+#include "llvm/ADT/TypeSwitch.h" // IWYU pragma: keep
 
 using namespace mlir;
 using namespace mlir::forth;
@@ -19,6 +20,18 @@ using namespace mlir::forth;
 
 #define GET_OP_CLASSES
 #include "warpforth/Dialect/Forth/ForthOps.cpp.inc"
+
+namespace {
+/// Forth ops hold no state tied to their enclosing word, so every word can be
+/// inlined into its caller before the stack is lowered.
+struct ForthInlinerInterface : public DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
+
+  bool isLegalToInline(Operation *, Region *, bool, IRMapping &) const final {
+    return true;
+  }
+};
+} // namespace
 
 //===----------------------------------------------------------------------===//
 // Forth dialect.
@@ -33,4 +46,5 @@ void ForthDialect::initialize() {
 #define GET_OP_LIST
 #include "warpforth/Dialect/Forth/ForthOps.cpp.inc"
       >();
+  addInterfaces<ForthInlinerInterface>();
 }
