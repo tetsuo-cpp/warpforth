@@ -322,3 +322,43 @@ n +LOOP   \ increment index by n instead of 1
 | Word | Stack Effect | Description |
 |------|-------------|-------------|
 | `BARRIER` | `( -- )` | Thread block barrier (`__syncthreads`) |
+
+### Warp Operations
+
+A warp is a group of 32 threads in a block. Lane k is a thread's position in its warp, from 0 to 31.
+
+| Word | Stack Effect | Description |
+|------|-------------|-------------|
+| `SHFL-DOWN` | `( x n -- y )` | Lane k gets x from lane k+n, or keeps its own x when k+n > 31 |
+| `SHFL-UP` | `( x n -- y )` | Lane k gets x from lane k-n, or keeps its own x when k-n < 0 |
+| `SHFL-XOR` | `( x m -- y )` | Lane k gets x from lane k XOR m |
+| `SHFL-IDX` | `( x j -- y )` | Lane k gets x from lane j |
+| `LANE-ID` | `( -- k )` | This thread's lane number, 0 to 31 |
+| `WARP-SIZE` | `( -- 32 )` | The constant 32 |
+
+The warp words follow these rules:
+
+1. x is any cell. Integers and f64 values arrive bit for bit.
+2. Only the low five bits of n, m, and j count. `33 SHFL-IDX` reads lane 1.
+3. Every launched lane of a warp must execute the same SHFL word together. Shuffle first, then branch on the result. A SHFL word inside an `IF` that sends part of a warp elsewhere is undefined.
+4. A warp is partial when the block does not fill it. A one-dimensional block of 8 threads is one partial warp. Reading a lane that was not launched gives an unspecified value. `WARP-LANES` below is `min(BDIM-X, 32)`. That is the launched lane count for a one-dimensional block of at most 32 threads, and for every warp of a one-dimensional block whose size is a multiple of 32.
+5. `LANE-ID` is the hardware lane number. It equals `TID-X 32 MOD` only in a one-dimensional block.
+
+```forth
+\ ( -- n ) min(BDIM-X, 32).
+: WARP-LANES  BDIM-X DUP WARP-SIZE > IF DROP WARP-SIZE THEN ;
+
+\ ( f n -- sum ) Butterfly sum over lanes 0 to n-1. Each of those lanes ends with the same bits.
+\ n is a power of two from 1 to WARP-SIZE. Every lane of the warp calls it.
+: WARP-FSUM
+  2 /
+  BEGIN DUP 0 > WHILE
+    OVER OVER SHFL-XOR
+    ROT F+ SWAP
+    2 /
+  REPEAT
+  DROP
+;
+
+GLOBAL-ID CELLS INPUT + F@ WARP-LANES WARP-FSUM
+```

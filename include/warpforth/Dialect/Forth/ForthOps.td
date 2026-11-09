@@ -8,6 +8,7 @@
 #define FORTH_OPS
 
 include "warpforth/Dialect/Forth/ForthDialect.td"
+include "mlir/IR/EnumAttr.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 //===----------------------------------------------------------------------===//
@@ -728,6 +729,56 @@ def Forth_GlobalIdOp : Forth_StackOpBase<"global_id"> {
     Computes and pushes the 1D global thread ID.
     Equivalent to blockIdx.x * blockDim.x + threadIdx.x.
     Forth semantics: ( -- global_id )
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Warp operations.
+//===----------------------------------------------------------------------===//
+
+def Forth_ShuffleModeDown : I32EnumAttrCase<"Down", 0, "down">;
+def Forth_ShuffleModeUp : I32EnumAttrCase<"Up", 1, "up">;
+def Forth_ShuffleModeXor : I32EnumAttrCase<"Xor", 2, "xor">;
+def Forth_ShuffleModeIdx : I32EnumAttrCase<"Idx", 3, "idx">;
+
+def Forth_ShuffleMode : I32EnumAttr<"ShuffleMode",
+    "rule that picks the source lane of a warp shuffle",
+    [Forth_ShuffleModeDown, Forth_ShuffleModeUp, Forth_ShuffleModeXor,
+     Forth_ShuffleModeIdx]> {
+  let cppNamespace = "::mlir::forth";
+}
+
+def Forth_ShuffleOp : Forth_Op<"shuffle", []> {
+  let summary = "Read the top cell from another lane of the warp";
+  let description = [{
+    Pops b, then x, and pushes the x that source lane j held. For lane k,
+    with b taken modulo 32:
+
+    - down: j = k + b, or k when k + b > 31
+    - up:   j = k - b, or k when k - b < 0
+    - xor:  j = k xor b
+    - idx:  j = b
+
+    The whole 64-bit cell moves. All 32 lanes take part with member mask
+    0xFFFFFFFF, and every launched lane of the warp must execute the op
+    together. A source lane that was not launched yields an unspecified
+    value.
+
+    Forth semantics: ( x b -- y )
+  }];
+  let arguments = (ins Forth_StackType:$input_stack,
+                       Forth_ShuffleMode:$mode);
+  let results = (outs Forth_StackType:$output_stack);
+  let assemblyFormat = [{
+    $mode $input_stack attr-dict `:` type($input_stack) `->` type($output_stack)
+  }];
+}
+
+def Forth_LaneIdOp : Forth_StackOpBase<"lane_id"> {
+  let summary = "Push this thread's lane within its warp";
+  let description = [{
+    Pushes the hardware lane number, 0 to 31 (PTX %laneid).
+    Forth semantics: ( -- lane )
   }];
 }
 

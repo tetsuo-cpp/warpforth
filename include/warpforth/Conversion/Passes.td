@@ -21,6 +21,8 @@ def ConvertForthToMemRef
 
     Forth operations are converted to corresponding memref load/store operations
     with explicit stack pointer arithmetic.
+
+    `forth.shuffle` becomes a `gpu.shuffle` of the whole i64 cell at width 32.
   }];
 
   let constructor = "mlir::warpforth::createConvertForthToMemRefPass()";
@@ -29,7 +31,8 @@ def ConvertForthToMemRef
                            "mlir::arith::ArithDialect",
                            "mlir::LLVM::LLVMDialect",
                            "mlir::cf::ControlFlowDialect",
-                           "mlir::math::MathDialect"];
+                           "mlir::math::MathDialect",
+                           "mlir::gpu::GPUDialect"];
 }
 
 def ConvertForthToGPU : Pass<"convert-forth-to-gpu", "mlir::ModuleOp"> {
@@ -44,7 +47,7 @@ def ConvertForthToGPU : Pass<"convert-forth-to-gpu", "mlir::ModuleOp"> {
 
     Additionally, the pass lowers forth.intrinsic operations to corresponding
     GPU dialect operations (gpu.thread_id, gpu.block_id, gpu.block_dim,
-    gpu.grid_dim).
+    gpu.grid_dim, gpu.lane_id).
   }];
 
   let constructor = "mlir::warpforth::createConvertForthToGPUPass()";

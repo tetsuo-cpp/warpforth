@@ -59,6 +59,7 @@ add_custom_target(check-clang-tidy
   DEPENDS
     MLIRConversionPassIncGen
     MLIRForthOpsIncGen
+    MLIRForthOpsEnumsIncGen
   COMMENT "Running clang-tidy"
   VERBATIM
 )
@@ -78,6 +79,7 @@ if(IWYU_EXECUTABLE AND IWYU_TOOL_EXECUTABLE)
     DEPENDS
       MLIRConversionPassIncGen
       MLIRForthOpsIncGen
+      MLIRForthOpsEnumsIncGen
     COMMENT "Checking C++ includes with include-what-you-use"
     VERBATIM
   )

@@ -13,6 +13,7 @@ add_mlir_conversion_library(MLIRForthToMemRefConversion
   MLIRArithDialect
   MLIRLLVMDialect
   MLIRFuncDialect
+  MLIRGPUDialect
   MLIRControlFlowDialect
   MLIRMathDialect
   MLIRForth

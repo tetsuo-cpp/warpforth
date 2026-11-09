@@ -9,6 +9,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -1053,6 +1054,51 @@ struct GlobalIdOpConversion : public StackEffectConversion<forth::GlobalIdOp> {
   }
 };
 
+static gpu::ShuffleMode toGpuShuffleMode(forth::ShuffleMode mode) {
+  switch (mode) {
+  case forth::ShuffleMode::Down:
+    return gpu::ShuffleMode::DOWN;
+  case forth::ShuffleMode::Up:
+    return gpu::ShuffleMode::UP;
+  case forth::ShuffleMode::Xor:
+    return gpu::ShuffleMode::XOR;
+  case forth::ShuffleMode::Idx:
+    return gpu::ShuffleMode::IDX;
+  }
+  llvm_unreachable("unknown forth::ShuffleMode");
+}
+
+struct ShuffleOpConversion : public StackEffectConversion<forth::ShuffleOp> {
+  using StackEffectConversion::StackEffectConversion;
+
+  FailureOr<Value>
+  rewriteStack(forth::ShuffleOp op, OneToNOpAdaptor adaptor, Value memref,
+               Value stackPtr,
+               ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value b = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
+    Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
+    Value x = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
+
+    Value offset32 =
+        rewriter.create<arith::TruncIOp>(loc, rewriter.getI32Type(), b);
+    Value laneMask = rewriter.create<arith::ConstantIntOp>(
+        loc, forth::kWarpSize - 1, rewriter.getI32Type());
+    Value offset = rewriter.create<arith::AndIOp>(loc, offset32, laneMask);
+    Value width = rewriter.create<arith::ConstantIntOp>(loc, forth::kWarpSize,
+                                                        rewriter.getI32Type());
+    Value y = rewriter
+                  .create<gpu::ShuffleOp>(loc, x, offset, width,
+                                          toGpuShuffleMode(op.getMode()))
+                  .getShuffleResult();
+
+    rewriter.create<memref::StoreOp>(loc, y, memref, spMinus1);
+    return spMinus1;
+  }
+};
+
 /// Conversion pattern for forth.pop_flag operation.
 /// Pops top of stack, compares != 0, returns (memref, newSP, i1 flag).
 struct PopFlagOpConversion : public OpConversionPattern<forth::PopFlagOp> {
@@ -1201,9 +1247,9 @@ struct ConvertForthToMemRefPass
                            LLVM::LLVMDialect, cf::ControlFlowDialect,
                            math::MathDialect>();
 
-    // Mark IntrinsicOp and BarrierOp as legal (to be lowered later)
     target.addLegalOp<forth::IntrinsicOp>();
     target.addLegalOp<forth::BarrierOp>();
+    target.addLegalOp<gpu::ShuffleOp>();
 
     // Use dynamic legality for func operations to ensure they're properly
     // converted
@@ -1310,9 +1356,13 @@ struct ConvertForthToMemRefPass
                                                            context, "gdim-y");
     patterns.add<IntrinsicOpConversion<forth::GridDimZOp>>(typeConverter,
                                                            context, "gdim-z");
+    patterns.add<IntrinsicOpConversion<forth::LaneIdOp>>(typeConverter, context,
+                                                         "lane-id");
 
     // GlobalIdOp has custom pattern
     patterns.add<GlobalIdOpConversion>(typeConverter, context);
+
+    patterns.add<ShuffleOpConversion>(typeConverter, context);
 
     populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
         patterns, typeConverter);

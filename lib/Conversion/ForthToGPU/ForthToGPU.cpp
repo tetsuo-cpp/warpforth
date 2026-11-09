@@ -36,9 +36,6 @@ static gpu::Dimension getDimensionFromIntrinsic(StringRef intrinsic) {
   return gpu::Dimension::x; // Default
 }
 
-/// Conversion pattern for forth.intrinsic to GPU dialect operations.
-/// Maps intrinsic names like "tid-x", "bid-x", etc. to gpu.thread_id,
-/// gpu.block_id, gpu.block_dim, gpu.grid_dim operations.
 struct IntrinsicOpConversion : public OpConversionPattern<forth::IntrinsicOp> {
   using OpConversionPattern<forth::IntrinsicOp>::OpConversionPattern;
 
@@ -50,7 +47,10 @@ struct IntrinsicOpConversion : public OpConversionPattern<forth::IntrinsicOp> {
     gpu::Dimension dim = getDimensionFromIntrinsic(intrinsic);
 
     Value result;
-    if (intrinsic.starts_with("tid-")) {
+    if (intrinsic == "lane-id") {
+      IntegerAttr noUpperBound;
+      result = rewriter.create<gpu::LaneIdOp>(loc, noUpperBound);
+    } else if (intrinsic.starts_with("tid-")) {
       // thread_id: tid-x, tid-y, tid-z
       result =
           rewriter.create<gpu::ThreadIdOp>(loc, rewriter.getIndexType(), dim);
