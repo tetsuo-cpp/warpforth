@@ -1,6 +1,5 @@
 // RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
 
-// 2 3 + stored to global address 100. The sum is 5.
 // CHECK-LABEL: func.func private @main
 // CHECK-NOT: memref<256xi64>
 // CHECK: %[[TWO:.*]] = arith.constant 2 : i64

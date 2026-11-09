@@ -1,8 +1,5 @@
 // RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
 
-// 1 IF 42 ELSE 99 THEN 100 !
-// Both arms push one cell. The join stores that cell.
-
 // CHECK-LABEL: func.func private @main
 // CHECK-NOT: memref<256xi64>
 // CHECK: %[[ONE:.*]] = arith.constant 1 : i64

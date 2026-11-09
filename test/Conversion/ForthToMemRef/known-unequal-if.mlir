@@ -1,8 +1,5 @@
 // RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
 
-// 1 IF 42 THEN
-// The true arm pushes a cell and the false arm does not.
-
 // CHECK-LABEL: func.func private @main
 // CHECK: memref.alloca() : memref<256xi64>
 

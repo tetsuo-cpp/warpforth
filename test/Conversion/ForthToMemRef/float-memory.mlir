@@ -3,13 +3,11 @@
 // CHECK-LABEL: func.func private @main
 // CHECK-NOT: memref<256xi64>
 
-// load f64 from global address 1000 and keep the bits as i64
 // CHECK: %[[A1000:.*]] = arith.constant 1000 : i64
 // CHECK: %[[P1000:.*]] = llvm.inttoptr %[[A1000]] : i64 to !llvm.ptr<1>
 // CHECK: %[[LOADED:.*]] = llvm.load %[[P1000]] : !llvm.ptr<1> -> f64
 // CHECK: arith.bitcast %[[LOADED]] : f64 to i64
 
-// store 3.14 to global address 2000
 // CHECK: %[[PI:.*]] = arith.constant 3.140000e+00 : f64
 // CHECK: %[[BITS:.*]] = arith.bitcast %[[PI]] : f64 to i64
 // CHECK: %[[A2000:.*]] = arith.constant 2000 : i64

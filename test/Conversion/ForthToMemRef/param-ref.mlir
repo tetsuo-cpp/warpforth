@@ -6,7 +6,6 @@
 // CHECK: %[[POINTER:.*]] = memref.extract_aligned_pointer_as_index %[[ARRAY]] : memref<256xi64> -> index
 // CHECK: arith.index_cast %[[POINTER]] : index to i64
 
-// An i64 parameter is already the cell, so the body does not allocate a stack.
 // CHECK-LABEL: func.func private @i64_param(
 // CHECK-SAME: %{{.*}}: i64 {forth.param_name = "count"})
 // CHECK-NOT: memref.alloca() : memref<256xi64>

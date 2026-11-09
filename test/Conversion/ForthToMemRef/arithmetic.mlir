@@ -3,7 +3,6 @@
 // CHECK-LABEL: func.func private @main
 // CHECK-NOT: memref<256xi64>
 
-// 10 20 + 3 - 4 * 2 / 5 MOD
 // CHECK: %[[C10:.*]] = arith.constant 10 : i64
 // CHECK: %[[C20:.*]] = arith.constant 20 : i64
 // CHECK: %[[ADD:.*]] = arith.addi %[[C10]], %[[C20]] : i64

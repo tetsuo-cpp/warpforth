@@ -20,6 +20,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
@@ -397,7 +398,6 @@ struct RollOpConversion : public StackEffectConversion<forth::RollOp> {
   }
 };
 
-/// Pops two values, applies the word, pushes the result: (a b -- result)
 template <typename ForthOp>
 struct BinaryArithOpConversion : public StackEffectConversion<ForthOp> {
   using Base = StackEffectConversion<ForthOp>;
@@ -447,7 +447,6 @@ using DivFOpConversion = BinaryArithOpConversion<forth::DivFOp>;
 using MaxFOpConversion = BinaryArithOpConversion<forth::MaxFOp>;
 using MinFOpConversion = BinaryArithOpConversion<forth::MinFOp>;
 
-/// Pops one value, applies the word, pushes the result: (f -- result)
 template <typename ForthOp>
 struct UnaryFloatOpConversion : public StackEffectConversion<ForthOp> {
   using Base = StackEffectConversion<ForthOp>;
@@ -584,7 +583,6 @@ struct ParamRefOpConversion : public StackEffectConversion<forth::ParamRefOp> {
   }
 };
 
-/// Pops an address, loads through it, and pushes the cell: (addr -- value)
 template <typename ForthOp>
 struct MemoryLoadOpConversion : public StackEffectConversion<ForthOp> {
   using Base = StackEffectConversion<ForthOp>;
@@ -626,7 +624,6 @@ using LoadF32OpConversion = MemoryLoadOpConversion<forth::LoadF32Op>;
 using SharedLoadF32OpConversion =
     MemoryLoadOpConversion<forth::SharedLoadF32Op>;
 
-/// Pops a value and an address and stores the value: (value addr -- )
 template <typename ForthOp>
 struct MemoryStoreOpConversion : public StackEffectConversion<ForthOp> {
   using Base = StackEffectConversion<ForthOp>;
@@ -709,7 +706,6 @@ struct FToIOpConversion : public StackEffectConversion<forth::FToIOp> {
   }
 };
 
-/// Pushes one GPU index word: ( -- index )
 template <typename ForthOp>
 struct IntrinsicOpConversion : public StackEffectConversion<ForthOp> {
   using Base = StackEffectConversion<ForthOp>;
@@ -882,9 +878,49 @@ struct CondBranchOpConversion : public OpConversionPattern<cf::CondBranchOp> {
   }
 };
 
+static bool isForthStack(Type type);
+static unsigned countStackArgs(Block *block);
+
 struct KnownStack {
-  // Deepest at index 0. Top at back(). Empty is depth 0.
   llvm::SmallVector<Value, 8> cells;
+
+  unsigned depth() const { return cells.size(); }
+  void push(Value cell) { cells.push_back(cell); }
+  void pushCells(ArrayRef<Value> pushed) {
+    cells.append(pushed.begin(), pushed.end());
+  }
+  ArrayRef<Value> topCells(unsigned n) const {
+    return ArrayRef<Value>(cells).take_back(n);
+  }
+  void dropTop(unsigned n) { cells.truncate(cells.size() - n); }
+  void clear() { cells.clear(); }
+};
+
+struct JoinDepth {
+  DenseMap<Block *, unsigned> at;
+  Block *entry = nullptr;
+
+  bool note(Block *dest, OperandRange operands, std::optional<unsigned> depth,
+            SmallVectorImpl<Block *> &work) {
+    if (dest == entry)
+      return false;
+    unsigned stackOperands = 0;
+    for (Value operand : operands)
+      if (isForthStack(operand.getType()))
+        ++stackOperands;
+    unsigned stackArgs = countStackArgs(dest);
+    if (stackOperands != stackArgs || stackArgs > 1)
+      return false;
+    if (stackArgs == 0)
+      return true;
+    if (!depth.has_value())
+      return false;
+    auto [it, inserted] = at.try_emplace(dest, *depth);
+    if (!inserted)
+      return it->second == *depth;
+    work.push_back(dest);
+    return true;
+  }
 };
 
 static bool isForthStack(Type type) { return isa<forth::StackType>(type); }
@@ -907,31 +943,9 @@ static bool hasStackSignature(func::FuncOp func) {
          llvm::any_of(func.getResultTypes(), isForthStack);
 }
 
-static bool forwardStack(Block *dest, OperandRange operands,
-                         std::optional<unsigned> depth,
-                         DenseMap<Block *, unsigned> &entryDepth,
-                         SmallVectorImpl<Block *> &work) {
-  unsigned stackOperands = 0;
-  for (Value operand : operands)
-    if (isForthStack(operand.getType()))
-      ++stackOperands;
-  unsigned stackArgs = countStackArgs(dest);
-  if (stackOperands != stackArgs || stackArgs > 1)
-    return false;
-  if (stackArgs == 0)
-    return true;
-  if (!depth.has_value())
-    return false;
-  auto [it, inserted] = entryDepth.try_emplace(dest, *depth);
-  if (!inserted)
-    return it->second == *depth;
-  work.push_back(dest);
-  return true;
-}
-
 static bool simulateBlock(Block *block, std::optional<unsigned> depth,
-                          DenseMap<Block *, unsigned> &entryDepth,
-                          SmallVectorImpl<Block *> &work, bool &sawStack) {
+                          JoinDepth &joins, SmallVectorImpl<Block *> &work,
+                          bool &sawStack) {
   for (Operation &op : *block) {
     if (isa<forth::BarrierOp, forth::IntrinsicOp>(op))
       continue;
@@ -950,16 +964,15 @@ static bool simulateBlock(Block *block, std::optional<unsigned> depth,
       continue;
     }
     if (auto branch = dyn_cast<cf::BranchOp>(op)) {
-      if (!forwardStack(branch.getDest(), branch.getDestOperands(), depth,
-                        entryDepth, work))
+      if (!joins.note(branch.getDest(), branch.getDestOperands(), depth, work))
         return false;
       continue;
     }
     if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
-      if (!forwardStack(branch.getTrueDest(), branch.getTrueDestOperands(),
-                        depth, entryDepth, work) ||
-          !forwardStack(branch.getFalseDest(), branch.getFalseDestOperands(),
-                        depth, entryDepth, work))
+      if (!joins.note(branch.getTrueDest(), branch.getTrueDestOperands(), depth,
+                      work) ||
+          !joins.note(branch.getFalseDest(), branch.getFalseDestOperands(),
+                      depth, work))
         return false;
       continue;
     }
@@ -973,62 +986,77 @@ static bool simulateBlock(Block *block, std::optional<unsigned> depth,
   return true;
 }
 
-/// Entry depths of blocks that receive the data stack. The entry block is
-/// absent because its depth starts at forth.stack.
-static bool analyzeKnownStack(func::FuncOp func,
-                              DenseMap<Block *, unsigned> &entryDepth) {
+static bool analyzeKnownStack(func::FuncOp func, JoinDepth &joins) {
   if (hasStackSignature(func))
     return false;
 
+  joins.entry = &func.front();
   SmallVector<Block *, 8> work;
   SmallPtrSet<Block *, 8> seen;
   bool sawStack = false;
   auto run = [&](Block *block, std::optional<unsigned> depth) {
     if (!seen.insert(block).second)
       return true;
-    return simulateBlock(block, depth, entryDepth, work, sawStack);
+    return simulateBlock(block, depth, joins, work, sawStack);
   };
-  if (!run(&func.front(), std::nullopt))
+  if (!run(joins.entry, std::nullopt))
     return false;
   while (!work.empty()) {
     Block *block = work.pop_back_val();
-    if (!run(block, entryDepth.lookup(block)))
+    if (!run(block, joins.at.lookup(block)))
       return false;
   }
-  if (!sawStack)
+  if (!sawStack || joins.at.contains(joins.entry))
     return false;
   return llvm::all_of(func.getBody(),
                       [&](Block &block) { return seen.contains(&block); });
 }
 
-/// The stack argument is erased after this rewrite, and the new i64 arguments
-/// were appended, so cells follow the operands that are not the stack.
-static void rewriteDestOperands(MutableOperandRange destOperands,
+static void rewriteDestOperands(MutableOperandRange destOperands, Block *dest,
                                 ArrayRef<Value> cells) {
   bool sawStack = false;
-  SmallVector<Value, 8> rewritten;
+  SmallVector<Value, 4> others;
   for (Value operand : destOperands.getAsOperandRange()) {
-    if (isForthStack(operand.getType())) {
+    if (isForthStack(operand.getType()))
       sawStack = true;
-      continue;
-    }
-    rewritten.push_back(operand);
+    else
+      others.push_back(operand);
   }
   if (!sawStack)
     return;
-  rewritten.append(cells.begin(), cells.end());
+
+  unsigned numArgs = dest->getNumArguments();
+  unsigned cellArgs = cells.size();
+  SmallVector<Value, 8> rewritten;
+  unsigned otherIdx = 0;
+  unsigned cellIdx = 0;
+  for (unsigned i = 0; i < numArgs; ++i) {
+    if (isForthStack(dest->getArgument(i).getType()))
+      continue;
+    if (cellArgs > 0 && i >= numArgs - cellArgs)
+      rewritten.push_back(cells[cellIdx++]);
+    else
+      rewritten.push_back(others[otherIdx++]);
+  }
+  if (cellIdx != cells.size() || otherIdx != others.size())
+    llvm_unreachable("branch operands do not match the destination arguments");
   destOperands.assign(rewritten);
 }
 
 static void applyWord(Operation &op, const WordLowering *word,
                       KnownStack &stack, OpBuilder &builder) {
-  unsigned kept = stack.cells.size() - word->pops;
-  SmallVector<Value, 4> inputs(stack.cells.begin() + kept, stack.cells.end());
+  SmallVector<Value, 4> inputs(stack.topCells(word->pops));
   SmallVector<Value, 4> outputs;
   builder.setInsertionPoint(&op);
   word->compute(&op, inputs, outputs, builder);
-  stack.cells.resize(kept);
-  stack.cells.append(outputs.begin(), outputs.begin() + word->pushes);
+  unsigned expected = word->pushes;
+  for (Value result : op.getResults())
+    if (!isForthStack(result.getType()))
+      ++expected;
+  if (outputs.size() != expected)
+    llvm_unreachable("word compute returned the wrong number of values");
+  stack.dropTop(word->pops);
+  stack.pushCells(ArrayRef<Value>(outputs).take_front(word->pushes));
   unsigned extra = word->pushes;
   for (Value result : op.getResults()) {
     if (isForthStack(result.getType()))
@@ -1038,10 +1066,9 @@ static void applyWord(Operation &op, const WordLowering *word,
   }
 }
 
-static void lowerKnownStack(func::FuncOp func,
-                            const DenseMap<Block *, unsigned> &entryDepth) {
+static void lowerKnownStack(func::FuncOp func, const JoinDepth &joins) {
   OpBuilder builder(func.getContext());
-  for (auto [block, depth] : entryDepth) {
+  for (auto [block, depth] : joins.at) {
     if (depth == 0)
       continue;
     SmallVector<Type, 8> types(depth, builder.getI64Type());
@@ -1051,27 +1078,30 @@ static void lowerKnownStack(func::FuncOp func,
 
   for (Block &block : func.getBody()) {
     KnownStack stack;
-    if (auto it = entryDepth.find(&block); it != entryDepth.end()) {
+    if (auto it = joins.at.find(&block); it != joins.at.end()) {
       unsigned depth = it->second;
       unsigned numArgs = block.getNumArguments();
       for (unsigned i = numArgs - depth; i < numArgs; ++i)
-        stack.cells.push_back(block.getArgument(i));
+        stack.push(block.getArgument(i));
     }
 
     SmallVector<Operation *, 8> erase;
     for (Operation &op : block) {
       if (isa<forth::StackOp>(op)) {
-        stack.cells.clear();
+        stack.clear();
         erase.push_back(&op);
         continue;
       }
       if (auto branch = dyn_cast<cf::BranchOp>(op)) {
-        rewriteDestOperands(branch.getDestOperandsMutable(), stack.cells);
+        rewriteDestOperands(branch.getDestOperandsMutable(), branch.getDest(),
+                            stack.cells);
         continue;
       }
       if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
-        rewriteDestOperands(branch.getTrueDestOperandsMutable(), stack.cells);
-        rewriteDestOperands(branch.getFalseDestOperandsMutable(), stack.cells);
+        rewriteDestOperands(branch.getTrueDestOperandsMutable(),
+                            branch.getTrueDest(), stack.cells);
+        rewriteDestOperands(branch.getFalseDestOperandsMutable(),
+                            branch.getFalseDest(), stack.cells);
         continue;
       }
       const WordLowering *word = lookupWord(&op);
@@ -1109,9 +1139,9 @@ struct ConvertForthToMemRefPass
     });
 
     module.walk([&](func::FuncOp funcOp) {
-      DenseMap<Block *, unsigned> entryDepth;
-      if (analyzeKnownStack(funcOp, entryDepth))
-        lowerKnownStack(funcOp, entryDepth);
+      JoinDepth joins;
+      if (analyzeKnownStack(funcOp, joins))
+        lowerKnownStack(funcOp, joins);
     });
 
     ConversionTarget target(*context);

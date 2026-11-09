@@ -1,7 +1,3 @@
-//===- WordLowering.cpp - Forth word compute table -------------*- C++ -*-===//
-//
-//===----------------------------------------------------------------------===//
-
 #include "WordLowering.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -62,15 +58,14 @@ Value i64Flag(OpBuilder &builder, Location loc, Value cmp) {
   return builder.create<arith::ExtSIOp>(loc, builder.getI64Type(), cmp);
 }
 
-void computeDup(Operation * /*op*/, ValueRange inputs,
-                SmallVectorImpl<Value> &outputs, OpBuilder & /*builder*/) {
+void computeDup(Operation *, ValueRange inputs, SmallVectorImpl<Value> &outputs,
+                OpBuilder &) {
   outputs.push_back(inputs[0]);
   outputs.push_back(inputs[0]);
 }
 
-void computeDrop(Operation * /*op*/, ValueRange /*inputs*/,
-                 SmallVectorImpl<Value> & /*outputs*/,
-                 OpBuilder & /*builder*/) {}
+void computeDrop(Operation *, ValueRange, SmallVectorImpl<Value> &,
+                 OpBuilder &) {}
 
 void computePopFlag(Operation *op, ValueRange inputs,
                     SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
@@ -81,33 +76,33 @@ void computePopFlag(Operation *op, ValueRange inputs,
                                                   inputs[0], zero));
 }
 
-void computeSwap(Operation * /*op*/, ValueRange inputs,
-                 SmallVectorImpl<Value> &outputs, OpBuilder & /*builder*/) {
+void computeSwap(Operation *, ValueRange inputs,
+                 SmallVectorImpl<Value> &outputs, OpBuilder &) {
   outputs.push_back(inputs[1]);
   outputs.push_back(inputs[0]);
 }
 
-void computeOver(Operation * /*op*/, ValueRange inputs,
-                 SmallVectorImpl<Value> &outputs, OpBuilder & /*builder*/) {
+void computeOver(Operation *, ValueRange inputs,
+                 SmallVectorImpl<Value> &outputs, OpBuilder &) {
   outputs.push_back(inputs[0]);
   outputs.push_back(inputs[1]);
   outputs.push_back(inputs[0]);
 }
 
-void computeRot(Operation * /*op*/, ValueRange inputs,
-                SmallVectorImpl<Value> &outputs, OpBuilder & /*builder*/) {
+void computeRot(Operation *, ValueRange inputs, SmallVectorImpl<Value> &outputs,
+                OpBuilder &) {
   outputs.push_back(inputs[1]);
   outputs.push_back(inputs[2]);
   outputs.push_back(inputs[0]);
 }
 
-void computeNip(Operation * /*op*/, ValueRange inputs,
-                SmallVectorImpl<Value> &outputs, OpBuilder & /*builder*/) {
+void computeNip(Operation *, ValueRange inputs, SmallVectorImpl<Value> &outputs,
+                OpBuilder &) {
   outputs.push_back(inputs[1]);
 }
 
-void computeTuck(Operation * /*op*/, ValueRange inputs,
-                 SmallVectorImpl<Value> &outputs, OpBuilder & /*builder*/) {
+void computeTuck(Operation *, ValueRange inputs,
+                 SmallVectorImpl<Value> &outputs, OpBuilder &) {
   outputs.push_back(inputs[1]);
   outputs.push_back(inputs[0]);
   outputs.push_back(inputs[1]);
@@ -176,8 +171,8 @@ void computeZeroEq(Operation *op, ValueRange inputs,
   outputs.push_back(i64Flag(builder, loc, cmp));
 }
 
-void computeConstant(Operation *op, ValueRange /*inputs*/,
-                     SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeConstant(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                     OpBuilder &builder) {
   Location loc = op->getLoc();
   auto typedValue = cast<TypedAttr>(cast<forth::ConstantOp>(op).getValueAttr());
   if (isa<FloatAttr>(typedValue)) {
@@ -209,8 +204,8 @@ void computeFToI(Operation *op, ValueRange inputs,
       builder.create<arith::FPToSIOp>(loc, builder.getI64Type(), f64Value));
 }
 
-void computeParamRef(Operation *op, ValueRange /*inputs*/,
-                     SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeParamRef(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                     OpBuilder &builder) {
   Location loc = op->getLoc();
   Value parameter = cast<forth::ParamRefOp>(op).getParameter();
   if (isa<MemRefType>(parameter.getType())) {
@@ -257,8 +252,8 @@ void computeLoad(Operation *op, ValueRange inputs,
 }
 
 template <MemType MT, unsigned AddressSpace>
-void computeStore(Operation *op, ValueRange inputs,
-                  SmallVectorImpl<Value> & /*outputs*/, OpBuilder &builder) {
+void computeStore(Operation *op, ValueRange inputs, SmallVectorImpl<Value> &,
+                  OpBuilder &builder) {
   Location loc = op->getLoc();
   auto ptrType = LLVM::LLVMPointerType::get(op->getContext(), AddressSpace);
   Value ptr = builder.create<LLVM::IntToPtrOp>(loc, ptrType, inputs[1]);
@@ -291,61 +286,61 @@ void emitGpuIndex(Operation *op, StringRef name,
       builder.create<arith::IndexCastOp>(loc, builder.getI64Type(), intrinsic));
 }
 
-void computeTidX(Operation *op, ValueRange /*inputs*/,
-                 SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeTidX(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                 OpBuilder &builder) {
   emitGpuIndex(op, "tid-x", outputs, builder);
 }
-void computeTidY(Operation *op, ValueRange /*inputs*/,
-                 SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeTidY(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                 OpBuilder &builder) {
   emitGpuIndex(op, "tid-y", outputs, builder);
 }
-void computeTidZ(Operation *op, ValueRange /*inputs*/,
-                 SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeTidZ(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                 OpBuilder &builder) {
   emitGpuIndex(op, "tid-z", outputs, builder);
 }
-void computeBidX(Operation *op, ValueRange /*inputs*/,
-                 SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeBidX(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                 OpBuilder &builder) {
   emitGpuIndex(op, "bid-x", outputs, builder);
 }
-void computeBidY(Operation *op, ValueRange /*inputs*/,
-                 SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeBidY(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                 OpBuilder &builder) {
   emitGpuIndex(op, "bid-y", outputs, builder);
 }
-void computeBidZ(Operation *op, ValueRange /*inputs*/,
-                 SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeBidZ(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                 OpBuilder &builder) {
   emitGpuIndex(op, "bid-z", outputs, builder);
 }
-void computeBdimX(Operation *op, ValueRange /*inputs*/,
-                  SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeBdimX(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                  OpBuilder &builder) {
   emitGpuIndex(op, "bdim-x", outputs, builder);
 }
-void computeBdimY(Operation *op, ValueRange /*inputs*/,
-                  SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeBdimY(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                  OpBuilder &builder) {
   emitGpuIndex(op, "bdim-y", outputs, builder);
 }
-void computeBdimZ(Operation *op, ValueRange /*inputs*/,
-                  SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeBdimZ(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                  OpBuilder &builder) {
   emitGpuIndex(op, "bdim-z", outputs, builder);
 }
-void computeGdimX(Operation *op, ValueRange /*inputs*/,
-                  SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeGdimX(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                  OpBuilder &builder) {
   emitGpuIndex(op, "gdim-x", outputs, builder);
 }
-void computeGdimY(Operation *op, ValueRange /*inputs*/,
-                  SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeGdimY(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                  OpBuilder &builder) {
   emitGpuIndex(op, "gdim-y", outputs, builder);
 }
-void computeGdimZ(Operation *op, ValueRange /*inputs*/,
-                  SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeGdimZ(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                  OpBuilder &builder) {
   emitGpuIndex(op, "gdim-z", outputs, builder);
 }
-void computeLaneId(Operation *op, ValueRange /*inputs*/,
-                   SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeLaneId(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                   OpBuilder &builder) {
   emitGpuIndex(op, "lane-id", outputs, builder);
 }
 
-void computeGlobalId(Operation *op, ValueRange /*inputs*/,
-                     SmallVectorImpl<Value> &outputs, OpBuilder &builder) {
+void computeGlobalId(Operation *op, ValueRange, SmallVectorImpl<Value> &outputs,
+                     OpBuilder &builder) {
   Location loc = op->getLoc();
   auto index = [&](StringRef name) {
     return builder.create<forth::IntrinsicOp>(loc, builder.getIndexType(),
