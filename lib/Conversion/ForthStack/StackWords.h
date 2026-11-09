@@ -40,6 +40,10 @@ public:
   /// Pushes one cell. A row pushes exactly `effect.pushes` cells, deepest
   /// first.
   virtual void push(Value cell) = 0;
+
+  /// Replaces every use of the op's non-stack result, such as the i1 of
+  /// forth.pop_flag, with `value`.
+  virtual void replaceValueResult(Value value) = 0;
 };
 
 using LowerFn = std::function<void(Operation *op, WordContext &ctx)>;

@@ -153,6 +153,22 @@ ArrayRef<StackWordRow> stackWordRows() {
             }
             ctx.push(parameter);
           }),
+      row<forth::PushValueOp>({0, 1},
+                              [](forth::PushValueOp op, WordContext &ctx) {
+                                ctx.push(op.getValue());
+                              }),
+      row<forth::PopOp>({1, 0},
+                        [](forth::PopOp, WordContext &ctx) {
+                          ctx.replaceValueResult(ctx.popped(0));
+                        }),
+      row<forth::PopFlagOp>(
+          {1, 0},
+          [](forth::PopFlagOp op, WordContext &ctx) {
+            OpBuilder &b = ctx.builder();
+            Value zero = b.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
+            ctx.replaceValueResult(b.create<arith::CmpIOp>(
+                op.getLoc(), arith::CmpIPredicate::ne, ctx.popped(0), zero));
+          }),
       row<forth::AddIOp>(intBinary<arith::AddIOp>()),
       row<forth::SubIOp>(intBinary<arith::SubIOp>()),
       row<forth::MulIOp>(intBinary<arith::MulIOp>()),

@@ -15,10 +15,17 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/RegionGraphTraits.h" // IWYU pragma: keep
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "warpforth/Dialect/Forth/ForthDialect.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
+#include <algorithm>
+#include <optional>
 #include <variant>
 
 namespace mlir {
@@ -40,9 +47,15 @@ bool isStack(Type type) { return isa<forth::StackType>(type); }
 /// cells in registers above an unknown number of cells in memory.
 struct StaticShape {
   unsigned cells;
+  bool operator==(const StaticShape &other) const {
+    return cells == other.cells;
+  }
 };
 struct ResidualShape {
   unsigned cells;
+  bool operator==(const ResidualShape &other) const {
+    return cells == other.cells;
+  }
 };
 using StackShape = std::variant<StaticShape, ResidualShape>;
 
@@ -58,6 +71,15 @@ StackShape transfer(StackShape in, StackEffect effect) {
     return StaticShape{cells - effect.pops + effect.pushes};
   unsigned kept = cells > effect.pops ? cells - effect.pops : 0;
   return ResidualShape{kept + effect.pushes};
+}
+
+/// The shape where stacks of shapes `a` and `b` meet. Equal shapes are kept.
+/// Otherwise the join keeps in registers only the top cells that both sides
+/// hold there, and the cells below move to memory.
+StackShape join(StackShape a, StackShape b) {
+  if (a == b)
+    return a;
+  return ResidualShape{std::min(registerCells(a), registerCells(b))};
 }
 
 /// Where the cells of one !forth.stack value live while the pass rewrites it.
@@ -91,35 +113,80 @@ LogicalResult verifyWordsInlined(ModuleOp module) {
   return success();
 }
 
-/// Whether this pass lowers `fn` yet: it is straight-line code, every stack op
-/// has a row, and no pop reaches below the static depth.
-bool isLowerable(func::FuncOp fn) {
-  if (!fn.getBody().hasOneBlock())
-    return false;
-  DenseMap<Value, StackShape> shapes;
-  WalkResult walk = fn.walk([&](Operation *op) {
-    if (isa<forth::StackOp>(op)) {
-      shapes.try_emplace(op->getResult(0), StaticShape{0});
-      return WalkResult::advance();
-    }
-    if (llvm::none_of(op->getOperandTypes(), isStack))
-      return WalkResult::advance();
-    const StackWord *word = stack::lookupStackWord(op);
-    if (!word)
+/// Whether every op in `body` that takes a stack either has a row or branches.
+bool hasRowsFor(Region &body) {
+  WalkResult walk = body.walk([](Operation *op) {
+    if (llvm::any_of(op->getOperandTypes(), isStack) &&
+        !isa<BranchOpInterface>(op) && !stack::lookupStackWord(op))
       return WalkResult::interrupt();
-    StackShape shape = transfer(shapes.at(op->getOperand(0)), word->effect);
-    if (!std::holds_alternative<StaticShape>(shape))
-      return WalkResult::interrupt();
-    shapes.try_emplace(op->getResult(0), shape);
     return WalkResult::advance();
   });
   return !walk.wasInterrupted();
 }
 
+/// Joins the shapes that the predecessors seen so far pass to the stack
+/// argument `arg`.
+std::optional<StackShape>
+joinIncoming(BlockArgument arg, const DenseMap<Value, StackShape> &shapes) {
+  std::optional<StackShape> joined;
+  Block *block = arg.getOwner();
+  for (auto it = block->pred_begin(), e = block->pred_end(); it != e; ++it) {
+    auto branch = cast<BranchOpInterface>((*it)->getTerminator());
+    Value incoming =
+        branch.getSuccessorOperands(it.getSuccessorIndex())[arg.getArgNumber()];
+    auto shape = shapes.find(incoming);
+    if (shape == shapes.end())
+      continue;
+    joined = joined ? join(*joined, shape->second) : shape->second;
+  }
+  return joined;
+}
+
+/// The shape of every !forth.stack value in `body`, iterated to a fixpoint in
+/// reverse post-order. Requires that every block is reachable and that every
+/// op that takes a stack has a row or branches.
+///
+/// Shapes only move from static to residual or toward fewer register cells, so
+/// the iteration ends.
+DenseMap<Value, StackShape> inferShapes(Region &body) {
+  llvm::ReversePostOrderTraversal<Block *> order(&body.front());
+  DenseMap<Value, StackShape> shapes;
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (Block *block : order) {
+      for (BlockArgument arg : block->getArguments()) {
+        if (!isStack(arg.getType()))
+          continue;
+        std::optional<StackShape> joined = joinIncoming(arg, shapes);
+        assert(joined && "reverse post-order visits a predecessor first");
+        auto [it, inserted] = shapes.try_emplace(arg, *joined);
+        if (inserted || !(it->second == *joined)) {
+          it->second = *joined;
+          changed = true;
+        }
+      }
+      for (Operation &op : *block) {
+        if (isa<forth::StackOp>(op)) {
+          shapes[op.getResult(0)] = StaticShape{0};
+          continue;
+        }
+        const StackWord *word = stack::lookupStackWord(&op);
+        if (!word)
+          continue;
+        shapes[op.getResult(0)] =
+            transfer(shapes.at(op.getOperand(0)), word->effect);
+      }
+    }
+  }
+  return shapes;
+}
+
 /// Rewrites one function. Rows reach the cells only through WordContext.
 class StackSimulator final : public WordContext {
 public:
-  explicit StackSimulator(func::FuncOp fn) : fn(fn), b(fn.getContext()) {}
+  StackSimulator(func::FuncOp fn, DenseMap<Value, StackShape> shapes)
+      : fn(fn), b(fn.getContext()), shapes(std::move(shapes)) {}
 
   /// Lowers every stack word in `fn`, then erases the Forth stack ops.
   void run();
@@ -127,38 +194,73 @@ public:
   OpBuilder &builder() override { return b; }
   Value popped(unsigned i) override { return poppedCells[i]; }
   void push(Value cell) override { pushedCells.push_back(cell); }
+  void replaceValueResult(Value value) override {
+    current->getResult(1).replaceAllUsesWith(value);
+  }
 
 private:
+  void expandArguments(Block &block);
   void lowerWord(Operation *op, const StackWord &word);
+  void forwardCells(BranchOpInterface branch);
 
   func::FuncOp fn;
   OpBuilder b;
+  DenseMap<Value, StackShape> shapes;
   /// Keyed by the original !forth.stack value.
   DenseMap<Value, StackState> states;
   SmallVector<Operation *> lowered;
+  SmallVector<BlockArgument> replacedArguments;
 
   // Scratch for the op being lowered.
+  Operation *current = nullptr;
   StackState working;
   SmallVector<Value, 4> poppedCells;
   SmallVector<Value, 4> pushedCells;
 };
 
 void StackSimulator::run() {
-  for (Operation &op : fn.getBody().front()) {
-    if (isa<forth::StackOp>(op)) {
-      states[op.getResult(0)] = StaticState{};
-      lowered.push_back(&op);
-    } else if (const StackWord *word = stack::lookupStackWord(&op)) {
-      lowerWord(&op, *word);
+  Region &body = fn.getBody();
+  for (Block &block : body)
+    expandArguments(block);
+  for (Block *block : llvm::ReversePostOrderTraversal<Block *>(&body.front())) {
+    for (Operation &op : *block) {
+      if (isa<forth::StackOp>(op)) {
+        states[op.getResult(0)] = StaticState{};
+        lowered.push_back(&op);
+      } else if (const StackWord *word = stack::lookupStackWord(&op)) {
+        lowerWord(&op, *word);
+      } else if (auto branch = dyn_cast<BranchOpInterface>(op)) {
+        forwardCells(branch);
+      }
     }
   }
   for (Operation *op : lowered)
     op->dropAllReferences();
   for (Operation *op : lowered)
     op->erase();
+  for (BlockArgument arg : replacedArguments)
+    arg.getOwner()->eraseArgument(arg.getArgNumber());
+}
+
+/// Gives each stack argument of `block` one i64 argument per cell, placed
+/// after it. The stack argument is erased once nothing uses it.
+void StackSimulator::expandArguments(Block &block) {
+  for (unsigned i = 0; i < block.getNumArguments(); ++i) {
+    BlockArgument arg = block.getArgument(i);
+    if (!isStack(arg.getType()))
+      continue;
+    StaticState state;
+    for (unsigned cell = 0, e = registerCells(shapes.at(arg)); cell < e; ++cell)
+      state.cells.push_back(
+          block.insertArgument(i + 1 + cell, b.getI64Type(), arg.getLoc()));
+    i += state.cells.size();
+    states[arg] = std::move(state);
+    replacedArguments.push_back(arg);
+  }
 }
 
 void StackSimulator::lowerWord(Operation *op, const StackWord &word) {
+  current = op;
   working = states.at(op->getOperand(0));
   SmallVector<Value, 8> &cells = cellsOf(working);
   poppedCells.clear();
@@ -174,15 +276,47 @@ void StackSimulator::lowerWord(Operation *op, const StackWord &word) {
   lowered.push_back(op);
 }
 
+/// Passes each forwarded stack to its successor as the stack's cells.
+void StackSimulator::forwardCells(BranchOpInterface branch) {
+  for (unsigned i = 0, e = branch->getNumSuccessors(); i < e; ++i) {
+    SuccessorOperands operands = branch.getSuccessorOperands(i);
+    if (llvm::none_of(operands.getForwardedOperands().getTypes(), isStack))
+      continue;
+    SmallVector<Value> forwarded;
+    for (Value value : operands.getForwardedOperands()) {
+      if (!isStack(value.getType())) {
+        forwarded.push_back(value);
+        continue;
+      }
+      StackState state = states.at(value);
+      llvm::append_range(forwarded, cellsOf(state));
+    }
+    operands.getMutableForwardedOperands().assign(forwarded);
+  }
+}
+
 struct LowerForthStackPass
     : public impl::LowerForthStackBase<LowerForthStackPass> {
   void runOnOperation() override {
     ModuleOp module = getOperation();
     if (failed(verifyWordsInlined(module)))
       return signalPassFailure();
-    for (auto fn : module.getOps<func::FuncOp>())
-      if (!fn.isExternal() && isLowerable(fn))
-        StackSimulator(fn).run();
+    IRRewriter rewriter(&getContext());
+    for (auto fn : module.getOps<func::FuncOp>()) {
+      if (fn.isExternal())
+        continue;
+      (void)eraseUnreachableBlocks(rewriter, fn->getRegions());
+      // A function this pass cannot lower yet is left whole for
+      // convert-forth-to-memref.
+      if (!hasRowsFor(fn.getBody()))
+        continue;
+      DenseMap<Value, StackShape> shapes = inferShapes(fn.getBody());
+      if (llvm::any_of(shapes, [](const auto &entry) {
+            return !std::holds_alternative<StaticShape>(entry.second);
+          }))
+        continue;
+      StackSimulator(fn, std::move(shapes)).run();
+    }
   }
 };
 
