@@ -1,5 +1,5 @@
 \ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --warpforth-pipeline | %FileCheck %s
-\ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --convert-forth-to-memref --convert-forth-to-gpu | %FileCheck %s --check-prefix=MID
+\ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --lower-forth-stack --convert-forth-to-gpu | %FileCheck %s --check-prefix=MID
 
 \ Verify multiple params survive the full pipeline
 \ CHECK: gpu.binary @warpforth_module

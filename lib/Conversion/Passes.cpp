@@ -15,7 +15,6 @@
 #include "mlir/Transforms/Passes.h"
 #include "warpforth/Conversion/ForthStack/LowerForthStack.h"
 #include "warpforth/Conversion/ForthToGPU/ForthToGPU.h"
-#include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -96,10 +95,8 @@ void buildWarpForthLoweringPipeline(OpPassManager &pm,
   // precede GPU conversion.
   pm.addPass(createInlinerPass());
 
-  // Stage 2: Lower the stack. A function the stack lowering cannot take yet
-  // keeps its Forth ops and falls through to the memref stack.
+  // Stage 2: Lower the stack to i64 SSA values and a residual buffer
   pm.addPass(createLowerForthStackPass());
-  pm.addPass(createConvertForthToMemRefPass());
 
   // Stage 3: Convert to GPU dialect
   pm.addPass(createConvertForthToGPUPass());
@@ -156,9 +153,6 @@ void buildWarpForthPipeline(OpPassManager &pm) {
 void registerConversionPasses() {
   registerPass(
       []() -> std::unique_ptr<Pass> { return createLowerForthStackPass(); });
-  registerPass([]() -> std::unique_ptr<Pass> {
-    return createConvertForthToMemRefPass();
-  });
   registerPass(
       []() -> std::unique_ptr<Pass> { return createConvertForthToGPUPass(); });
 

@@ -21,6 +21,5 @@ target_link_libraries(warpforth-opt
   MLIROptLib
   MLIRForth
   MLIRConversionPasses
-  MLIRForthToMemRefConversion
   MLIRNVVMTarget
 )

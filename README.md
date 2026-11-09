@@ -110,8 +110,9 @@ WarpForth compiles Forth through a series of MLIR dialect lowerings, each replac
 | Stage | Pass | Description |
 |-------|-------------|-------------|
 | **Parsing** | `warpforth-translate --forth-to-mlir` | Parses Forth source into the `forth` dialect. The kernel is represented as a series of stack ops on an abstract `!forth.stack` type. |
-| **Stack lowering** | `warpforth-opt --convert-forth-to-memref` | The abstract `!forth.stack` type is materialized as a `memref<256xi64>` buffer and `index` pair. Stack ops become explicit loads, stores, and pointer arithmetic. |
-| **GPU wrapping** | `warpforth-opt --convert-forth-to-gpu` | Functions are wrapped in a `gpu.module`, the kernel entry point is marked as a `gpu.kernel` and GPU intrinsic words are lowered to `gpu` ops. |
+| **Inlining** | `warpforth-opt --inline` | User-defined words are inlined into the kernel, so the kernel is the whole program when its stack is lowered. |
+| **Stack lowering** | `warpforth-opt --lower-forth-stack` | Each stack cell whose depth and slot are known at compile time becomes an `i64` SSA value, and block arguments carry cells across branches and loops. A cell below the known depth, or one that a runtime `PICK` or `ROLL` index addresses, lives in a per-thread `memref<256xi64>` buffer. |
+| **GPU wrapping** | `warpforth-opt --convert-forth-to-gpu` | The kernel is moved into a `gpu.module` and marked as a `gpu.kernel`, and GPU intrinsic words are lowered to `gpu` ops. |
 | **NVVM/LLVM lowering** | Standard MLIR passes | GPU→NVVM, math→LLVM intrinsics and NVVM→LLVM. |
 | **Code generation** | `warpforth-translate --mlir-to-ptx` | The GPU module is serialized to PTX assembly via LLVM's NVPTX backend. |
 

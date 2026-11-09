@@ -1,26 +1,25 @@
 \ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --warpforth-pipeline | %FileCheck %s
-\ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --convert-forth-to-memref --convert-forth-to-gpu | %FileCheck %s --check-prefix=MID
+\ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --inline --lower-forth-stack --convert-forth-to-gpu | %FileCheck %s --check-prefix=MID
 
 \ Verify interleaved control flow (multi-WHILE, WHILE+UNTIL) compiles
 \ through the full pipeline to gpu.binary.
 \ CHECK: gpu.binary @warpforth_module
 
-\ Verify intermediate MLIR: gpu.func with cf branches, no scf ops
+\ Verify intermediate MLIR: both words are inlined into the kernel, which keeps
+\ their cf branches, and no word function is left.
 \ MID: gpu.module @warpforth_module
 \ MID: gpu.func @main(%arg0: memref<4xi64> {forth.param_name = "DATA"}) kernel
-\ MID: gpu.return
 
 \ Multi-WHILE: two cond_br exits + one unconditional back-edge
-\ MID: func.func private @MULTI_WHILE
 \ MID: cf.cond_br
 \ MID: cf.cond_br
 \ MID: cf.br
 
 \ WHILE+UNTIL: WHILE exit + UNTIL exit merge at THEN
-\ MID: func.func private @WHILE_UNTIL
 \ MID: cf.cond_br
 \ MID: cf.cond_br
-\ MID: cf.br
+\ MID: gpu.return
+\ MID-NOT: func.func
 
 \! kernel main
 \! param DATA i64[4]

@@ -31,7 +31,8 @@ CMake.
 - `include/warpforth/Dialect/Forth/ForthDialect.td` - Type definitions
 
 **Implementation:**
-- `lib/Conversion/ForthToMemRef/ForthToMemRef.cpp` - Stack to MemRef conversion patterns
+- `lib/Conversion/ForthStack/StackWords.cpp` - Stack-word table: the stack effect and lowering of every Forth op that takes a stack
+- `lib/Conversion/ForthStack/LowerForthStack.cpp` - Stack lowering to i64 SSA cells and a residual buffer
 - `lib/Conversion/ForthToGPU/ForthToGPU.cpp` - GPU conversion logic
 - `lib/Translation/ForthToMLIR/ForthToMLIR.cpp` - Forth parser and translator
 
@@ -50,7 +51,7 @@ request per line on stdin and writes one JSON response per line on stdout.
 ./build/bin/warpforth-translate --forth-to-mlir test/example.forth
 
 # Run conversion passes
-./build/bin/warpforth-opt --convert-forth-to-memref input.mlir
+./build/bin/warpforth-opt --inline --lower-forth-stack input.mlir
 ./build/bin/warpforth-opt --convert-forth-to-gpu input.mlir
 
 # Full pipeline to PTX
@@ -78,7 +79,7 @@ def Forth_NewOp : Forth_Op<"opname", [Pure]> {
 }
 ```
 
-Add corresponding conversion pattern in `lib/Conversion/ForthToMemRef/ForthToMemRef.cpp`.
+Add a row for it in `lib/Conversion/ForthStack/StackWords.cpp` that declares its stack effect and lowers it on i64 cells. Until the row exists, `--lower-forth-stack` fails on every input.
 
 ## GPU Tests
 
@@ -102,10 +103,10 @@ uv run ruff format gpu_test/
 - **Kernel Parameters**: Declared in the `\!` header. `\! kernel <name>` is required and must appear first. `\! param <name> i64[<N>]` becomes a `memref<Nxi64>` argument; `\! param <name> i64` becomes an `i64` argument. `\! param <name> f64[<N>]` becomes a `memref<Nxf64>` argument; `\! param <name> f64` becomes an `f64` argument (bitcast to i64 when pushed to stack). Using a param name in code emits `forth.param_ref` (arrays push address; scalars push value).
 - **Shared Memory**: `\! shared <name> i64[<N>]` or `\! shared <name> f64[<N>]` declares GPU shared (workgroup) memory. Emits a tagged `memref.alloca` at kernel entry; ForthToGPU converts it to a `gpu.func` workgroup attribution. Using the shared name in code pushes its base address onto the stack. Use `S@`/`S!` for i64 or `SF@`/`SF!` for f64 shared accesses. Cannot be referenced inside word definitions.
 - **Reduced-Width Memory**: `I8@ I16@ I32@` load a narrow integer, sign-extend to i64. `I8! I16! I32!` truncate i64 to narrow integer, store. `HF@ BF@ F32@` load a narrow float, extend to f64, bitcast to i64. `HF! BF! F32!` bitcast i64 to f64, truncate to narrow float, store. `S`-prefixed variants (`SI8@`, `SHF!`, etc.) use shared memory (address space 3).
-- **Conversion**: `!forth.stack` → `memref<256xi64>` with explicit stack pointer
-- **GPU**: Functions wrapped in `gpu.module`, `main` gets `gpu.kernel` attribute, configured with bare pointers for NVVM conversion
+- **Stack Lowering**: After inlining, `--lower-forth-stack` turns each cell whose depth and slot are known at compile time into an i64 SSA value, and block arguments carry cells across branches and loops. A cell below the known depth, or one that a runtime `PICK`/`ROLL` index addresses, lives in a per-thread `memref<256xi64>` residual buffer.
+- **GPU**: The kernel is wrapped in `gpu.module` and gets the `gpu.kernel` attribute, configured with bare pointers for NVVM conversion
 - **Local Variables**: `{ a b c -- }` at the start of a word definition binds read-only locals. Pops values from the stack in reverse name order (c, b, a) using `forth.pop`, stores SSA values. Referencing a local emits `forth.push_value`. SSA values from the entry block dominate all control flow, so locals work across IF/ELSE/THEN, loops, etc. On GPU, locals map directly to registers.
-- **User-defined Words**: Modeled as `func.func` with signature `(!forth.stack) -> !forth.stack`, called via `func.call`
+- **User-defined Words**: Modeled as `func.func` with signature `(!forth.stack) -> !forth.stack`, called via `func.call`, and inlined into the kernel before the stack is lowered
 
 ## Conventions
 

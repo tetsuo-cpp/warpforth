@@ -7,7 +7,6 @@ add_mlir_library(MLIRConversionPasses
   LINK_LIBS PUBLIC
   MLIRPass
   MLIRForthStackConversion
-  MLIRForthToMemRefConversion
   MLIRForthToGPUConversion
   MLIRGPUDialect
   MLIRGPUToNVVMTransforms
@@ -23,5 +22,4 @@ target_compile_definitions(obj.MLIRConversionPasses PRIVATE
 )
 
 add_subdirectory(ForthStack)
-add_subdirectory(ForthToMemRef)
 add_subdirectory(ForthToGPU)

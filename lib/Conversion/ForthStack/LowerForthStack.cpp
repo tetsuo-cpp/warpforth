@@ -3,7 +3,7 @@
 // This file implements the pass that lowers every !forth.stack value. The
 // stack-word table says what each word computes. This file decides where each
 // cell lives: a cell whose depth and slot are known is an i64 SSA value, and
-// the rest live in a per-thread buffer laid out like the memref stack.
+// the rest live in a per-thread memref<256xi64> indexed by depth.
 //
 //===----------------------------------------------------------------------===//
 
@@ -135,15 +135,19 @@ LogicalResult verifyWordsInlined(ModuleOp module) {
   return success();
 }
 
-/// Whether every op in `body` that takes a stack either has a row or branches.
-bool hasRowsFor(Region &body) {
+/// Every stack value must come from forth.stack, a row, or a block argument,
+/// and flow only into rows and branches.
+LogicalResult verifyStackUsers(Region &body) {
   WalkResult walk = body.walk([](Operation *op) {
-    if (llvm::any_of(op->getOperandTypes(), isStack) &&
-        !isa<BranchOpInterface>(op) && !stack::lookupStackWord(op))
-      return WalkResult::interrupt();
-    return WalkResult::advance();
+    bool usesStack = llvm::any_of(op->getOperandTypes(), isStack) ||
+                     llvm::any_of(op->getResultTypes(), isStack);
+    if (!usesStack || isa<forth::StackOp, BranchOpInterface>(op) ||
+        stack::lookupStackWord(op))
+      return WalkResult::advance();
+    op->emitOpError("uses a !forth.stack but has no stack-word row");
+    return WalkResult::interrupt();
   });
-  return !walk.wasInterrupted();
+  return failure(walk.wasInterrupted());
 }
 
 /// Joins the shapes that the predecessors seen so far pass to the stack
@@ -501,10 +505,8 @@ struct LowerForthStackPass
       if (fn.isExternal())
         continue;
       (void)eraseUnreachableBlocks(rewriter, fn->getRegions());
-      // A function that uses a word with no row yet is left whole for
-      // convert-forth-to-memref.
-      if (!hasRowsFor(fn.getBody()))
-        continue;
+      if (failed(verifyStackUsers(fn.getBody())))
+        return signalPassFailure();
       StackSimulator(fn, inferShapes(fn.getBody())).run();
     }
   }

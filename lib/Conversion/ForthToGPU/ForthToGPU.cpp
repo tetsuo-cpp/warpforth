@@ -220,22 +220,19 @@ private:
   LogicalResult convertFuncToGPU(func::FuncOp funcOp,
                                  gpu::GPUModuleOp gpuModule,
                                  IRRewriter &rewriter) {
-    bool isKernel = funcOp->hasAttr("forth.kernel");
+    if (!funcOp->hasAttr("forth.kernel"))
+      return funcOp.emitError()
+             << "@" << funcOp.getSymName()
+             << " is not the kernel; inline every Forth word before "
+                "--convert-forth-to-gpu";
 
-    if (isKernel) {
-      FailureOr<gpu::GPUFuncOp> gpuFunc =
-          createGPUFunc(funcOp, gpuModule, rewriter);
-      if (failed(gpuFunc))
-        return failure();
-      (*gpuFunc)->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
-                          rewriter.getUnitAttr());
-      rewriter.eraseOp(funcOp);
-    } else {
-      funcOp->moveBefore(&gpuModule.getBodyRegion().front(),
-                         gpuModule.getBodyRegion().front().end());
-      if (failed(applyConversionPatterns(funcOp, funcOp.getContext())))
-        return failure();
-    }
+    FailureOr<gpu::GPUFuncOp> gpuFunc =
+        createGPUFunc(funcOp, gpuModule, rewriter);
+    if (failed(gpuFunc))
+      return failure();
+    (*gpuFunc)->setAttr(gpu::GPUDialect::getKernelFuncAttrName(),
+                        rewriter.getUnitAttr());
+    rewriter.eraseOp(funcOp);
     return success();
   }
 };
