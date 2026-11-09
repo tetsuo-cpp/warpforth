@@ -1,37 +1,21 @@
 // RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
 
 // CHECK-LABEL: func.func private @main
+// CHECK-NOT: memref<256xi64>
 
-// add: pop two, arith.addi, store result
-// CHECK: memref.load
-// CHECK: arith.subi
-// CHECK: memref.load
-// CHECK: arith.addi %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
-
-// sub: pop two, arith.subi
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.subi %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
-
-// mul: pop two, arith.muli
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.muli %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
-
-// div: pop two, arith.divsi
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.divsi %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
-
-// mod: pop two, arith.remsi
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.remsi %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
+// 10 20 + 3 - 4 * 2 / 5 MOD
+// CHECK: %[[C10:.*]] = arith.constant 10 : i64
+// CHECK: %[[C20:.*]] = arith.constant 20 : i64
+// CHECK: %[[ADD:.*]] = arith.addi %[[C10]], %[[C20]] : i64
+// CHECK: %[[C3:.*]] = arith.constant 3 : i64
+// CHECK: %[[SUB:.*]] = arith.subi %[[ADD]], %[[C3]] : i64
+// CHECK: %[[C4:.*]] = arith.constant 4 : i64
+// CHECK: %[[MUL:.*]] = arith.muli %[[SUB]], %[[C4]] : i64
+// CHECK: %[[C2:.*]] = arith.constant 2 : i64
+// CHECK: %[[DIV:.*]] = arith.divsi %[[MUL]], %[[C2]] : i64
+// CHECK: %[[C5:.*]] = arith.constant 5 : i64
+// CHECK: arith.remsi %[[DIV]], %[[C5]] : i64
+// CHECK-NOT: memref<256xi64>
 
 module {
   func.func private @main() {

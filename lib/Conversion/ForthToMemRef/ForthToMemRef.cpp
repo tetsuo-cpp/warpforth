@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "warpforth/Conversion/ForthToMemRef/ForthToMemRef.h"
+#include "WordLowering.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -132,23 +133,9 @@ struct ConstantOpConversion : public StackEffectConversion<forth::ConstantOp> {
                Value stackPtr,
                ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-
-    Value valueToPush;
-    auto typedValue = cast<TypedAttr>(op.getValueAttr());
-    if (isa<FloatAttr>(typedValue)) {
-      // Float: create f64 constant, bitcast to i64
-      Value f64Value = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getF64Type(), typedValue);
-      valueToPush = rewriter.create<arith::BitcastOp>(
-          loc, rewriter.getI64Type(), f64Value);
-    } else {
-      // Integer: create i64 constant directly
-      valueToPush = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getI64Type(), typedValue);
-    }
-    Value newSP = pushValue(loc, rewriter, memref, stackPtr, valueToPush);
-
-    return newSP;
+    SmallVector<Value, 1> produced;
+    lookupWord(op)->compute(op, ValueRange(), produced, rewriter);
+    return pushValue(loc, rewriter, memref, stackPtr, produced.front());
   }
 };
 
@@ -428,7 +415,8 @@ struct RollOpConversion : public StackEffectConversion<forth::RollOp> {
 /// Base template for binary arithmetic operations.
 /// Pops two values, applies operation, pushes result: (a b -- result)
 /// When IsFloat=true, bitcasts i64->f64 before the op and f64->i64 after.
-template <typename ForthOp, typename ArithOp, bool IsFloat = false>
+template <typename ForthOp, typename ArithOp, bool IsFloat = false,
+          bool FromWord = false>
 struct BinaryArithOpConversion : public StackEffectConversion<ForthOp> {
   using Base = StackEffectConversion<ForthOp>;
   using Base::Base;
@@ -448,7 +436,12 @@ struct BinaryArithOpConversion : public StackEffectConversion<ForthOp> {
     Value a = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
 
     Value result;
-    if constexpr (IsFloat) {
+    if constexpr (FromWord) {
+      Value cells[] = {a, b};
+      SmallVector<Value, 1> produced;
+      lookupWord(op)->compute(op, cells, produced, rewriter);
+      result = produced.front();
+    } else if constexpr (IsFloat) {
       // Bitcast i64 -> f64
       auto f64Type = rewriter.getF64Type();
       Value aF = rewriter.create<arith::BitcastOp>(loc, f64Type, a);
@@ -469,12 +462,17 @@ struct BinaryArithOpConversion : public StackEffectConversion<ForthOp> {
   }
 };
 
-// Integer arithmetic
-using AddIOpConversion = BinaryArithOpConversion<forth::AddIOp, arith::AddIOp>;
-using SubIOpConversion = BinaryArithOpConversion<forth::SubIOp, arith::SubIOp>;
-using MulIOpConversion = BinaryArithOpConversion<forth::MulIOp, arith::MulIOp>;
-using DivIOpConversion = BinaryArithOpConversion<forth::DivIOp, arith::DivSIOp>;
-using ModOpConversion = BinaryArithOpConversion<forth::ModOp, arith::RemSIOp>;
+// Integer arithmetic. FromWord: the arith op is WordLowering::compute.
+using AddIOpConversion =
+    BinaryArithOpConversion<forth::AddIOp, arith::AddIOp, false, true>;
+using SubIOpConversion =
+    BinaryArithOpConversion<forth::SubIOp, arith::SubIOp, false, true>;
+using MulIOpConversion =
+    BinaryArithOpConversion<forth::MulIOp, arith::MulIOp, false, true>;
+using DivIOpConversion =
+    BinaryArithOpConversion<forth::DivIOp, arith::DivSIOp, false, true>;
+using ModOpConversion =
+    BinaryArithOpConversion<forth::ModOp, arith::RemSIOp, false, true>;
 using AndOpConversion = BinaryArithOpConversion<forth::AndOp, arith::AndIOp>;
 using OrOpConversion = BinaryArithOpConversion<forth::OrOp, arith::OrIOp>;
 using XorOpConversion = BinaryArithOpConversion<forth::XorOp, arith::XOrIOp>;
@@ -853,9 +851,6 @@ struct MemoryStoreOpConversion : public StackEffectConversion<ForthOp> {
                ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
-    auto ptrType =
-        LLVM::LLVMPointerType::get(rewriter.getContext(), AddressSpace);
-
     // Pop address from stack
     Value addrValue = rewriter.create<memref::LoadOp>(loc, memref, stackPtr);
 
@@ -864,26 +859,36 @@ struct MemoryStoreOpConversion : public StackEffectConversion<ForthOp> {
     Value spMinus1 = rewriter.create<arith::SubIOp>(loc, stackPtr, one);
     Value value = rewriter.create<memref::LoadOp>(loc, memref, spMinus1);
 
-    // Store value to memory via pointer
-    Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
+    if constexpr (std::is_same_v<ForthOp, forth::StoreIOp>) {
+      Value cells[] = {value, addrValue};
+      SmallVector<Value, 1> produced;
+      lookupWord(op)->compute(op, cells, produced, rewriter);
+    } else {
+      auto ptrType =
+          LLVM::LLVMPointerType::get(rewriter.getContext(), AddressSpace);
 
-    if constexpr (MT == MemType::I64) {
-      rewriter.create<LLVM::StoreOp>(loc, value, ptr);
-    } else if constexpr (MT == MemType::F64) {
-      Value f64Value =
-          rewriter.create<arith::BitcastOp>(loc, rewriter.getF64Type(), value);
-      rewriter.create<LLVM::StoreOp>(loc, f64Value, ptr);
-    } else if constexpr (isReducedInt<MT>) {
-      Type elemType = getMemElemType(rewriter.getContext(), MT);
-      Value truncated = rewriter.create<arith::TruncIOp>(loc, elemType, value);
-      rewriter.create<LLVM::StoreOp>(loc, truncated, ptr);
-    } else if constexpr (isReducedFloat<MT>) {
-      Type elemType = getMemElemType(rewriter.getContext(), MT);
-      Value f64Value =
-          rewriter.create<arith::BitcastOp>(loc, rewriter.getF64Type(), value);
-      Value truncated =
-          rewriter.create<arith::TruncFOp>(loc, elemType, f64Value);
-      rewriter.create<LLVM::StoreOp>(loc, truncated, ptr);
+      // Store value to memory via pointer
+      Value ptr = rewriter.create<LLVM::IntToPtrOp>(loc, ptrType, addrValue);
+
+      if constexpr (MT == MemType::I64) {
+        rewriter.create<LLVM::StoreOp>(loc, value, ptr);
+      } else if constexpr (MT == MemType::F64) {
+        Value f64Value = rewriter.create<arith::BitcastOp>(
+            loc, rewriter.getF64Type(), value);
+        rewriter.create<LLVM::StoreOp>(loc, f64Value, ptr);
+      } else if constexpr (isReducedInt<MT>) {
+        Type elemType = getMemElemType(rewriter.getContext(), MT);
+        Value truncated =
+            rewriter.create<arith::TruncIOp>(loc, elemType, value);
+        rewriter.create<LLVM::StoreOp>(loc, truncated, ptr);
+      } else if constexpr (isReducedFloat<MT>) {
+        Type elemType = getMemElemType(rewriter.getContext(), MT);
+        Value f64Value = rewriter.create<arith::BitcastOp>(
+            loc, rewriter.getF64Type(), value);
+        Value truncated =
+            rewriter.create<arith::TruncFOp>(loc, elemType, f64Value);
+        rewriter.create<LLVM::StoreOp>(loc, truncated, ptr);
+      }
     }
 
     // New stack pointer is SP-2 (popped both address and value)
@@ -1223,6 +1228,84 @@ struct CondBranchOpConversion : public OpConversionPattern<cf::CondBranchOp> {
   }
 };
 
+struct KnownStack {
+  // Deepest at index 0. Top at back(). Empty is depth 0.
+  llvm::SmallVector<Value, 8> cells;
+};
+
+static bool isForthStack(Type type) { return isa<forth::StackType>(type); }
+
+static bool usesForthStack(Operation *op) {
+  return llvm::any_of(op->getOperandTypes(), isForthStack) ||
+         llvm::any_of(op->getResultTypes(), isForthStack);
+}
+
+static bool isKnownStraightLine(func::FuncOp func) {
+  if (!func.getBody().hasOneBlock())
+    return false;
+  if (llvm::any_of(func.getArgumentTypes(), isForthStack) ||
+      llvm::any_of(func.getResultTypes(), isForthStack))
+    return false;
+
+  std::optional<unsigned> depth;
+  bool sawStack = false;
+  for (Operation &op : func.front()) {
+    if (isa<forth::BarrierOp, forth::IntrinsicOp>(op))
+      continue;
+    if (isa<forth::StackOp>(op)) {
+      if (sawStack)
+        return false;
+      sawStack = true;
+      depth = 0;
+      continue;
+    }
+    if (isa<forth::PickOp, forth::RollOp>(op))
+      return false;
+    if (auto call = dyn_cast<func::CallOp>(op)) {
+      if (llvm::any_of(call.getOperandTypes(), isForthStack) ||
+          llvm::any_of(call.getResultTypes(), isForthStack))
+        return false;
+      continue;
+    }
+    if (!usesForthStack(&op))
+      continue;
+    // A stack branch is a join. This walk has no block arguments for it.
+    if (isa<cf::BranchOp, cf::CondBranchOp>(op))
+      return false;
+    const WordLowering *word = lookupWord(&op);
+    if (!word || !depth || *depth < word->pops)
+      return false;
+    depth = *depth - word->pops + word->pushes;
+  }
+  return sawStack;
+}
+
+static void lowerKnownStraightLine(func::FuncOp func) {
+  KnownStack stack;
+  SmallVector<Operation *, 8> erase;
+  OpBuilder builder(func.getContext());
+  for (Operation &op : func.front()) {
+    if (isa<forth::StackOp>(op)) {
+      stack.cells.clear();
+      erase.push_back(&op);
+      continue;
+    }
+    const WordLowering *word = lookupWord(&op);
+    if (!word)
+      continue;
+    unsigned kept = stack.cells.size() - word->pops;
+    SmallVector<Value, 4> inputs(stack.cells.begin() + kept, stack.cells.end());
+    SmallVector<Value, 4> outputs;
+    builder.setInsertionPoint(&op);
+    word->compute(&op, inputs, outputs, builder);
+    stack.cells.resize(kept);
+    stack.cells.append(outputs.begin(), outputs.end());
+    erase.push_back(&op);
+  }
+  for (Operation *op : llvm::reverse(erase))
+    op->erase();
+}
+
 /// Conversion pass implementation.
 struct ConvertForthToMemRefPass
     : public impl::ConvertForthToMemRefBase<ConvertForthToMemRefPass> {
@@ -1235,6 +1318,11 @@ struct ConvertForthToMemRefPass
     IRRewriter rewriter(context);
     module.walk([&](func::FuncOp funcOp) {
       (void)eraseUnreachableBlocks(rewriter, funcOp->getRegions());
+    });
+
+    module.walk([&](func::FuncOp funcOp) {
+      if (isKnownStraightLine(funcOp))
+        lowerKnownStraightLine(funcOp);
     });
 
     ConversionTarget target(*context);
