@@ -18,8 +18,7 @@ DROP
 TID-X CELLS PART + SF!
 BARRIER
 
-\ Shared tree fold, halving the stride each level. No warp shuffle and no register accumulator,
-\ so every level costs a block barrier.
+\ Shared tree fold, halving the stride each level. Each level costs a block barrier.
 BDIM-X 2 /
 BEGIN DUP 0 > WHILE
   DUP TID-X >

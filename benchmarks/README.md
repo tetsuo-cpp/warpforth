@@ -25,9 +25,9 @@ torch and compiles a large CUDA extension from source; the cuDNN frontend needs 
 graph build. The hand-written kernel covers the same ground: online softmax fused with the output
 accumulation in one pass, so a row of scores never touches memory.
 
-Hand-written baselines deliberately use hardware WarpForth cannot express yet, so the measured gap
-is a feature gap and not a tiling accident. The suite covers 128-bit vector loads, warp shuffles,
-register-resident accumulators, fused multiply-add, and fused online softmax.
+Hand-written baselines deliberately use hardware the Forth kernels do not match, so the measured
+gap is a feature gap and not a tiling accident. The suite covers 128-bit vector loads, warp
+shuffles, register-resident accumulators, fused multiply-add, and fused online softmax.
 
 ## Numerics
 

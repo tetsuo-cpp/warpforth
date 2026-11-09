@@ -16,11 +16,10 @@
 \ reciprocal square root. SCORES needs NKEY entries and RED one per thread.
 \ HDIM must be a multiple of BDIM, because thread d owns output dimension d and threads with
 \ d >= HDIM skip the output pass.
-\ Each reduction is a shared tree, because the word set has no warp shuffle, and the row of scores
-\ lives in shared memory, because there are no registers to hold it. Every word takes its result
-\ out of shared memory rather than the data stack, so an iteration adds nothing to the stack and
-\ the loop cannot overrun the 2 KiB per-thread buffer. RED[0] carries the row maximum and then the
-\ row sum between stages.
+\ Each reduction is a shared tree. The row of scores lives in shared memory, because there are no
+\ registers to hold it. Every word takes its result out of shared memory rather than the data
+\ stack, so an iteration adds nothing to the stack and the loop cannot overrun the 2 KiB per-thread
+\ buffer. RED[0] carries the row maximum and then the row sum between stages.
 
 : FDOT { pa pb dim -- dot }
   0.0
