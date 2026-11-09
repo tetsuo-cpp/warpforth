@@ -18,6 +18,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/RegionGraphTraits.h" // IWYU pragma: keep
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/RegionUtils.h"
@@ -114,6 +115,21 @@ SmallVector<Value, 8> &cellsOf(StackState &state) {
 ArrayRef<Value> cellsOf(const StackState &state) {
   return std::visit([](const auto &s) -> ArrayRef<Value> { return s.cells; },
                     state);
+}
+
+/// The inliner drops an unused caller and leaves the private callee.
+void eraseUnusedPrivateFunctions(ModuleOp module) {
+  bool erased = true;
+  while (erased) {
+    erased = false;
+    for (func::FuncOp fn : module.getOps<func::FuncOp>()) {
+      if (!fn.isPrivate() || !SymbolTable::symbolKnownUseEmpty(fn, module))
+        continue;
+      fn.erase();
+      erased = true;
+      break;
+    }
+  }
 }
 
 /// A word keeps the stack in its signature until the inliner removes it, and
@@ -482,6 +498,7 @@ struct LowerForthStackPass
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    eraseUnusedPrivateFunctions(module);
     if (failed(verifyWordsInlined(module)))
       return signalPassFailure();
     IRRewriter rewriter(&getContext());
