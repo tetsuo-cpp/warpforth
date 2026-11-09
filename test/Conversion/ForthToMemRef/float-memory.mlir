@@ -1,20 +1,22 @@
 // RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
 
 // CHECK-LABEL: func.func private @main
+// CHECK-NOT: memref<256xi64>
 
-// loadf: load addr, inttoptr global addrspace, llvm.load f64, bitcast f64->i64, store
-// CHECK: memref.load
-// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<1>
-// CHECK: llvm.load %{{.*}} : !llvm.ptr<1> -> f64
-// CHECK: arith.bitcast %{{.*}} : f64 to i64
-// CHECK: memref.store
+// load f64 from global address 1000 and keep the bits as i64
+// CHECK: %[[A1000:.*]] = arith.constant 1000 : i64
+// CHECK: %[[P1000:.*]] = llvm.inttoptr %[[A1000]] : i64 to !llvm.ptr<1>
+// CHECK: %[[LOADED:.*]] = llvm.load %[[P1000]] : !llvm.ptr<1> -> f64
+// CHECK: arith.bitcast %[[LOADED]] : f64 to i64
 
-// storef: load addr, load value, inttoptr global addrspace, bitcast i64->f64, llvm.store
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: llvm.inttoptr %{{.*}} : i64 to !llvm.ptr<1>
-// CHECK: arith.bitcast %{{.*}} : i64 to f64
-// CHECK: llvm.store %{{.*}}, %{{.*}} : f64, !llvm.ptr<1>
+// store 3.14 to global address 2000
+// CHECK: %[[PI:.*]] = arith.constant 3.140000e+00 : f64
+// CHECK: %[[BITS:.*]] = arith.bitcast %[[PI]] : f64 to i64
+// CHECK: %[[A2000:.*]] = arith.constant 2000 : i64
+// CHECK: %[[P2000:.*]] = llvm.inttoptr %[[A2000]] : i64 to !llvm.ptr<1>
+// CHECK: %[[FPI:.*]] = arith.bitcast %[[BITS]] : i64 to f64
+// CHECK: llvm.store %[[FPI]], %[[P2000]] : f64, !llvm.ptr<1>
+// CHECK-NOT: memref<256xi64>
 
 module {
   func.func private @main() {

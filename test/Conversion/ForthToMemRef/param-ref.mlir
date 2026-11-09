@@ -2,21 +2,20 @@
 
 // CHECK-LABEL: func.func private @array_param(
 // CHECK-SAME: %[[ARRAY:.*]]: memref<256xi64> {forth.param_name = "data"})
-// CHECK: %[[STACK:.*]] = memref.alloca() : memref<256xi64>
+// CHECK-NOT: memref.alloca() : memref<256xi64>
 // CHECK: %[[POINTER:.*]] = memref.extract_aligned_pointer_as_index %[[ARRAY]] : memref<256xi64> -> index
-// CHECK: %[[ADDRESS:.*]] = arith.index_cast %[[POINTER]] : index to i64
-// CHECK: memref.store %[[ADDRESS]], %[[STACK]][%{{.*}}] : memref<256xi64>
+// CHECK: arith.index_cast %[[POINTER]] : index to i64
 
+// An i64 parameter is already the cell, so the body does not allocate a stack.
 // CHECK-LABEL: func.func private @i64_param(
-// CHECK-SAME: %[[INTEGER:.*]]: i64 {forth.param_name = "count"})
-// CHECK: %[[STACK:.*]] = memref.alloca() : memref<256xi64>
-// CHECK: memref.store %[[INTEGER]], %[[STACK]][%{{.*}}] : memref<256xi64>
+// CHECK-SAME: %{{.*}}: i64 {forth.param_name = "count"})
+// CHECK-NOT: memref.alloca() : memref<256xi64>
+// CHECK: return
 
 // CHECK-LABEL: func.func private @f64_param(
 // CHECK-SAME: %[[FLOAT:.*]]: f64 {forth.param_name = "scale"})
-// CHECK: %[[STACK:.*]] = memref.alloca() : memref<256xi64>
-// CHECK: %[[BITS:.*]] = arith.bitcast %[[FLOAT]] : f64 to i64
-// CHECK: memref.store %[[BITS]], %[[STACK]][%{{.*}}] : memref<256xi64>
+// CHECK-NOT: memref.alloca() : memref<256xi64>
+// CHECK: arith.bitcast %[[FLOAT]] : f64 to i64
 
 module {
   func.func private @array_param(%arg0: memref<256xi64> {forth.param_name = "data"}) {

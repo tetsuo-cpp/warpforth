@@ -7,7 +7,7 @@
 \ Verify intermediate MLIR structure at the memref+gpu stage
 \ MID: gpu.module @warpforth_module
 \ MID: gpu.func @main(%arg0: memref<256xf64> {forth.param_name = "DATA"}, %arg1: f64 {forth.param_name = "SCALE"}) kernel
-\ MID: memref.alloca() : memref<256xi64>
+\ MID-NOT: memref.alloca() : memref<256xi64>
 \ MID: memref.extract_aligned_pointer_as_index %arg0
 \ MID: arith.bitcast %{{.*}} : f64 to i64
 \ MID: gpu.return

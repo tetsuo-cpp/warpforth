@@ -1,20 +1,17 @@
 // RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
 
 // CHECK-LABEL: func.func private @shuffle_xor
-// CHECK: %[[MEM:.*]] = memref.alloca() : memref<256xi64>
-// CHECK: %[[B:.*]] = memref.load %[[MEM]][%[[SP:.*]]] : memref<256xi64>
-// CHECK: %[[SPM1:.*]] = arith.subi %[[SP]], %{{.*}} : index
-// CHECK: %[[X:.*]] = memref.load %[[MEM]][%[[SPM1]]] : memref<256xi64>
+// CHECK-NOT: memref<256xi64>
+// CHECK: %[[X:.*]] = arith.constant 7 : i64
+// CHECK: %[[B:.*]] = arith.constant 3 : i64
 // CHECK: %[[B32:.*]] = arith.trunci %[[B]] : i64 to i32
 // CHECK: %[[MASK:.*]] = arith.constant 31 : i32
 // CHECK: %[[BMOD:.*]] = arith.andi %[[B32]], %[[MASK]] : i32
 // CHECK: %[[W:.*]] = arith.constant 32 : i32
-// CHECK: %[[Y:.*]], %{{.*}} = gpu.shuffle xor %[[X]], %[[BMOD]], %[[W]] : i64
-// CHECK: memref.store %[[Y]], %[[MEM]][%[[SPM1]]] : memref<256xi64>
+// CHECK: gpu.shuffle xor %[[X]], %[[BMOD]], %[[W]] : i64
 // CHECK: %[[LANE:.*]] = forth.intrinsic "lane-id" : index
-// CHECK: %[[LANE64:.*]] = arith.index_cast %[[LANE]] : index to i64
-// CHECK: %[[SP2:.*]] = arith.addi %[[SPM1]], %{{.*}} : index
-// CHECK: memref.store %[[LANE64]], %[[MEM]][%[[SP2]]] : memref<256xi64>
+// CHECK: arith.index_cast %[[LANE]] : index to i64
+// CHECK-NOT: memref<256xi64>
 func.func private @shuffle_xor() {
   %0 = forth.stack !forth.stack
   %1 = forth.constant %0(7 : i64) : !forth.stack -> !forth.stack
@@ -25,6 +22,7 @@ func.func private @shuffle_xor() {
 }
 
 // CHECK-LABEL: func.func private @shuffle_modes
+// CHECK-NOT: memref<256xi64>
 // CHECK: gpu.shuffle down
 // CHECK: gpu.shuffle up
 // CHECK: gpu.shuffle idx

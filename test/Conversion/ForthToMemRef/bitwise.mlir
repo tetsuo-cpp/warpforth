@@ -1,43 +1,27 @@
 // RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
 
 // CHECK-LABEL: func.func private @main
+// CHECK-NOT: memref<256xi64>
 
-// and: pop two, arith.andi, store result
-// CHECK: memref.load
-// CHECK: arith.subi
-// CHECK: memref.load
-// CHECK: arith.andi %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
-
-// or: pop two, arith.ori, store result
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.ori %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
-
-// xor: pop two, arith.xori, store result
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.xori %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
-
-// not: load one value, xori with -1, store at same SP
-// CHECK: memref.load
-// CHECK: arith.constant -1 : i64
-// CHECK: arith.xori %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
-
-// lshift: pop two, arith.shli, store result
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.shli %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
-
-// rshift: pop two, arith.shrui, store result
-// CHECK: memref.load
-// CHECK: memref.load
-// CHECK: arith.shrui %{{.*}}, %{{.*}} : i64
-// CHECK: memref.store
+// CHECK: %[[A3:.*]] = arith.constant 3 : i64
+// CHECK: %[[A5:.*]] = arith.constant 5 : i64
+// CHECK: arith.andi %[[A3]], %[[A5]] : i64
+// CHECK: %[[O7:.*]] = arith.constant 7 : i64
+// CHECK: %[[O8:.*]] = arith.constant 8 : i64
+// CHECK: arith.ori %[[O7]], %[[O8]] : i64
+// CHECK: %[[X15:.*]] = arith.constant 15 : i64
+// CHECK: %[[X3:.*]] = arith.constant 3 : i64
+// CHECK: arith.xori %[[X15]], %[[X3]] : i64
+// CHECK: %[[N42:.*]] = arith.constant 42 : i64
+// CHECK: %[[ONES:.*]] = arith.constant -1 : i64
+// CHECK: arith.xori %[[N42]], %[[ONES]] : i64
+// CHECK: %[[L1:.*]] = arith.constant 1 : i64
+// CHECK: %[[L4:.*]] = arith.constant 4 : i64
+// CHECK: arith.shli %[[L1]], %[[L4]] : i64
+// CHECK: %[[R256:.*]] = arith.constant 256 : i64
+// CHECK: %[[R2:.*]] = arith.constant 2 : i64
+// CHECK: arith.shrui %[[R256]], %[[R2]] : i64
+// CHECK-NOT: memref<256xi64>
 
 module {
   func.func private @main() {
