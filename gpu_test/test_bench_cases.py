@@ -31,7 +31,7 @@ CASES = manifest.load(MANIFEST)
 COMPILER = manifest.find_compiler(REPO_ROOT)
 CASE_IDS = [case.id for case in CASES]
 
-# Features WarpForth cannot express yet. The suite must exercise all of them at least once, so a
+# Features the Forth kernels do not match. The suite must exercise all of them at least once, so a
 # gap it reports is a feature gap and not just a tiling difference.
 REQUIRED_FEATURES = (
     "128-bit vector",
