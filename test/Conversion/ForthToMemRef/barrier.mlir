@@ -1,4 +1,4 @@
-// RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
+// RUN: %warpforth-opt --tag-forth-stack-depth --convert-forth-to-memref %s | %FileCheck %s
 // CHECK-LABEL: func.func private @main
 // CHECK: forth.barrier
 func.func private @main() {

@@ -1,4 +1,4 @@
-// RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
+// RUN: %warpforth-opt --tag-forth-stack-depth --convert-forth-to-memref %s | %FileCheck %s
 
 // CHECK-LABEL: func.func private @array_param(
 // CHECK-SAME: %[[ARRAY:.*]]: memref<256xi64> {forth.param_name = "data"})

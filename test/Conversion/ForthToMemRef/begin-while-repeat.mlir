@@ -1,4 +1,4 @@
-// RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
+// RUN: %warpforth-opt --tag-forth-stack-depth --convert-forth-to-memref %s | %FileCheck %s
 
 // Test: BEGIN...WHILE...REPEAT loop conversion to memref with CF-based control flow
 // Forth: 10 BEGIN DUP 0 > WHILE 1 - REPEAT

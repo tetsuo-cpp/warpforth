@@ -1,6 +1,6 @@
 add_mlir_conversion_library(MLIRForthToMemRefConversion
   ForthToMemRef.cpp
-  WordLowering.cpp
+  TagForthStackDepth.cpp
 
   DEPENDS
   MLIRConversionPassIncGen

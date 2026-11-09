@@ -9,8 +9,21 @@
 
 include "mlir/Pass/PassBase.td"
 
-def ConvertForthToMemRef
-    : Pass<"convert-forth-to-memref", "mlir::ModuleOp"> {
+def TagForthStackDepth : Pass<"tag-forth-stack-depth", "mlir::ModuleOp"> {
+  let summary = "Tag Forth ops with a known stack depth";
+  let description = [{
+    Records the compile-time data-stack depth before each Forth op as a
+    `known_depth` attribute. A function whose depth cannot be tracked is left
+    unchanged. The attribute is an analysis result and does not change operands.
+  }];
+
+  let constructor = "mlir::warpforth::createTagForthStackDepthPass()";
+
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
+
+def ConvertForthToMemRef : Pass<"convert-forth-to-memref", "mlir::ModuleOp"> {
   let summary = "Convert Forth dialect to MemRef dialect";
   let description = [{
     This pass converts Forth dialect operations to MemRef dialect operations.
@@ -20,7 +33,8 @@ def ConvertForthToMemRef
     - Stack pointer: `index` type (current top of stack position)
 
     Forth operations are converted to corresponding memref load/store operations
-    with explicit stack pointer arithmetic.
+    with explicit stack pointer arithmetic. An op tagged with `known_depth` is
+    lowered to SSA values instead of the memref stack.
 
     `forth.shuffle` becomes a `gpu.shuffle` of the whole i64 cell at width 32.
   }];
@@ -31,8 +45,7 @@ def ConvertForthToMemRef
                            "mlir::arith::ArithDialect",
                            "mlir::LLVM::LLVMDialect",
                            "mlir::cf::ControlFlowDialect",
-                           "mlir::math::MathDialect",
-                           "mlir::gpu::GPUDialect"];
+                           "mlir::math::MathDialect", "mlir::gpu::GPUDialect"];
 }
 
 def ConvertForthToGPU : Pass<"convert-forth-to-gpu", "mlir::ModuleOp"> {

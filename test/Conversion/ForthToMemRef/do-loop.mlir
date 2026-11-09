@@ -1,4 +1,4 @@
-// RUN: %warpforth-opt --convert-forth-to-memref %s | %FileCheck %s
+// RUN: %warpforth-opt --tag-forth-stack-depth --convert-forth-to-memref %s | %FileCheck %s
 
 // Test: DO...LOOP with I conversion to memref with post-test crossing check
 // Forth: 10 0 DO I LOOP

@@ -1,5 +1,5 @@
 \ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --warpforth-pipeline | %FileCheck %s
-\ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --convert-forth-to-memref --canonicalize | %FileCheck %s --check-prefix=MID --implicit-check-not="arith.constant true"
+\ RUN: %warpforth-translate --forth-to-mlir %s | %warpforth-opt --tag-forth-stack-depth --convert-forth-to-memref --canonicalize | %FileCheck %s --check-prefix=MID --implicit-check-not="arith.constant true"
 \ CHECK: gpu.binary @warpforth_module
 \ MID-LABEL: func.func private @DO_EXIT
 \ MID-COUNT-2: return
