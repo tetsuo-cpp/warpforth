@@ -40,6 +40,10 @@ def LowerForthStack : Pass<"lower-forth-stack", "mlir::ModuleOp"> {
     compile time becomes an `i64` SSA value, and each word becomes the `arith`,
     `memref`, or `llvm` ops that compute its result.
 
+    A cell below the known depth, or one that a runtime `PICK` or `ROLL` index
+    addresses, lives in a per-thread `memref<256xi64>` with the memref stack's
+    layout: index 0 is empty and a push stores at depth + 1.
+
     A function whose words this pass does not lower yet is left unchanged for
     `convert-forth-to-memref`.
   }];
@@ -47,6 +51,7 @@ def LowerForthStack : Pass<"lower-forth-stack", "mlir::ModuleOp"> {
   let constructor = "mlir::warpforth::createLowerForthStackPass()";
 
   let dependentDialects = ["mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect",
                            "mlir::LLVM::LLVMDialect",
                            "mlir::memref::MemRefDialect"];
 }

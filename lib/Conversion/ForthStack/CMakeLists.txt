@@ -10,9 +10,13 @@ add_mlir_conversion_library(MLIRForthStackConversion
   MLIRIR
   MLIRPass
   MLIRArithDialect
+  MLIRControlFlowDialect
+  MLIRControlFlowInterfaces
+  MLIRDialectUtils
   MLIRFuncDialect
   MLIRLLVMDialect
   MLIRMemRefDialect
   MLIRNVVMDialect
+  MLIRTransformUtils
   MLIRForth
 )

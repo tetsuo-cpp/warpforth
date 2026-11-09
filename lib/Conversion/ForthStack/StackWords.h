@@ -41,6 +41,14 @@ public:
   /// first.
   virtual void push(Value cell) = 0;
 
+  /// The cell `n` places below the top of the stack left after the pops,
+  /// where 0 is the top. `n` is an i64 cell and need not be a constant.
+  virtual Value peek(Value n) = 0;
+
+  /// Moves the cell `n` places below the top of the stack left after the pops
+  /// to the top, shifting the cells above it down by one.
+  virtual void rollToTop(Value n) = 0;
+
   /// Replaces every use of the op's non-stack result, such as the i1 of
   /// forth.pop_flag, with `value`.
   virtual void replaceValueResult(Value value) = 0;

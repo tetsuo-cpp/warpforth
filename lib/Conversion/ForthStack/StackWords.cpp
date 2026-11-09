@@ -153,6 +153,14 @@ ArrayRef<StackWordRow> stackWordRows() {
             }
             ctx.push(parameter);
           }),
+      row<forth::PickOp>({1, 1},
+                         [](forth::PickOp, WordContext &ctx) {
+                           ctx.push(ctx.peek(ctx.popped(0)));
+                         }),
+      row<forth::RollOp>({1, 0},
+                         [](forth::RollOp, WordContext &ctx) {
+                           ctx.rollToTop(ctx.popped(0));
+                         }),
       row<forth::PushValueOp>({0, 1},
                               [](forth::PushValueOp op, WordContext &ctx) {
                                 ctx.push(op.getValue());
