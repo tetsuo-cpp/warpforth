@@ -1,8 +1,7 @@
 //===- StackWords.h - Stack effects of Forth words --------------*- C++ -*-===//
 //
 // This file declares the stack-word table. Each row gives one Forth op its
-// stack effect and lowers the op's compute on i64 cells. Where the cells live
-// is decided by LowerForthStack.cpp alone.
+// stack effect and lowers the op's compute on i64 cells.
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,8 +17,7 @@ namespace mlir {
 namespace warpforth {
 namespace stack {
 
-/// How many cells a word pops, then pushes. The table is the only place that
-/// declares a stack effect.
+/// How many cells a word pops, then pushes.
 struct StackEffect {
   unsigned pops = 0;
   unsigned pushes = 0;
@@ -56,14 +54,13 @@ public:
 
 using LowerFn = std::function<void(Operation *op, WordContext &ctx)>;
 
-/// One row of the stack-word table.
-struct StackWord {
+struct WordLowering {
   StackEffect effect;
   LowerFn lower;
 };
 
-/// The row for `op`, or null when the table has none.
-const StackWord *lookupStackWord(Operation *op);
+/// The lowering for `op`, or null when the table has none.
+const WordLowering *lookupStackWord(Operation *op);
 
 /// Fails, with an error for each one, when a Forth op that takes a
 /// !forth.stack has no row. The Forth dialect must be loaded.

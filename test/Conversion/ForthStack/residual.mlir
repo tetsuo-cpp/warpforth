@@ -1,8 +1,7 @@
 // RUN: %warpforth-opt --lower-forth-stack %s | %FileCheck %s
 
 // `5 + A !`: + needs a second cell that the stack does not have. The pop
-// widens the stack to the residual buffer and loads index 0, as the memref
-// stack did, instead of failing to compile.
+// widens the stack to the residual buffer and loads index 0.
 // CHECK-LABEL: func.func @underflow(
 // CHECK: %[[BUFFER:.*]] = memref.alloca() : memref<256xi64>
 // CHECK: %[[FIVE:.*]] = arith.constant 5 : i64

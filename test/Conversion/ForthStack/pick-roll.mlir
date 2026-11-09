@@ -49,8 +49,8 @@ func.func @literal_roll(%a: memref<1xi64>, %b: memref<1xi64>, %c: memref<1xi64>)
 }
 
 // `10 20 30 N PICK A ! B !`: a runtime index needs addressable cells, so the
-// three cells are stored at indices 1 to 3 as the image for one load at
-// 3 - N. The cells stay in registers, so B receives 30 directly.
+// three cells are stored at indices 1 to 3 for the load at 3 - N. The depth
+// of that store is dropped, so the cells stay in registers and B receives 30.
 // CHECK-LABEL: func.func @dynamic_pick(
 // CHECK-SAME: %[[N:[^:]*]]: i64
 // CHECK: %[[BUFFER:.*]] = memref.alloca() : memref<256xi64>

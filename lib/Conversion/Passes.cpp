@@ -89,19 +89,13 @@ static StringRef getBinaryFormat(gpu::CompilationTarget target) {
 
 void buildWarpForthLoweringPipeline(OpPassManager &pm,
                                     const WarpForthPipelineOptions &options) {
-  // Stage 1: Inline user words while they are still Forth, so the kernel is the
-  // whole program when its stack is lowered. MLIR's GPU inliner does not
-  // support inlining a func.func region into a gpu.func region, so this must
-  // precede GPU conversion.
+  // MLIR's GPU inliner does not support inlining a func.func region into a
+  // gpu.func region, so this must precede GPU conversion.
   pm.addPass(createInlinerPass());
-
-  // Stage 2: Lower the stack to i64 SSA values and a residual buffer
   pm.addPass(createLowerForthStackPass());
-
-  // Stage 3: Convert to GPU dialect
   pm.addPass(createConvertForthToGPUPass());
 
-  // Stage 4: Optimize the materialized stack and memory IR in the kernel.
+  // Clean the kernel IR.
   OpPassManager &gpuModulePM = pm.nest<gpu::GPUModuleOp>();
   gpuModulePM.addNestedPass<gpu::GPUFuncOp>(createCSEPass());
   gpuModulePM.addNestedPass<gpu::GPUFuncOp>(createCanonicalizerPass());
@@ -110,7 +104,7 @@ void buildWarpForthLoweringPipeline(OpPassManager &pm,
   gpuModulePM.addNestedPass<gpu::GPUFuncOp>(createSCCPPass());
   gpuModulePM.addNestedPass<gpu::GPUFuncOp>(createCanonicalizerPass());
 
-  // Stage 5: Attach the configured NVVM target to GPU modules
+  // Attach the configured NVVM target to GPU modules.
   GpuNVVMAttachTargetOptions nvvmOptions;
   nvvmOptions.chip = options.chip.getValue();
   nvvmOptions.features = options.features.getValue();
@@ -119,19 +113,19 @@ void buildWarpForthLoweringPipeline(OpPassManager &pm,
     nvvmOptions.linkLibs.push_back(options.libdevicePath.getValue());
   pm.addPass(createGpuNVVMAttachTarget(nvvmOptions));
 
-  // Stage 6: Lower GPU to NVVM with bare pointers
+  // Lower GPU to NVVM with bare pointers.
   ConvertGpuOpsToNVVMOpsOptions gpuToNVVMOptions;
   gpuToNVVMOptions.useBarePtrCallConv = true;
   pm.addNestedPass<gpu::GPUModuleOp>(
       createConvertGpuOpsToNVVMOps(gpuToNVVMOptions));
 
-  // Stage 7: Lower math ops to LLVM intrinsics inside GPU module
+  // Lower math ops to LLVM intrinsics inside the GPU module.
   pm.addNestedPass<gpu::GPUModuleOp>(createConvertMathToLLVMPass());
 
-  // Stage 8: Lower NVVM to LLVM
+  // Lower NVVM to LLVM.
   pm.addPass(createConvertNVVMToLLVMPass());
 
-  // Stage 9: Reconcile type conversions
+  // Reconcile type conversions.
   pm.addPass(createReconcileUnrealizedCastsPass());
 }
 
@@ -139,7 +133,7 @@ void buildWarpForthPipeline(OpPassManager &pm,
                             const WarpForthPipelineOptions &options) {
   buildWarpForthLoweringPipeline(pm, options);
 
-  // Stage 10: Compile GPU module to PTX binary
+  // Compile the GPU module to a PTX binary.
   GpuModuleToBinaryPassOptions binaryOptions;
   binaryOptions.compilationTarget =
       getBinaryFormat(options.compilationTarget.getValue()).str();

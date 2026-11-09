@@ -1,7 +1,7 @@
 // RUN: %warpforth-opt --lower-forth-stack %s | %FileCheck %s
 
-// `A B op OUT !` for each binary bitwise word: the deeper cell is the left
-// operand, and RSHIFT is a logical shift. `A NOT` flips every bit of A.
+// `A B op OUT !` for each binary bitwise word. RSHIFT is a logical shift.
+// `A NOT` flips every bit of A.
 // CHECK-LABEL: func.func @bitwise(
 // CHECK-SAME: %[[A:[^:]*]]: i64, %[[B:[^:]*]]: i64
 // CHECK: %[[AND:.*]] = arith.andi %[[A]], %[[B]] : i64

@@ -22,8 +22,7 @@ using namespace mlir::forth;
 #include "warpforth/Dialect/Forth/ForthOps.cpp.inc"
 
 namespace {
-/// Forth ops hold no state tied to their enclosing word, so every word can be
-/// inlined into its caller before the stack is lowered.
+/// Forth ops hold no state tied to their enclosing word.
 struct ForthInlinerInterface : public DialectInlinerInterface {
   using DialectInlinerInterface::DialectInlinerInterface;
 

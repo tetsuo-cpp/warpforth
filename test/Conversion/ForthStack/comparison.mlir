@@ -1,7 +1,7 @@
 // RUN: %warpforth-opt --lower-forth-stack %s | %FileCheck %s
 
-// `A B op OUT !` for each integer comparison. The deeper cell is the left
-// operand, and the flag is the sign-extended i1, so true is -1.
+// `A B op OUT !` for each integer comparison. The flag is the sign-extended
+// i1, so true is -1.
 // CHECK-LABEL: func.func @int_comparisons(
 // CHECK-SAME: %[[A:[^:]*]]: i64, %[[B:[^:]*]]: i64
 // CHECK: %[[EQ:.*]] = arith.cmpi eq, %[[A]], %[[B]] : i64

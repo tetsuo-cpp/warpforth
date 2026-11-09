@@ -1,9 +1,6 @@
 //===- LowerForthStack.cpp - Lower the Forth stack --------------*- C++ -*-===//
 //
-// This file implements the pass that lowers every !forth.stack value. The
-// stack-word table says what each word computes. This file decides where each
-// cell lives: a cell whose depth and slot are known is an i64 SSA value, and
-// the rest live in a per-thread memref<256xi64> indexed by depth.
+// This file implements the pass that lowers every !forth.stack value.
 //
 //===----------------------------------------------------------------------===//
 
@@ -41,11 +38,9 @@ namespace warpforth {
 namespace {
 
 using stack::StackEffect;
-using stack::StackWord;
 using stack::WordContext;
+using stack::WordLowering;
 
-/// Cells in the residual buffer. Index 0 is never written by a push, so an
-/// empty buffer has depth 0.
 constexpr int64_t kResidualCells = 256;
 
 bool isStack(Type type) { return isa<forth::StackType>(type); }
@@ -81,9 +76,9 @@ StackShape transfer(StackShape in, StackEffect effect) {
   return ResidualShape{kept + effect.pushes};
 }
 
-/// The shape where stacks of shapes `a` and `b` meet. Equal shapes are kept.
-/// Otherwise the join keeps in registers only the top cells that both sides
-/// hold there, and the cells below move to memory.
+/// The shape where stacks of shapes `a` and `b` meet. When the shapes differ,
+/// the join keeps in registers only the top cells that both sides hold there,
+/// and the cells below move to memory.
 StackShape join(StackShape a, StackShape b) {
   if (a == b)
     return a;
@@ -135,8 +130,6 @@ LogicalResult verifyWordsInlined(ModuleOp module) {
   return success();
 }
 
-/// Every stack value must come from forth.stack, a row, or a block argument,
-/// and flow only into rows and branches.
 LogicalResult verifyStackUsers(Region &body) {
   WalkResult walk = body.walk([](Operation *op) {
     bool usesStack = llvm::any_of(op->getOperandTypes(), isStack) ||
@@ -197,7 +190,7 @@ DenseMap<Value, StackShape> inferShapes(Region &body) {
           shapes[op.getResult(0)] = StaticShape{0};
           continue;
         }
-        const StackWord *word = stack::lookupStackWord(&op);
+        const WordLowering *word = stack::lookupStackWord(&op);
         if (!word)
           continue;
         shapes[op.getResult(0)] =
@@ -208,14 +201,12 @@ DenseMap<Value, StackShape> inferShapes(Region &body) {
   return shapes;
 }
 
-/// Rewrites one function. Rows reach the cells only through WordContext.
 class StackSimulator final : public WordContext {
 public:
   StackSimulator(func::FuncOp fn, DenseMap<Value, StackShape> shapes)
-      : fn(fn), b(fn.getContext()), loc(fn.getLoc()),
-        shapes(std::move(shapes)) {}
+      : fn(fn), b(fn.getContext()), shapes(std::move(shapes)),
+        loc(fn.getLoc()) {}
 
-  /// Lowers every stack word in `fn`, then erases the Forth stack ops.
   void run();
 
   OpBuilder &builder() override { return b; }
@@ -229,11 +220,12 @@ public:
 
 private:
   void expandArguments(Block &block);
-  void lowerWord(Operation *op, const StackWord &word);
+  void lowerWord(Operation *op, const WordLowering &word);
   Value popCell();
   void forwardCells(BranchOpInterface branch);
   void appendEdgeOperands(const StackState &state, StackShape target,
                           SmallVectorImpl<Value> &operands);
+  void shiftCellsDown(Value from, Value top);
 
   Value residualBuffer();
   Value memoryDepth(const StackState &state);
@@ -243,8 +235,6 @@ private:
 
   func::FuncOp fn;
   OpBuilder b;
-  /// Location of the op or branch being lowered.
-  Location loc;
   DenseMap<Value, StackShape> shapes;
   /// Keyed by the original !forth.stack value.
   DenseMap<Value, StackState> states;
@@ -252,11 +242,10 @@ private:
   DenseMap<Block *, SmallVector<BlockArgument>> originalArguments;
   SmallVector<Operation *> lowered;
   SmallVector<BlockArgument> replacedArguments;
-  /// Allocated on first use, so a function whose cells all have static slots
-  /// has no buffer.
   Value buffer;
 
   // Scratch for the op being lowered.
+  Location loc;
   Operation *current = nullptr;
   StackState working;
   SmallVector<Value, 4> poppedCells;
@@ -276,7 +265,7 @@ void StackSimulator::run() {
       if (isa<forth::StackOp>(op)) {
         states[op->getResult(0)] = StaticState{};
         lowered.push_back(op);
-      } else if (const StackWord *word = stack::lookupStackWord(op)) {
+      } else if (const WordLowering *word = stack::lookupStackWord(op)) {
         lowerWord(op, *word);
       } else if (auto branch = dyn_cast<BranchOpInterface>(op)) {
         forwardCells(branch);
@@ -292,8 +281,6 @@ void StackSimulator::run() {
     arg.getOwner()->eraseArgument(arg.getArgNumber());
 }
 
-/// Gives each stack argument of `block` the arguments its shape needs, placed
-/// after it. The stack argument is erased once nothing uses it.
 void StackSimulator::expandArguments(Block &block) {
   SmallVector<BlockArgument> &original = originalArguments[&block];
   original = llvm::to_vector(block.getArguments());
@@ -315,7 +302,7 @@ void StackSimulator::expandArguments(Block &block) {
   }
 }
 
-void StackSimulator::lowerWord(Operation *op, const StackWord &word) {
+void StackSimulator::lowerWord(Operation *op, const WordLowering &word) {
   current = op;
   loc = op->getLoc();
   b.setInsertionPoint(op);
@@ -332,10 +319,6 @@ void StackSimulator::lowerWord(Operation *op, const StackWord &word) {
   lowered.push_back(op);
 }
 
-/// Pops the top cell of the working stack. Below the register cells the cell
-/// is loaded from memory. A static stack has nothing below its cells, so it
-/// widens to an empty residual stack and the load reads index 0, as the memref
-/// stack did.
 Value StackSimulator::popCell() {
   SmallVector<Value, 8> &cells = cellsOf(working);
   if (!cells.empty())
@@ -362,8 +345,8 @@ Value StackSimulator::peek(Value n) {
   SmallVector<Value, 8> &cells = cellsOf(working);
   if (std::optional<unsigned> slot = registerSlot(n, cells.size()))
     return cells[*slot];
-  // The register cells are written only as the image this load addresses, and
-  // they stay the live stack.
+  // The depth storeCells returns is dropped, so these stores do not change
+  // `working`.
   Value top = storeCells(cells, memoryDepth(working));
   Value offset = b.create<arith::IndexCastOp>(loc, b.getIndexType(), n);
   Value index = b.create<arith::SubIOp>(loc, top, offset);
@@ -381,8 +364,16 @@ void StackSimulator::rollToTop(Value n) {
   Value offset = b.create<arith::IndexCastOp>(loc, b.getIndexType(), n);
   Value rolledIndex = b.create<arith::SubIOp>(loc, top, offset);
   Value rolled = b.create<memref::LoadOp>(loc, residualBuffer(), rolledIndex);
+  shiftCellsDown(rolledIndex, top);
+  b.create<memref::StoreOp>(loc, rolled, residualBuffer(), top);
+  Value index = depth;
+  for (Value &cell : cells) {
+    index = b.create<arith::AddIOp>(loc, index, indexConstant(1));
+    cell = b.create<memref::LoadOp>(loc, residualBuffer(), index);
+  }
+}
 
-  // for (iv = rolledIndex; iv < top; ++iv) buffer[iv] = buffer[iv + 1]
+void StackSimulator::shiftCellsDown(Value from, Value top) {
   Block *before = b.getInsertionBlock();
   Block *after = before->splitBlock(b.getInsertionPoint());
   Type indexType = b.getIndexType();
@@ -390,7 +381,7 @@ void StackSimulator::rollToTop(Value n) {
   Block *body = b.createBlock(after, indexType, loc);
 
   b.setInsertionPointToEnd(before);
-  b.create<cf::BranchOp>(loc, header, rolledIndex);
+  b.create<cf::BranchOp>(loc, header, from);
 
   b.setInsertionPointToStart(header);
   Value iv = header->getArgument(0);
@@ -406,12 +397,6 @@ void StackSimulator::rollToTop(Value n) {
   b.create<cf::BranchOp>(loc, header, next);
 
   b.setInsertionPointToStart(after);
-  b.create<memref::StoreOp>(loc, rolled, residualBuffer(), top);
-  Value index = depth;
-  for (Value &cell : cells) {
-    index = b.create<arith::AddIOp>(loc, index, indexConstant(1));
-    cell = b.create<memref::LoadOp>(loc, residualBuffer(), index);
-  }
 }
 
 /// Passes each forwarded stack to its successor in the successor's shape.
@@ -469,7 +454,6 @@ Value StackSimulator::residualBuffer() {
   return buffer;
 }
 
-/// The index of the top memory cell under `state`'s register cells.
 Value StackSimulator::memoryDepth(const StackState &state) {
   if (const auto *residual = std::get_if<ResidualState>(&state))
     return residual->depth;
@@ -477,7 +461,7 @@ Value StackSimulator::memoryDepth(const StackState &state) {
 }
 
 /// Pushes `cells` to memory above `depth`, deepest first, and returns the new
-/// depth.
+/// depth. Index 0 is never written by a push, so an empty buffer has depth 0.
 Value StackSimulator::storeCells(ArrayRef<Value> cells, Value depth) {
   for (Value cell : cells) {
     depth = b.create<arith::AddIOp>(loc, depth, indexConstant(1));

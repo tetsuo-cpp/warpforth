@@ -32,8 +32,6 @@ constexpr unsigned kGlobalAddressSpace =
 constexpr unsigned kSharedAddressSpace =
     static_cast<unsigned>(NVVM::kSharedMemorySpace);
 
-/// Element type of a memory access. Cells are i64; a narrower integer is
-/// sign-extended and a float is carried as the bits of an f64.
 enum class MemType { I64, F64, I8, I16, I32, F16, BF16, F32 };
 
 Type memElementType(MLIRContext *ctx, MemType type) {
@@ -58,7 +56,6 @@ Type memElementType(MLIRContext *ctx, MemType type) {
   llvm_unreachable("unhandled MemType");
 }
 
-/// The cell as a value of the memory element type.
 Value narrow(OpBuilder &b, Location loc, Value cell, MemType type) {
   Type elementType = memElementType(b.getContext(), type);
   switch (type) {
@@ -80,7 +77,6 @@ Value narrow(OpBuilder &b, Location loc, Value cell, MemType type) {
   llvm_unreachable("unhandled MemType");
 }
 
-/// The loaded memory element as a cell.
 Value widen(OpBuilder &b, Location loc, Value element, MemType type) {
   switch (type) {
   case MemType::I64:
@@ -127,15 +123,13 @@ Value gpuIndex(OpBuilder &b, Location loc, StringRef intrinsic) {
 
 struct StackWordRow {
   TypeID op;
-  StackWord word;
+  WordLowering word;
 };
 
-/// A row built by a family helper, which carries its own effect.
-template <typename OpT> StackWordRow row(StackWord word) {
+template <typename OpT> StackWordRow row(WordLowering word) {
   return {TypeID::get<OpT>(), std::move(word)};
 }
 
-/// A row whose lowering reads the typed op.
 template <typename OpT>
 StackWordRow row(StackEffect effect, void (*lower)(OpT, WordContext &)) {
   return {TypeID::get<OpT>(),
@@ -146,7 +140,7 @@ StackWordRow row(StackEffect effect, void (*lower)(OpT, WordContext &)) {
 
 /// A word that only reorders cells. It pushes popped(i) for each i in
 /// `order`, deepest first.
-StackWord shuffle(unsigned pops, std::initializer_list<unsigned> order) {
+WordLowering shuffle(unsigned pops, std::initializer_list<unsigned> order) {
   SmallVector<unsigned, 3> pushed(order);
   auto pushes = static_cast<unsigned>(pushed.size());
   return {{pops, pushes}, [pushed](Operation *, WordContext &ctx) {
@@ -156,7 +150,7 @@ StackWord shuffle(unsigned pops, std::initializer_list<unsigned> order) {
 }
 
 /// ( a b -- a op b )
-template <typename ArithOp> StackWord intBinary() {
+template <typename ArithOp> WordLowering intBinary() {
   return {{2, 1}, [](Operation *op, WordContext &ctx) {
             ctx.push(ctx.builder().create<ArithOp>(op->getLoc(), ctx.popped(1),
                                                    ctx.popped(0)));
@@ -164,7 +158,7 @@ template <typename ArithOp> StackWord intBinary() {
 }
 
 /// ( a b -- a op b ) on the f64 bits of each cell.
-template <typename ArithOp> StackWord floatBinary() {
+template <typename ArithOp> WordLowering floatBinary() {
   return {{2, 1}, [](Operation *op, WordContext &ctx) {
             OpBuilder &b = ctx.builder();
             Location loc = op->getLoc();
@@ -175,7 +169,7 @@ template <typename ArithOp> StackWord floatBinary() {
 }
 
 /// ( x -- op x ) on the f64 bits of the cell.
-template <typename UnaryOp> StackWord floatUnary() {
+template <typename UnaryOp> WordLowering floatUnary() {
   return {{1, 1}, [](Operation *op, WordContext &ctx) {
             OpBuilder &b = ctx.builder();
             Location loc = op->getLoc();
@@ -185,7 +179,7 @@ template <typename UnaryOp> StackWord floatUnary() {
 }
 
 /// ( a b -- flag )
-StackWord intCompare(arith::CmpIPredicate predicate) {
+WordLowering intCompare(arith::CmpIPredicate predicate) {
   return {{2, 1}, [predicate](Operation *op, WordContext &ctx) {
             OpBuilder &b = ctx.builder();
             Location loc = op->getLoc();
@@ -196,7 +190,7 @@ StackWord intCompare(arith::CmpIPredicate predicate) {
 }
 
 /// ( a b -- flag ) on the f64 bits of each cell.
-StackWord floatCompare(arith::CmpFPredicate predicate) {
+WordLowering floatCompare(arith::CmpFPredicate predicate) {
   return {{2, 1}, [predicate](Operation *op, WordContext &ctx) {
             OpBuilder &b = ctx.builder();
             Location loc = op->getLoc();
@@ -208,7 +202,7 @@ StackWord floatCompare(arith::CmpFPredicate predicate) {
 }
 
 /// ( addr -- x )
-StackWord load(MemType type, unsigned addressSpace) {
+WordLowering load(MemType type, unsigned addressSpace) {
   return {{1, 1}, [type, addressSpace](Operation *op, WordContext &ctx) {
             OpBuilder &b = ctx.builder();
             Location loc = op->getLoc();
@@ -220,7 +214,7 @@ StackWord load(MemType type, unsigned addressSpace) {
 }
 
 /// ( x addr -- )
-StackWord store(MemType type, unsigned addressSpace) {
+WordLowering store(MemType type, unsigned addressSpace) {
   return {{2, 0}, [type, addressSpace](Operation *op, WordContext &ctx) {
             OpBuilder &b = ctx.builder();
             Location loc = op->getLoc();
@@ -231,7 +225,7 @@ StackWord store(MemType type, unsigned addressSpace) {
 }
 
 /// ( -- x ), where `intrinsic` names a GPU index such as "tid-x".
-StackWord gpuIndexWord(StringRef intrinsic) {
+WordLowering gpuIndexWord(StringRef intrinsic) {
   return {{0, 1}, [intrinsic](Operation *op, WordContext &ctx) {
             OpBuilder &b = ctx.builder();
             Value index = gpuIndex(b, op->getLoc(), intrinsic);
@@ -443,9 +437,9 @@ ArrayRef<StackWordRow> stackWordRows() {
   return rows;
 }
 
-const DenseMap<TypeID, const StackWord *> &stackWords() {
-  static const DenseMap<TypeID, const StackWord *> words = [] {
-    DenseMap<TypeID, const StackWord *> words;
+const DenseMap<TypeID, const WordLowering *> &stackWords() {
+  static const DenseMap<TypeID, const WordLowering *> words = [] {
+    DenseMap<TypeID, const WordLowering *> words;
     for (const StackWordRow &row : stackWordRows()) {
       bool inserted = words.try_emplace(row.op, &row.word).second;
       assert(inserted && "duplicate stack-word row");
@@ -458,7 +452,7 @@ const DenseMap<TypeID, const StackWord *> &stackWords() {
 
 } // namespace
 
-const StackWord *lookupStackWord(Operation *op) {
+const WordLowering *lookupStackWord(Operation *op) {
   return stackWords().lookup(op->getName().getTypeID());
 }
 

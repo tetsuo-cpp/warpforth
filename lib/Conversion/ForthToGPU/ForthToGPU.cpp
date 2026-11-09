@@ -106,8 +106,8 @@ static LogicalResult applyConversionPatterns(Operation *op,
   return applyPartialConversion(op, target, std::move(patterns));
 }
 
-/// Pass implementation that wraps func.func operations in a single gpu.module
-/// and converts them to gpu.func operations.
+/// Wraps the kernel in one gpu.module and converts it to a gpu.func. Any other
+/// func.func is an error.
 struct ConvertForthToGPUPass
     : public impl::ConvertForthToGPUBase<ConvertForthToGPUPass> {
 

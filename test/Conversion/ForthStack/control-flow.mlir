@@ -16,7 +16,6 @@
 // CHECK: ^[[JOIN]](%[[RESULT:.*]]: i64):
 // CHECK: llvm.store %[[RESULT]], %{{.*}} : i64, !llvm.ptr<1>
 
-// A true flag takes the IF arm.
 // FOLD-LABEL: func.func @if_else(
 // FOLD: %[[C42:.*]] = arith.constant 42 : i64
 // FOLD: llvm.store %[[C42]], %{{.*}} : i64, !llvm.ptr<1>

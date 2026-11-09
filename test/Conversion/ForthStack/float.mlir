@@ -4,7 +4,6 @@
 // its result back to i64, so after canonicalization the round trips are gone
 // and each word applies to the f64 parameters directly.
 
-// `X Y op OUT !`: the deeper cell is the left operand.
 // CHECK-LABEL: func.func @float_arithmetic(
 // CHECK-SAME: %[[X:[^:]*]]: f64, %[[Y:[^:]*]]: f64
 // CHECK: %[[SUM:.*]] = arith.addf %[[X]], %[[Y]] : f64
